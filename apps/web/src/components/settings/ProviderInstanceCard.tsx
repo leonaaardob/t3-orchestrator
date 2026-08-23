@@ -1,7 +1,18 @@
 "use client";
 
-import { ChevronDownIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  ArrowUpCircleIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  DownloadIcon,
+  LoaderIcon,
+  PlusIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
+import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -13,33 +24,32 @@ import {
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
+  getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
   getProviderVersionLabel,
   type ProviderStatusKey,
 } from "./providerStatus";
-
-const PROVIDER_ACCENT_SWATCHES = [
-  "#2563eb",
-  "#16a34a",
-  "#ea580c",
-  "#dc2626",
-  "#7c3aed",
-  "#0891b2",
-] as const;
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -104,9 +114,9 @@ export function deriveProviderModelsForDisplay(input: {
   readonly customModels: ReadonlyArray<string>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
-    (input.liveModels ?? [])
-      .filter((model) => model.isCustom)
-      .map((model) => [model.slug, model] as const),
+    Arr.filterMap(input.liveModels ?? [], (model) =>
+      model.isCustom ? Result.succeed([model.slug, model] as const) : Result.failVoid,
+    ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
   const customModels = input.customModels.map(
@@ -143,94 +153,6 @@ function ProviderAuthEmail(props: {
   );
 }
 
-function ProviderAccentColorPicker(props: {
-  readonly displayName: string;
-  readonly value: string | undefined;
-  readonly onCommit: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState(props.value ?? "");
-  const [isEditing, setIsEditing] = useState(false);
-  const draftColor = normalizeProviderAccentColor(draft);
-
-  useEffect(() => {
-    if (isEditing) return;
-    setDraft(props.value ?? "");
-  }, [isEditing, props.value]);
-
-  const commitDraft = () => {
-    setIsEditing(false);
-    props.onCommit(draftColor ?? "");
-  };
-
-  const commitSwatch = (swatch: string) => {
-    setIsEditing(false);
-    setDraft(swatch);
-    props.onCommit(swatch);
-  };
-
-  return (
-    <div className="grid gap-2">
-      <span className="text-xs font-medium text-foreground">Accent color</span>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <input
-          type="color"
-          value={draftColor ?? PROVIDER_ACCENT_SWATCHES[0]}
-          onFocus={() => setIsEditing(true)}
-          onInput={(event) => {
-            setIsEditing(true);
-            setDraft(event.currentTarget.value);
-          }}
-          onChange={(event) => {
-            setIsEditing(true);
-            setDraft(event.currentTarget.value);
-          }}
-          onBlur={commitDraft}
-          aria-label={`Accent color for ${props.displayName}`}
-          className="h-8 w-10 cursor-pointer rounded border border-input bg-background p-0.5"
-        />
-        <div className="flex flex-wrap gap-1.5">
-          {PROVIDER_ACCENT_SWATCHES.map((swatch) => {
-            const selected = draftColor?.toLowerCase() === swatch;
-            return (
-              <button
-                key={swatch}
-                type="button"
-                className={cn(
-                  "size-6 cursor-pointer rounded-full border transition",
-                  selected
-                    ? "border-foreground ring-2 ring-ring ring-offset-1 ring-offset-background"
-                    : "border-black/10 hover:scale-105 dark:border-white/20",
-                )}
-                style={{ backgroundColor: swatch }}
-                onClick={() => commitSwatch(swatch)}
-                aria-label={`Use ${swatch} accent`}
-              />
-            );
-          })}
-        </div>
-        {draftColor ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs text-muted-foreground"
-            onClick={() => {
-              setIsEditing(false);
-              setDraft("");
-              props.onCommit("");
-            }}
-          >
-            Clear
-          </Button>
-        ) : null}
-      </div>
-      <span className="text-xs text-muted-foreground">
-        Used to distinguish this instance in picker rails and model lists.
-      </span>
-    </div>
-  );
-}
-
 function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
@@ -238,10 +160,6 @@ function ProviderEnvironmentSection(props: {
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
-
-  useEffect(() => {
-    setRows(props.environment.map(makeEnvironmentDraftRow));
-  }, [props.environment]);
 
   const publishRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     const published: ProviderInstanceEnvironmentVariable[] = [];
@@ -314,59 +232,83 @@ function ProviderEnvironmentSection(props: {
           Add variables to pass API keys, base URLs, or other per-instance CLI settings.
         </p>
       ) : (
-        <div className="grid gap-2">
-          {rows.map((variable, index) => (
-            <div
-              key={variable.id}
-              className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] sm:items-center"
-            >
-              <DraftInput
-                value={variable.name}
-                onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
-                placeholder="VARIABLE_NAME"
-                spellCheck={false}
-                aria-label={`Environment variable name ${index + 1}`}
-              />
-              <DraftInput
-                value={variable.valueRedacted ? "" : variable.value}
-                onCommit={(value) => updateVariable(variable.id, { value })}
-                type={variable.sensitive ? "password" : undefined}
-                autoComplete="off"
-                placeholder={
-                  variable.valueRedacted ? "Stored secret - enter a new value to replace" : "Value"
-                }
-                spellCheck={false}
-                aria-label={`Environment variable value ${index + 1}`}
-              />
-              <label className="inline-flex h-8 items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  className="size-3.5"
-                  checked={variable.sensitive}
-                  onChange={(event) => {
-                    const sensitive = event.currentTarget.checked;
-                    updateVariable(variable.id, {
-                      sensitive,
-                      ...(sensitive && variable.valueRedacted === undefined
-                        ? {}
-                        : { valueRedacted: sensitive ? variable.valueRedacted : false }),
-                    });
-                  }}
-                />
-                Sensitive
-              </label>
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                className="size-8 justify-self-start text-muted-foreground hover:text-destructive sm:justify-self-end"
-                onClick={() => removeVariable(variable.id)}
-                aria-label={`Remove environment variable ${variable.name || index + 1}`}
-              >
-                <XIcon className="size-3.5" />
-              </Button>
-            </div>
-          ))}
+        <div className="overflow-hidden rounded-md border border-border/70">
+          <Table>
+            <TableHeader className="bg-muted/25 text-[11px] text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Variable</TableHead>
+                <TableHead>Value</TableHead>
+                <TableHead className="w-20">Sensitive</TableHead>
+                <TableHead className="w-12 text-right">
+                  <span className="sr-only">Options</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((variable, index) => (
+                <TableRow
+                  key={variable.id}
+                  className="border-border/60 odd:bg-muted/20 even:bg-background/20"
+                >
+                  <TableCell>
+                    <DraftInput
+                      value={variable.name}
+                      onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
+                      placeholder="VARIABLE_NAME"
+                      spellCheck={false}
+                      aria-label={`Environment variable name ${index + 1}`}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <DraftInput
+                      value={variable.valueRedacted ? "" : variable.value}
+                      onCommit={(value) => updateVariable(variable.id, { value })}
+                      type={variable.sensitive ? "password" : undefined}
+                      autoComplete="off"
+                      placeholder={
+                        variable.valueRedacted
+                          ? "Stored secret - enter a new value to replace"
+                          : "Value"
+                      }
+                      spellCheck={false}
+                      aria-label={`Environment variable value ${index + 1}`}
+                    />
+                  </TableCell>
+                  <TableCell className="w-20">
+                    <div className="flex h-8 items-center justify-center">
+                      <Checkbox
+                        checked={variable.sensitive}
+                        onCheckedChange={(checked) => {
+                          const sensitive = Boolean(checked);
+                          updateVariable(variable.id, {
+                            sensitive,
+                            ...(sensitive && variable.valueRedacted === undefined
+                              ? {}
+                              : { valueRedacted: sensitive ? variable.valueRedacted : false }),
+                          });
+                        }}
+                        aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="w-12">
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        className="size-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeVariable(variable.id)}
+                        aria-label={`Remove environment variable ${variable.name || index + 1}`}
+                      >
+                        <XIcon className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
       <span className="text-xs text-muted-foreground">
@@ -405,6 +347,8 @@ interface ProviderInstanceCardProps {
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
+  readonly onRunUpdate?: (() => void) | undefined;
+  readonly isUpdating?: boolean | undefined;
 }
 
 /**
@@ -447,6 +391,8 @@ export function ProviderInstanceCard({
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
+  onRunUpdate,
+  isUpdating = false,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -464,10 +410,30 @@ export function ProviderInstanceCard({
     : null;
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
+    onCopy: ({ providerName }) => {
+      toastManager.add({
+        type: "success",
+        title: `${providerName} update command copied`,
+        description: "Run it in a terminal when you are ready to update.",
+      });
+    },
+    onError: (error, { providerName }) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not copy ${providerName} update command`,
+          description: error.message,
+        }),
+      );
+    },
+  });
 
   // Narrow `instance.driver` for callers that key on the closed
   // `ProviderDriverKind` union (e.g. `normalizeModelSlug`'s alias table). Custom
@@ -535,97 +501,210 @@ export function ProviderInstanceCard({
     );
   };
 
+  const titleIconNode = driverKind ? (
+    <ProviderInstanceIcon
+      driverKind={driverKind}
+      displayName={displayName}
+      accentColor={accentColor}
+      showBadge={Boolean(accentColor)}
+      statusDotClassName={statusStyle.dot}
+      indicatorBackground="var(--card)"
+      className="size-5"
+      iconClassName="size-4 text-foreground/80"
+      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]"
+    />
+  ) : FallbackIconComponent ? (
+    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+      <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
+      <span
+        className={cn(
+          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-card",
+          statusStyle.dot,
+        )}
+        aria-hidden
+      />
+    </span>
+  ) : (
+    <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
+  );
+
+  const titleHeadNode = (
+    <>
+      {titleIconNode}
+      <h3 className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
+        {displayName}
+      </h3>
+      {String(instanceId) !== String(instance.driver) ? (
+        <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
+          {instanceId}
+        </code>
+      ) : null}
+      {driverOption?.badgeLabel ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+    </>
+  );
+
+  const titleTailNode = (
+    <>
+      {headerAction ? (
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+          {headerAction}
+        </span>
+      ) : null}
+      {onDelete ? (
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
+                  onClick={onDelete}
+                  aria-label={`Delete provider instance ${instanceId}`}
+                >
+                  <Trash2Icon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Delete instance</TooltipPopup>
+          </Tooltip>
+        </span>
+      ) : null}
+    </>
+  );
+
+  const authRowNode = (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+      {hasAuthenticatedEmail ? (
+        <>
+          <span>Authenticated as</span>
+          <ProviderAuthEmail email={authEmail} />
+          {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
+        </>
+      ) : (
+        <>
+          <span>{summary.headline}</span>
+          <ProviderAuthEmail email={authEmail} separator prefix="Email" />
+        </>
+      )}
+      {summary.detail ? <span>- {summary.detail}</span> : null}
+    </p>
+  );
+
+  const versionCodeNode = versionLabel ? (
+    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+  ) : null;
+
   return (
-    <div className="border-t border-border first:border-t-0">
-      <div className="px-4 py-4 sm:px-5">
+    <div className="rounded-xl transition-colors hover:bg-muted/20">
+      <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex min-h-5 items-center gap-1.5">
-              {driverKind ? (
-                <ProviderInstanceIcon
-                  driverKind={driverKind}
-                  displayName={displayName}
-                  accentColor={accentColor}
-                  showBadge={Boolean(accentColor)}
-                  statusDotClassName={statusStyle.dot}
-                  className="size-5"
-                  iconClassName="size-4 text-foreground/80"
-                  badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
-                />
-              ) : FallbackIconComponent ? (
-                <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-                  <span
-                    className={cn(
-                      "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-                      statusStyle.dot,
-                    )}
-                    aria-hidden
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {titleHeadNode}
+              {versionCodeNode}
+              {versionAdvisory ? (
+                <Popover>
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        className={cn(
+                          "size-5 rounded-sm p-0",
+                          versionAdvisory.emphasis === "strong"
+                            ? "text-warning hover:text-warning"
+                            : "text-update hover:text-update",
+                        )}
+                        aria-label="Update available — view details"
+                      >
+                        <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
+                      </Button>
+                    }
                   />
-                </span>
-              ) : (
-                <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
-              )}
-              <h3 className="truncate text-sm font-medium text-foreground">{displayName}</h3>
-              {String(instanceId) !== String(instance.driver) ? (
-                // Hide the id chip on a default slot whose id === the
-                // driver slug — it's redundant with the driver icon +
-                // label. Custom instances (and any instance the user has
-                // since renamed) keep the chip so their slug stays
-                // visible for copy/paste + disambiguation.
-                <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
-              {driverOption?.badgeLabel ? (
-                <Badge variant="warning" size="sm" className="shrink-0">
-                  {driverOption.badgeLabel}
-                </Badge>
-              ) : null}
-              {versionLabel ? (
-                <code className="text-xs text-muted-foreground">{versionLabel}</code>
-              ) : null}
-              {headerAction ? (
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  {headerAction}
-                </span>
-              ) : null}
-              {onDelete ? (
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
-                          onClick={onDelete}
-                          aria-label={`Delete provider instance ${instanceId}`}
+                  <PopoverPopup
+                    side="bottom"
+                    align="start"
+                    className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+                  >
+                    <div className="grid min-w-0 gap-3">
+                      <div className="grid gap-0.5">
+                        <p className="text-[13px] font-semibold leading-tight text-foreground">
+                          Update available
+                        </p>
+                        <p
+                          className={cn(
+                            "text-xs leading-snug",
+                            versionAdvisory.emphasis === "strong"
+                              ? "text-warning"
+                              : "text-muted-foreground",
+                          )}
                         >
-                          <Trash2Icon className="size-3" />
+                          {versionAdvisory.detail}
+                        </p>
+                      </div>
+                      {onRunUpdate ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="default"
+                          className="w-full"
+                          disabled={isUpdating}
+                          onClick={onRunUpdate}
+                        >
+                          {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
+                          {isUpdating ? "Updating" : "Update now"}
                         </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Delete instance</TooltipPopup>
-                  </Tooltip>
-                </span>
+                      ) : null}
+                      {onRunUpdate && updateCommand ? (
+                        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          <span aria-hidden className="h-px flex-1 bg-border" />
+                          or, update manually using
+                          <span aria-hidden className="h-px flex-1 bg-border" />
+                        </div>
+                      ) : null}
+                      {updateCommand ? (
+                        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+                          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
+                            <code className="flex h-full w-max items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
+                              {updateCommand}
+                            </code>
+                          </ScrollArea>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                                  onClick={() =>
+                                    copyToClipboard(updateCommand, {
+                                      providerName: displayName,
+                                    })
+                                  }
+                                  aria-label="Copy update command"
+                                >
+                                  <CopyIcon className="size-3" />
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">Copy command</TooltipPopup>
+                          </Tooltip>
+                        </div>
+                      ) : null}
+                    </div>
+                  </PopoverPopup>
+                </Popover>
               ) : null}
+              {titleTailNode}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-              {hasAuthenticatedEmail ? (
-                <>
-                  <span>Authenticated as</span>
-                  <ProviderAuthEmail email={authEmail} />
-                  {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
-                </>
-              ) : (
-                <>
-                  <span>{summary.headline}</span>
-                  <ProviderAuthEmail email={authEmail} separator prefix="Email" />
-                </>
-              )}
-              {summary.detail ? <span>- {summary.detail}</span> : null}
-            </p>
+            {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button
@@ -650,8 +729,8 @@ export function ProviderInstanceCard({
 
       <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
         <CollapsibleContent>
-          <div className="space-y-0">
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+          <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
+            <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
                 <span className="text-xs font-medium text-foreground">Display name</span>
                 <DraftInput
@@ -668,15 +747,17 @@ export function ProviderInstanceCard({
               </label>
             </div>
 
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+            <div>
               <ProviderAccentColorPicker
                 displayName={displayName}
                 value={accentColor}
                 onCommit={updateAccentColor}
+                commitDelayMs={120}
+                description="Used to distinguish this instance in picker rails and model lists."
               />
             </div>
 
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+            <div>
               <ProviderEnvironmentSection
                 environment={instance.environment ?? []}
                 onChange={updateEnvironment}
@@ -708,7 +789,7 @@ export function ProviderInstanceCard({
                 onModelOrderChange={onModelOrderChange}
               />
             ) : (
-              <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+              <div>
                 <p className="text-xs text-muted-foreground">
                   This instance uses a driver (
                   <code className="text-foreground">{String(instance.driver)}</code>) that is not

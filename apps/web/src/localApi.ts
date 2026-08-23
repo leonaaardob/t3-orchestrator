@@ -1,56 +1,24 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { resetGitStatusStateForTests } from "./lib/gitStatusState";
-import { resetSourceControlDiscoveryStateForTests } from "./lib/sourceControlDiscoveryState";
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
-import { resetServerStateForTests } from "./rpc/serverState";
-import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
-import {
-  resetSavedEnvironmentRegistryStoreForTests,
-  resetSavedEnvironmentRuntimeStoreForTests,
-} from "./environments/runtime";
-import {
-  getPrimaryEnvironmentConnection,
-  resetEnvironmentServiceForTests,
-} from "./environments/runtime";
-import { getPrimaryKnownEnvironment } from "./environments/primary";
-import { type WsRpcClient } from "./rpc/wsRpcClient";
+import { requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
-import {
-  readBrowserClientSettings,
-  readBrowserSavedEnvironmentRegistry,
-  readBrowserSavedEnvironmentSecret,
-  removeBrowserSavedEnvironmentSecret,
-  writeBrowserClientSettings,
-  writeBrowserSavedEnvironmentRegistry,
-  writeBrowserSavedEnvironmentSecret,
-} from "./clientPersistenceStorage";
+import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
 
-function unavailableLocalBackendError(): Error {
-  return new Error("Local backend API is unavailable before a backend is paired.");
-}
-
-function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
+function createBrowserLocalApi(): LocalApi {
   return {
     dialogs: {
       pickFolder: async (options) => {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
       },
-      confirm: async (message) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.confirm(message);
-        }
-        return window.confirm(message);
+      confirm: async (message, options?: ConfirmDialogOptions) => {
+        return requestConfirmDialog(message, options) ?? false;
       },
     },
     shell: {
-      openInEditor: (cwd, editor) =>
-        rpcClient
-          ? rpcClient.shell.openInEditor({ cwd, editor })
-          : Promise.reject(unavailableLocalBackendError()),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -87,79 +55,19 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         }
         writeBrowserClientSettings(settings);
       },
-      getSavedEnvironmentRegistry: async () => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getSavedEnvironmentRegistry();
-        }
-        return readBrowserSavedEnvironmentRegistry();
-      },
-      setSavedEnvironmentRegistry: async (records) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setSavedEnvironmentRegistry(records);
-        }
-        writeBrowserSavedEnvironmentRegistry(records);
-      },
-      getSavedEnvironmentSecret: async (environmentId) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.getSavedEnvironmentSecret(environmentId);
-        }
-        return readBrowserSavedEnvironmentSecret(environmentId);
-      },
-      setSavedEnvironmentSecret: async (environmentId, secret) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.setSavedEnvironmentSecret(environmentId, secret);
-        }
-        return writeBrowserSavedEnvironmentSecret(environmentId, secret);
-      },
-      removeSavedEnvironmentSecret: async (environmentId) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.removeSavedEnvironmentSecret(environmentId);
-        }
-        removeBrowserSavedEnvironmentSecret(environmentId);
-      },
-    },
-    server: {
-      getConfig: () =>
-        rpcClient ? rpcClient.server.getConfig() : Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () =>
-        rpcClient
-          ? rpcClient.server.refreshProviders()
-          : Promise.reject(unavailableLocalBackendError()),
-      upsertKeybinding: (input) =>
-        rpcClient
-          ? rpcClient.server.upsertKeybinding(input)
-          : Promise.reject(unavailableLocalBackendError()),
-      getSettings: () =>
-        rpcClient ? rpcClient.server.getSettings() : Promise.reject(unavailableLocalBackendError()),
-      updateSettings: (patch) =>
-        rpcClient
-          ? rpcClient.server.updateSettings(patch)
-          : Promise.reject(unavailableLocalBackendError()),
-      discoverSourceControl: () =>
-        rpcClient
-          ? rpcClient.server.discoverSourceControl()
-          : Promise.reject(unavailableLocalBackendError()),
     },
   };
 }
 
-export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
-  return createBrowserLocalApi(rpcClient);
+export function createLocalApi(): LocalApi {
+  return createBrowserLocalApi();
 }
 
 export function readLocalApi(): LocalApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;
 
-  if (window.nativeApi) {
-    cachedApi = window.nativeApi;
-    return cachedApi;
-  }
-
-  const primaryEnvironment = getPrimaryKnownEnvironment();
-  cachedApi = primaryEnvironment
-    ? createLocalApi(getPrimaryEnvironmentConnection().client)
-    : createBrowserLocalApi();
+  cachedApi = createLocalApi();
   return cachedApi;
 }
 
@@ -175,12 +83,5 @@ export async function __resetLocalApiForTests() {
   cachedApi = undefined;
   const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
   __resetClientSettingsPersistenceForTests();
-  await resetEnvironmentServiceForTests();
-  resetGitStatusStateForTests();
-  resetSourceControlDiscoveryStateForTests();
   resetRequestLatencyStateForTests();
-  resetSavedEnvironmentRegistryStoreForTests();
-  resetSavedEnvironmentRuntimeStoreForTests();
-  resetServerStateForTests();
-  resetWsConnectionStateForTests();
 }

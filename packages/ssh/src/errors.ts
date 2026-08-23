@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import * as Data from "effect/Data";
 
 export class SshHostDiscoveryError extends Data.TaggedError("SshHostDiscoveryError")<{
   readonly message: string;
@@ -14,6 +14,7 @@ export class SshCommandError extends Data.TaggedError("SshCommandError")<{
   readonly command: readonly string[];
   readonly exitCode: number | null;
   readonly stderr: string;
+  readonly stdout?: string;
   readonly cause?: unknown;
 }> {}
 

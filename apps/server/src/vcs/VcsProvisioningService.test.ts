@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
-import { DateTime, Effect, Layer, Option } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as VcsDriver from "./VcsDriver.ts";
@@ -8,7 +11,7 @@ import * as VcsProvisioningService from "./VcsProvisioningService.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-function makeDriver(calls: string[]): VcsDriver.VcsDriverShape {
+function makeDriver(calls: string[]): VcsDriver.VcsDriver["Service"] {
   return {
     capabilities: {
       kind: "git",

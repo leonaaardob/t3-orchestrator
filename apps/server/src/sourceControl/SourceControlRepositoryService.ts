@@ -1,5 +1,10 @@
 import * as NodeOS from "node:os";
-import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   SourceControlRepositoryError,
@@ -17,59 +22,31 @@ import {
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
-
-export interface SourceControlRepositoryServiceShape {
-  readonly lookupRepository: (
-    input: SourceControlRepositoryLookupInput,
-  ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
-  readonly cloneRepository: (
-    input: SourceControlCloneRepositoryInput,
-  ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
-  readonly publishRepository: (
-    input: SourceControlPublishRepositoryInput,
-  ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
-}
+const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
-  SourceControlRepositoryServiceShape
->()("t3/source-control/SourceControlRepositoryService") {}
-
-function detailFromUnknown(cause: unknown): string {
-  if (typeof cause === "object" && cause !== null) {
-    if ("detail" in cause && typeof cause.detail === "string" && cause.detail.length > 0) {
-      return cause.detail;
-    }
-    if ("message" in cause && typeof cause.message === "string" && cause.message.length > 0) {
-      return cause.message;
-    }
+  {
+    readonly lookupRepository: (
+      input: SourceControlRepositoryLookupInput,
+    ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
+    readonly cloneRepository: (
+      input: SourceControlCloneRepositoryInput,
+    ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
+    readonly publishRepository: (
+      input: SourceControlPublishRepositoryInput,
+    ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
   }
-
-  return "An unexpected source control error occurred.";
-}
-
-function repositoryError(input: {
-  readonly operation: string;
-  readonly provider: SourceControlProviderKind;
-  readonly detail: string;
-  readonly cause?: unknown;
-}): SourceControlRepositoryError {
-  return new SourceControlRepositoryError({
-    provider: input.provider,
-    operation: input.operation,
-    detail: input.detail,
-    ...(input.cause === undefined ? {} : { cause: input.cause }),
-  });
-}
+>()("t3/sourceControl/SourceControlRepositoryService") {}
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
-    Schema.is(SourceControlRepositoryError)(cause)
+    isSourceControlRepositoryError(cause)
       ? cause
-      : repositoryError({
+      : new SourceControlRepositoryError({
           operation,
           provider,
-          detail: detailFromUnknown(cause),
+          detail: "The source control operation could not be completed.",
           cause,
         }),
   );
@@ -110,7 +87,7 @@ function expandHomePath(input: string, path: Path.Path): string {
   return input;
 }
 
-export const make = Effect.fn("makeSourceControlRepositoryService")(function* () {
+export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
@@ -126,7 +103,7 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     }
 
     return Effect.fail(
-      repositoryError({
+      new SourceControlRepositoryError({
         operation: input.operation,
         provider: input.provider,
         detail: "Choose a source control provider before continuing.",
@@ -153,13 +130,11 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     function* (destinationPath: string) {
       const trimmed = destinationPath.trim();
       if (trimmed.length === 0) {
-        return yield* Effect.fail(
-          repositoryError({
-            operation: "cloneRepository",
-            provider: "unknown",
-            detail: "Choose a destination path before cloning.",
-          }),
-        );
+        return yield* new SourceControlRepositoryError({
+          operation: "cloneRepository",
+          provider: "unknown",
+          detail: "Choose a destination path before cloning.",
+        });
       }
 
       return path.resolve(expandHomePath(trimmed, path));
@@ -169,27 +144,26 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
     function* (destinationPath: string) {
       const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
-      if (yield* fileSystem.exists(normalizedDestination).pipe(Effect.orElseSucceed(() => false))) {
+      if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
           .pipe(
-            Effect.mapError((cause) =>
-              repositoryError({
-                operation: "cloneRepository",
-                provider: "unknown",
-                detail: "Destination path already exists and is not a directory.",
-                cause,
-              }),
+            Effect.mapError(
+              (cause) =>
+                new SourceControlRepositoryError({
+                  operation: "cloneRepository",
+                  provider: "unknown",
+                  detail: "Destination path already exists and is not a directory.",
+                  cause,
+                }),
             ),
           );
         if (entries.length > 0) {
-          return yield* Effect.fail(
-            repositoryError({
-              operation: "cloneRepository",
-              provider: "unknown",
-              detail: "Destination path already exists and is not empty.",
-            }),
-          );
+          return yield* new SourceControlRepositoryError({
+            operation: "cloneRepository",
+            provider: "unknown",
+            detail: "Destination path already exists and is not empty.",
+          });
         }
       } else {
         yield* fileSystem.makeDirectory(path.dirname(normalizedDestination), { recursive: true });
@@ -222,13 +196,11 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     }
 
     if (!remoteUrl) {
-      return yield* Effect.fail(
-        repositoryError({
-          operation: "cloneRepository",
-          provider,
-          detail: "Enter a repository path or clone URL before cloning.",
-        }),
-      );
+      return yield* new SourceControlRepositoryError({
+        operation: "cloneRepository",
+        provider,
+        detail: "Enter a repository path or clone URL before cloning.",
+      });
     }
 
     yield* git.execute({
@@ -277,12 +249,10 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
         })
         .pipe(
           Effect.map(() => true),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
         );
       if (!hasCommits) {
-        const details = yield* git
-          .statusDetails(input.cwd)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const details = yield* git.statusDetails(input.cwd).pipe(Effect.orElseSucceed(() => null));
         return {
           repository: toRepositoryInfo(providerKind, urls),
           remoteName,
@@ -317,4 +287,4 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
   });
 });
 
-export const layer = Layer.effect(SourceControlRepositoryService, make());
+export const layer = Layer.effect(SourceControlRepositoryService, make);

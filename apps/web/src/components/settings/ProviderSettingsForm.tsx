@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { Schema } from "effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type {
   ProviderSettingsFormAnnotation,
   ProviderSettingsFormControl,
@@ -63,12 +64,9 @@ function readProviderSettingsFormSchemaAnnotation(
 function readFieldBooleanDefault(
   fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
 ): boolean | undefined {
-  try {
-    const decoded = Schema.decodeUnknownSync(fieldSchema as Schema.Decoder<unknown>)(undefined);
-    return typeof decoded === "boolean" ? decoded : undefined;
-  } catch {
-    return undefined;
-  }
+  const decodeDefault = Schema.decodeUnknownOption(fieldSchema as Schema.Decoder<unknown>);
+  const decoded = decodeDefault(undefined);
+  return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
 export function deriveProviderSettingsFields(
@@ -169,7 +167,7 @@ function FieldFrame(props: {
   readonly children: ReactNode;
 }) {
   if (props.variant === "card") {
-    return <div className="border-t border-border/60 px-4 py-3 sm:px-5">{props.children}</div>;
+    return <div>{props.children}</div>;
   }
   return <div className="grid gap-1.5">{props.children}</div>;
 }

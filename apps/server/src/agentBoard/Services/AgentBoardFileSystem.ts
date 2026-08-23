@@ -13,7 +13,7 @@ import {
   WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
-} from "../../workspace/Services/WorkspacePaths.ts";
+} from "../../workspace/WorkspacePaths.ts";
 
 export class AgentBoardFileSystemError extends Schema.TaggedErrorClass<AgentBoardFileSystemError>()(
   "AgentBoardFileSystemError",

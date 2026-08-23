@@ -2,25 +2,24 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import { type NetError, NetService } from "@t3tools/shared/Net";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
-  Deferred,
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Ref,
-  Schema,
-  Scope,
-  Schedule,
-  Stream,
-} from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+  describeReadinessCause,
+  waitForHttpReady as waitForHttpReadyShared,
+} from "@t3tools/shared/httpReadiness";
+import * as NetService from "@t3tools/shared/Net";
+import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -35,6 +34,7 @@ import {
   collectProcessOutput,
   getLastNonEmptyOutputLine,
   remoteStateKey,
+  resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
   targetConnectionKey,
@@ -60,11 +60,12 @@ const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
+  readonly nodeEngineRange?: string | null;
 }
 
 export interface SshEnvironmentManagerOptions {
   readonly resolveCliPackageSpec?: () => string;
-  readonly resolveCliRunner?: () => RemoteT3RunnerOptions;
+  readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
 interface SshTunnelEntry {
@@ -84,7 +85,7 @@ type SshEnvironmentEffectContext =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | NetService
+  | NetService.NetService
   | SshPasswordPrompt;
 
 type SshEnvironmentEffectError =
@@ -94,7 +95,7 @@ type SshEnvironmentEffectError =
   | SshPairingError
   | SshReadinessError
   | SshPasswordPromptError
-  | NetError;
+  | NetService.NetError;
 
 function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCommandError {
   return new SshCommandError({
@@ -160,13 +161,52 @@ const RemotePairingResult = Schema.Struct({
   credential: Schema.String,
 });
 
-const RemoteHttpError = Schema.Struct({
-  error: Schema.optional(Schema.String),
-});
-
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
 const decodeRemotePairingResult = Schema.decodeEffect(fromLenientJson(RemotePairingResult));
-const decodeRemoteHttpError = Schema.decodeEffect(Schema.fromJsonString(RemoteHttpError));
+
+const decodeRemoteJsonOutput = <A, E>(
+  stdout: string,
+  decode: (input: string) => Effect.Effect<A, E>,
+): Effect.Effect<A, E> =>
+  decode(stdout).pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        const jsonObject = extractJsonObject(stdout);
+        if (jsonObject === stdout.trim()) {
+          return yield* Effect.fail(error);
+        }
+        const exit = yield* Effect.exit(decode(jsonObject));
+        if (Exit.isSuccess(exit)) {
+          return exit.value;
+        }
+        return yield* Effect.fail(error);
+      }),
+    ),
+  );
+
+const decodeRemoteLaunchOutput = (stdout: string) =>
+  decodeRemoteJsonOutput(stdout, decodeRemoteLaunchResult);
+
+const decodeRemotePairingOutput = (stdout: string) =>
+  decodeRemoteJsonOutput(stdout, decodeRemotePairingResult);
+
+const remoteNodeEngineCheckMain = function remoteNodeEngineCheckMain() {
+  const range = process.argv[2] || "";
+  const rawVersion =
+    process.versions && process.versions.node ? process.versions.node : process.version;
+
+  if (!satisfiesSemverRange(rawVersion, range)) {
+    process.stderr.write(
+      "Remote node " + rawVersion + " does not satisfy required range " + range + ".\n",
+    );
+    process.exit(1);
+  }
+};
+
+function buildRemoteNodeEngineCheckScript(): string {
+  return `${satisfiesSemverRange.toString()}
+(${remoteNodeEngineCheckMain.toString()})();`;
+}
 
 export function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): string {
   const cleaned = stderr.trim();
@@ -192,33 +232,9 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export function describeReadinessCause(cause: unknown): unknown {
-  if (cause instanceof SshReadinessError) {
-    return {
-      _tag: cause._tag,
-      message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
-    };
-  }
-  if (cause instanceof Error) {
-    return {
-      name: cause.name,
-      message: cause.message,
-      ...(cause.cause === undefined ? {} : { cause: describeReadinessCause(cause.cause) }),
-    };
-  }
-  if (typeof cause !== "object" || cause === null) {
-    return cause;
-  }
-
-  const record = cause as Readonly<Record<string, unknown>>;
-  return {
-    ...(typeof record._tag === "string" ? { _tag: record._tag } : {}),
-    ...(typeof record.message === "string" ? { message: record.message } : {}),
-    ...(record.reason === undefined ? {} : { reason: describeReadinessCause(record.reason) }),
-    ...(record.cause === undefined ? {} : { cause: describeReadinessCause(record.cause) }),
-  };
-}
+// Re-exported from the shared HTTP readiness module so existing importers
+// (notably tunnel.test.ts) keep resolving it from here.
+export { describeReadinessCause };
 
 export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
@@ -301,10 +317,109 @@ function probe() {
 })().catch(() => process.exit(1));
 `;
 
+export const REMOTE_NODE_ENV_SCRIPT = `prepend_path_if_dir() {
+  if [ -d "$1" ]; then
+    case ":$PATH:" in
+      *":$1:"*) ;;
+      *) PATH="$1:$PATH" ;;
+    esac
+  fi
+}
+
+remote_node_satisfies_engine() {
+  T3_NODE_ENGINE_RANGE=@@T3_NODE_ENGINE_RANGE@@
+  if [ -z "$T3_NODE_ENGINE_RANGE" ]; then
+    return 0
+  fi
+  node - "$T3_NODE_ENGINE_RANGE" <<'NODE'
+@@T3_NODE_ENGINE_CHECK_SCRIPT@@
+NODE
+}
+
+ensure_remote_node_path() {
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
+
+  prepend_path_if_dir "$HOME/.local/bin"
+  prepend_path_if_dir "$HOME/bin"
+  prepend_path_if_dir "/opt/homebrew/bin"
+  prepend_path_if_dir "/usr/local/bin"
+  prepend_path_if_dir "/usr/bin"
+  prepend_path_if_dir "/bin"
+
+  if [ -z "\${VOLTA_HOME:-}" ]; then
+    VOLTA_HOME="$HOME/.volta"
+  fi
+  export VOLTA_HOME
+  prepend_path_if_dir "$VOLTA_HOME/bin"
+
+  prepend_path_if_dir "$HOME/.asdf/shims"
+  prepend_path_if_dir "$HOME/.asdf/bin"
+  if [ ! -x "$HOME/.asdf/shims/node" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.asdf/asdf.sh"
+  fi
+
+  prepend_path_if_dir "$HOME/.local/share/mise/shims"
+  prepend_path_if_dir "$HOME/.mise/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate sh)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "\${FNM_DIR:-}" ]; then
+    FNM_DIR="$HOME/.local/share/fnm"
+  fi
+  export FNM_DIR
+  prepend_path_if_dir "$FNM_DIR"
+  prepend_path_if_dir "$HOME/.fnm"
+  if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env --shell bash)" >/dev/null 2>&1 || true
+    fnm use --silent-if-unchanged >/dev/null 2>&1 || fnm use default >/dev/null 2>&1 || true
+  fi
+
+  prepend_path_if_dir "$HOME/.nodenv/bin"
+  prepend_path_if_dir "$HOME/.nodenv/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v nodenv >/dev/null 2>&1; then
+    eval "$(nodenv init -)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "\${NVM_DIR:-}" ]; then
+    NVM_DIR="$HOME/.nvm"
+  fi
+  export NVM_DIR
+
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    if ! command -v node >/dev/null 2>&1 && command -v nvm >/dev/null 2>&1; then
+      nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
+    for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
+      if [ -x "$T3_NODE_BIN/node" ]; then
+        PATH="$T3_NODE_BIN:$PATH"
+        export PATH
+      fi
+    done
+  fi
+
+  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine
+}
+`;
+
 export const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
+@@T3_NODE_ENV_SCRIPT@@
+ensure_remote_node_path || true
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
 if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+    exit 1
+  fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
 if command -v t3 >/dev/null 2>&1; then
@@ -316,11 +431,12 @@ fi
 if command -v npm >/dev/null 2>&1; then
   exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because npx and npm are unavailable on PATH.\\n' >&2
+printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
 `;
 
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
+@@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -345,6 +461,10 @@ if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
+if ! ensure_remote_node_path; then
+  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  exit 1
+fi
 pick_port() {
   node - "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
 @@T3_PICK_PORT_SCRIPT@@
@@ -368,18 +488,18 @@ resolve_default_runtime_port() {
 const fs = require("node:fs");
 const runtimePath = process.argv[2] ?? "";
 try {
-  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-  const pid = Number(runtime.pid);
-  const port = Number(runtime.port);
-  if (!Number.isInteger(pid) || !Number.isInteger(port)) {
-    process.exit(1);
-  }
+	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+	  const pid = Number(runtime.pid);
+	  const port = Number(runtime.port);
+	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
+	    process.exit(1);
+	  }
   const origin = new URL(String(runtime.origin ?? ""));
   if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
     process.exit(1);
   }
   process.kill(pid, 0);
-  process.stdout.write(String(port));
+  process.stdout.write(\`\${pid} \${port}\`);
 } catch {
   process.exit(1);
 }
@@ -388,18 +508,34 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
-DEFAULT_REMOTE_PORT="$(resolve_default_runtime_port 2>/dev/null || true)"
+DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+DEFAULT_RUNTIME_PID=""
+DEFAULT_REMOTE_PORT=""
+if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+  DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
+  DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-      kill "$REMOTE_PID" 2>/dev/null || true
-      wait_for_pid_exit "$REMOTE_PID"
+    if [ "$REMOTE_MANAGED" = "managed" ]; then
+      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
+      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
+        kill "$PID_TO_STOP" 2>/dev/null || true
+        wait_for_pid_exit "$PID_TO_STOP"
+      fi
+      REMOTE_PID=""
+      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+    else
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+      REMOTE_PID=""
+      REMOTE_MANAGED="external"
     fi
-    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-    printf 'external\\n' >"$MANAGED_FILE"
-    REMOTE_PID=""
-    REMOTE_MANAGED="external"
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
@@ -431,7 +567,7 @@ else
   REMOTE_PORT=""
   REMOTE_MANAGED=""
 fi
-if [ -z "$REMOTE_PID" ] || [ -z "$REMOTE_PORT" ]; then
+if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
@@ -501,12 +637,23 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
+    }),
+  );
+}
+
+export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string {
+  return stripTrailingNewlines(
+    applyScriptPlaceholders(REMOTE_NODE_ENV_SCRIPT, {
+      T3_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
+      T3_NODE_ENGINE_CHECK_SCRIPT: stripTrailingNewlines(buildRemoteNodeEngineCheckScript()),
     }),
   );
 }
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
@@ -568,7 +715,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         stdout: result.stdout,
       });
     }
-    const parsed = yield* decodeRemoteLaunchResult(result.stdout).pipe(
+    const parsed = yield* decodeRemoteLaunchOutput(result.stdout).pipe(
       Effect.mapError(
         (cause) =>
           new SshLaunchError({
@@ -625,7 +772,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
       stdout: result.stdout,
     });
   }
-  const parsed = yield* decodeRemotePairingResult(result.stdout).pipe(
+  const parsed = yield* decodeRemotePairingOutput(result.stdout).pipe(
     Effect.mapError(
       (cause) =>
         new SshPairingError({
@@ -694,120 +841,46 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(function* (input: {
+export const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
   readonly path?: string;
-}): Effect.fn.Return<void, SshReadinessError, HttpClient.HttpClient> {
-  const timeoutMs = input.timeoutMs ?? 30_000;
-  const intervalMs = input.intervalMs ?? 100;
-  const probeTimeoutMs = input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS;
-  const retryPolicy = Schedule.spaced(Duration.millis(intervalMs)).pipe(
-    Schedule.take(Math.max(0, Math.ceil(timeoutMs / intervalMs))),
-  );
-  const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
-  const client = yield* HttpClient.HttpClient;
-  const lastProbeFailure = yield* Ref.make<unknown>(null);
-  let attempt = 0;
-
-  yield* Effect.logDebug("ssh.tunnel.httpReady.start", {
+}): Effect.Effect<void, SshReadinessError, HttpClient.HttpClient> =>
+  waitForHttpReadyShared({
     baseUrl: input.baseUrl,
-    requestUrl,
-    timeoutMs,
-    intervalMs,
-    probeTimeoutMs,
-  });
-
-  const readinessClient = client.pipe(
-    HttpClient.filterStatusOk,
-    HttpClient.transform((effect) =>
-      Effect.gen(function* () {
-        attempt += 1;
-        const responseOption = yield* effect.pipe(
-          Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
-          Effect.mapError(
-            (cause) =>
-              new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
-                cause,
-              }),
-          ),
-        );
-        return yield* Option.match(responseOption, {
-          onSome: Effect.succeed,
-          onNone: () =>
-            Effect.fail(
-              new SshReadinessError({
-                message: `Backend readiness probe exceeded ${probeTimeoutMs}ms at ${requestUrl}.`,
-                cause: {
-                  kind: "probe-timeout",
-                  attempt,
-                  probeTimeoutMs,
-                },
-              }),
-            ),
-        });
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof SshReadinessError
-            ? cause
-            : new SshReadinessError({
-                message: `Backend readiness probe failed at ${requestUrl}.`,
-                cause,
-              }),
-        ),
-        Effect.tapError((cause) =>
-          Ref.set(lastProbeFailure, {
-            attempt,
-            cause: describeReadinessCause(cause),
-          }),
-        ),
-      ),
-    ),
-    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
-    HttpClient.retry(retryPolicy),
-  );
-
-  const result = yield* readinessClient.execute(HttpClientRequest.get(requestUrl)).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof SshReadinessError
-        ? cause
-        : new SshReadinessError({
-            message: `Backend readiness probe failed at ${requestUrl}.`,
+    ...(input.path === undefined ? {} : { path: input.path }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    ...(input.intervalMs === undefined ? {} : { intervalMs: input.intervalMs }),
+    probeTimeoutMs: input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS,
+    makeError: ({ requestUrl, probeTimeoutMs, cause }) => {
+      if (typeof cause === "object" && cause !== null && "kind" in cause) {
+        const kind = (cause as { readonly kind?: unknown }).kind;
+        if (kind === "probe-timeout") {
+          return new SshReadinessError({
+            message: `Backend readiness probe exceeded ${probeTimeoutMs}ms at ${requestUrl}.`,
             cause,
-          }),
-    ),
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
-  );
-
-  return yield* Option.match(result, {
-    onSome: () =>
-      Effect.logDebug("ssh.tunnel.httpReady.succeeded", {
-        baseUrl: input.baseUrl,
-        requestUrl,
-        attempts: attempt,
-      }),
-    onNone: () =>
-      Effect.gen(function* () {
-        const lastFailure = yield* Ref.get(lastProbeFailure);
-        yield* Effect.logWarning("ssh.tunnel.httpReady.timedOut", {
-          baseUrl: input.baseUrl,
-          requestUrl,
-          timeoutMs,
-          intervalMs,
-          probeTimeoutMs,
-          attempts: attempt,
-          lastFailure,
-        });
-        return yield* new SshReadinessError({
-          message: `Timed out waiting ${timeoutMs}ms for backend readiness at ${input.baseUrl}.`,
-          cause: lastFailure,
-        });
-      }),
+          });
+        }
+        if (kind === "overall-timeout") {
+          const overall = cause as unknown as {
+            readonly baseUrl: string;
+            readonly timeoutMs: number;
+            readonly lastFailure: unknown;
+          };
+          return new SshReadinessError({
+            message: `Timed out waiting ${overall.timeoutMs}ms for backend readiness at ${overall.baseUrl}.`,
+            cause: overall.lastFailure,
+          });
+        }
+      }
+      return new SshReadinessError({
+        message: `Backend readiness probe failed at ${requestUrl}.`,
+        cause,
+      });
+    },
   });
-});
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname
@@ -817,95 +890,30 @@ function isLoopbackHostname(hostname: string): boolean {
   return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
-function resolveLoopbackSshHttpUrl(
-  rawHttpBaseUrl: unknown,
-  pathname: string,
-): Effect.Effect<URL, SshHttpBridgeError> {
-  return Effect.try({
-    try: () => {
-      if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
-        throw new Error("Invalid SSH forwarded http base URL.");
-      }
-      const baseUrl = new URL(rawHttpBaseUrl);
-      if (!isLoopbackHostname(baseUrl.hostname)) {
-        throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
-      }
-      const url = new URL(baseUrl.toString());
-      url.pathname = pathname;
-      url.search = "";
-      url.hash = "";
-      return url;
-    },
-    catch: (cause) =>
-      new SshHttpBridgeError({
-        message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
-        cause,
-      }),
-  });
-}
-
-export const fetchLoopbackSshJson = Effect.fn("ssh/tunnel.fetchLoopbackSshJson")(function* <
-  T,
->(input: {
-  readonly httpBaseUrl: unknown;
-  readonly pathname: string;
-  readonly method?: "GET" | "POST";
-  readonly bearerToken?: unknown;
-  readonly body?: unknown;
-}): Effect.fn.Return<T, SshHttpBridgeError, HttpClient.HttpClient> {
-  const requestUrl = yield* resolveLoopbackSshHttpUrl(input.httpBaseUrl, input.pathname);
-  const bearerToken =
-    typeof input.bearerToken === "string" && input.bearerToken.trim().length > 0
-      ? input.bearerToken
-      : null;
-
-  const request = (
-    input.method === "POST"
-      ? HttpClientRequest.post(requestUrl.toString())
-      : HttpClientRequest.get(requestUrl.toString())
-  ).pipe(
-    input.body === undefined ? (req) => req : HttpClientRequest.bodyJsonUnsafe(input.body),
-    bearerToken
-      ? HttpClientRequest.setHeader("authorization", `Bearer ${bearerToken}`)
-      : (req) => req,
-  );
-  const client = yield* HttpClient.HttpClient;
-  const response = yield* client.execute(request).pipe(
-    Effect.mapError(
-      (cause) =>
+export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopbackSshHttpBaseUrl")(
+  function* (rawHttpBaseUrl: unknown): Effect.fn.Return<string, SshHttpBridgeError> {
+    return yield* Effect.try({
+      try: () => {
+        if (typeof rawHttpBaseUrl !== "string" || rawHttpBaseUrl.trim().length === 0) {
+          throw new Error("Invalid SSH forwarded http base URL.");
+        }
+        const baseUrl = new URL(rawHttpBaseUrl);
+        if (!isLoopbackHostname(baseUrl.hostname)) {
+          throw new Error("SSH desktop bridge only supports loopback forwarded URLs.");
+        }
+        return baseUrl.toString();
+      },
+      catch: (cause) =>
         new SshHttpBridgeError({
-          message: `Failed to reach SSH forwarded endpoint ${requestUrl.toString()}.`,
+          message: cause instanceof Error ? cause.message : "Invalid SSH forwarded http base URL.",
           cause,
         }),
-    ),
-  );
-  if (response.status < 200 || response.status >= 300) {
-    const text = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")));
-    const parsedError = yield* decodeRemoteHttpError(text).pipe(
-      Effect.catch(() => Effect.succeed(null)),
-    );
-    const message =
-      parsedError?.error && parsedError.error.trim().length > 0
-        ? parsedError.error
-        : text || `SSH forwarded request failed (${response.status}).`;
-    return yield* new SshHttpBridgeError({
-      status: response.status,
-      message: `[ssh_http:${response.status}] ${message} (${input.method ?? "GET"} ${requestUrl.toString()})`,
     });
-  }
-  return (yield* response.json.pipe(
-    Effect.mapError(
-      (cause) =>
-        new SshHttpBridgeError({
-          message: `SSH forwarded endpoint ${requestUrl.toString()} returned invalid JSON.`,
-          cause,
-        }),
-    ),
-  )) as T;
-});
+  },
+);
 
 const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(function* () {
-  const net = yield* NetService;
+  const net = yield* NetService.NetService;
   return yield* net.reserveLoopbackPort();
 });
 
@@ -925,7 +933,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | NetService
+  | NetService.NetService
   | Scope.Scope
 > {
   const hostSpec = yield* buildSshHostSpecEffect(input.resolvedTarget);
@@ -955,6 +963,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-o",
     "ExitOnForwardFailure=yes",
     "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    "-o",
+    "ControlPersist=no",
+    "-o",
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
@@ -964,7 +978,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
-  const tunnelCommand = ["ssh", ...args];
+  const sshCommand = yield* resolveSshCommand;
+  const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
@@ -977,9 +992,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   });
   const child = yield* spawner
     .spawn(
-      ChildProcess.make("ssh", args, {
+      ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
-        shell: process.platform === "win32",
+        extendEnv: true,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,
@@ -1078,7 +1093,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     ),
     Effect.tapError((cause) =>
       Effect.gen(function* () {
-        const net = yield* NetService;
+        const net = yield* NetService.NetService;
         const processRunningExit = yield* Effect.exit(child.isRunning);
         const localPortAvailableExit = yield* Effect.exit(
           net.canListenOnHost(input.localPort, "127.0.0.1"),
@@ -1502,7 +1517,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
     const packageSpec = options.resolveCliPackageSpec?.();
     const runner =
-      options.resolveCliRunner?.() ?? (packageSpec === undefined ? undefined : { packageSpec });
+      options.resolveCliRunner === undefined
+        ? packageSpec === undefined
+          ? undefined
+          : { packageSpec }
+        : yield* options.resolveCliRunner;
     yield* Effect.logDebug("ssh.environment.runner.resolved", {
       ...sshTargetLogFields(resolvedTarget),
       ...sshRunnerLogFields(runner),
@@ -1575,10 +1594,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
 });
 
+/**
+ * @effect-expect-leaking ChildProcessSpawner | FileSystem | HttpClient | NetService | Path | SshPasswordPrompt
+ */
 export class SshEnvironmentManager extends Context.Service<
   SshEnvironmentManager,
   SshEnvironmentManagerShape
->()("@t3tools/ssh/SshEnvironmentManager") {
+>()("@t3tools/ssh/tunnel/SshEnvironmentManager") {
   static readonly layer = (options: SshEnvironmentManagerOptions = {}) =>
     Layer.effect(SshEnvironmentManager, makeSshEnvironmentManager(options));
 }

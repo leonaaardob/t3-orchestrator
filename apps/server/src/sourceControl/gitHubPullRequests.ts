@@ -1,4 +1,9 @@
-import { Cause, DateTime, Exit, Option, Result, Schema } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
@@ -25,17 +30,21 @@ const GitHubPullRequestSchema = Schema.Struct({
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
+  // gh < 2.47 exports headRepository as {id, name} only; nameWithOwner was
+  // added later. Both fields stay optional so a version-drifted gh CLI can
+  // never fail the decode and silently drop the PR from the list.
   headRepository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        nameWithOwner: Schema.String,
+        nameWithOwner: Schema.optional(Schema.NullOr(Schema.String)),
+        name: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
   ),
   headRepositoryOwner: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        login: Schema.String,
+        login: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
   ),
@@ -66,11 +75,15 @@ function normalizeGitHubPullRequestState(input: {
 function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
-  const headRepositoryNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
+  const explicitNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
+  const headRepositoryName = trimOptionalString(raw.headRepository?.name);
   const headRepositoryOwnerLogin =
     trimOptionalString(raw.headRepositoryOwner?.login) ??
-    (typeof headRepositoryNameWithOwner === "string" && headRepositoryNameWithOwner.includes("/")
-      ? (headRepositoryNameWithOwner.split("/")[0] ?? null)
+    (explicitNameWithOwner?.includes("/") ? (explicitNameWithOwner.split("/")[0] ?? null) : null);
+  const headRepositoryNameWithOwner =
+    explicitNameWithOwner ??
+    (headRepositoryOwnerLogin && headRepositoryName
+      ? `${headRepositoryOwnerLogin}/${headRepositoryName}`
       : null);
 
   return {

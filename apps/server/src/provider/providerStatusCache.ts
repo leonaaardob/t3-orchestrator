@@ -4,7 +4,11 @@ import {
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
 } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 
@@ -130,7 +134,7 @@ export const readProviderStatusCache = (filePath: string) =>
         onFailure: (cause) =>
           Effect.logWarning("failed to parse provider status cache, ignoring", {
             path: filePath,
-            issues: Cause.pretty(cause),
+            errorTag: causeErrorTag(cause),
           }).pipe(Effect.as(undefined)),
         onSuccess: Effect.succeed,
       }),
@@ -140,8 +144,10 @@ export const readProviderStatusCache = (filePath: string) =>
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) =>
-  writeFileStringAtomically({
+}) => {
+  const { updateState: _updateState, ...cacheableProvider } = input.provider;
+  return writeFileStringAtomically({
     filePath: input.filePath,
-    contents: `${JSON.stringify(input.provider, null, 2)}\n`,
+    contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
   });
+};

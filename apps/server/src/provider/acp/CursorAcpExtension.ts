@@ -3,7 +3,8 @@
  * Additional reference provided by the Cursor team: https://anysphere.enterprise.slack.com/files/U068SSJE141/F0APT1HSZRP/cursor-acp-extension-method-schemas.md
  */
 import type { UserInputQuestion } from "@t3tools/contracts";
-import { Schema } from "effect";
+import * as AcpSchema from "effect-acp/schema";
+import * as Schema from "effect/Schema";
 
 const CursorAskQuestionOption = Schema.Struct({
   id: Schema.String,
@@ -53,6 +54,16 @@ export const CursorUpdateTodosRequest = Schema.Struct({
   merge: Schema.Boolean,
 });
 
+const CursorAvailableModel = Schema.Struct({
+  value: Schema.String,
+  name: Schema.String,
+  configOptions: Schema.optional(Schema.Array(AcpSchema.SessionConfigOption)),
+});
+
+export const CursorListAvailableModelsResponse = Schema.Struct({
+  models: Schema.Array(CursorAvailableModel),
+});
+
 export function extractAskQuestions(
   params: typeof CursorAskQuestionRequest.Type,
 ): ReadonlyArray<UserInputQuestion> {
@@ -83,7 +94,10 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
   }>;
 } {
   const plan = params.todos.flatMap((todo) => {
-    const step = todo.content?.trim() ?? todo.title?.trim() ?? "";
+    // Fall back to the title when content is missing OR blank. `??` only
+    // covers a missing content, so a present-but-empty content ("" or
+    // whitespace) would shadow a real title and drop the step below.
+    const step = todo.content?.trim() || todo.title?.trim() || "";
     if (step === "") {
       return [];
     }

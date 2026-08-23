@@ -1,13 +1,15 @@
 import {
-  ProviderDriverKind,
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { Cause, Data, Effect } from "effect";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -15,7 +17,6 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { compareCliVersions } from "../cliVersion.ts";
 import {
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
@@ -23,7 +24,6 @@ import {
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
-const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
@@ -135,11 +135,13 @@ function formatOpenCodeProbeError(input: {
 }
 
 function titleCaseSlug(value: string): string {
-  return value
-    .split(/[-_/]+/)
-    .filter((segment) => segment.length > 0)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  const segments: Array<string> = [];
+  for (const segment of value.split(/[-_/]+/)) {
+    if (segment.length > 0) {
+      segments.push(segment.charAt(0).toUpperCase() + segment.slice(1));
+    }
+  }
+  return segments.join(" ");
 }
 
 function inferDefaultVariant(
@@ -250,19 +252,37 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
-): ServerProviderDraft => {
-  const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(
-    [],
-    PROVIDER,
-    openCodeSettings.customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-  );
+): Effect.Effect<ServerProviderDraft> =>
+  Effect.gen(function* () {
+    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const models = providerModelsFromSettings(
+      [],
+      openCodeSettings.customModels,
+      DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+    );
 
-  if (!openCodeSettings.enabled) {
+    if (!openCodeSettings.enabled) {
+      return buildServerProvider({
+        presentation: OPENCODE_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message:
+            openCodeSettings.serverUrl.trim().length > 0
+              ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
+              : "OpenCode is disabled in T3 Code settings.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
-      enabled: false,
+      enabled: true,
       checkedAt,
       models,
       probe: {
@@ -270,36 +290,19 @@ export const makePendingOpenCodeProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message:
-          openCodeSettings.serverUrl.trim().length > 0
-            ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
-            : "OpenCode is disabled in T3 Code settings.",
+        message: "OpenCode provider status has not been checked in this session yet.",
       },
     });
-  }
-
-  return buildServerProvider({
-    presentation: OPENCODE_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: false,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "OpenCode provider status has not been checked in this session yet.",
-    },
   });
-};
 
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,
   cwd: string,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const checkedAt = new Date().toISOString();
+  const resolvedEnvironment = environment ?? process.env;
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
 
@@ -313,12 +316,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
       checkedAt,
-      models: providerModelsFromSettings(
-        [],
-        PROVIDER,
-        customModels,
-        DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-      ),
+      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
       probe: {
         installed: failure.installed,
         version,
@@ -334,12 +332,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       presentation: OPENCODE_PRESENTATION,
       enabled: false,
       checkedAt,
-      models: providerModelsFromSettings(
-        [],
-        PROVIDER,
-        customModels,
-        DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-      ),
+      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
       probe: {
         installed: false,
         version: null,
@@ -359,7 +352,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         .runOpenCodeCommand({
           binaryPath: openCodeSettings.binaryPath,
           args: ["--version"],
-          environment,
+          environment: resolvedEnvironment,
         })
         .pipe(
           Effect.mapError(
@@ -380,17 +373,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         null,
       );
     }
-    if (compareCliVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,
         checkedAt,
-        models: providerModelsFromSettings(
-          [],
-          PROVIDER,
-          customModels,
-          DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-        ),
+        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
         probe: {
           installed: true,
           version,
@@ -403,37 +391,33 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
 
   const inventoryExit = yield* Effect.exit(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const server = yield* openCodeRuntime
-          .connectToOpenCodeServer({
-            binaryPath: openCodeSettings.binaryPath,
-            serverUrl: openCodeSettings.serverUrl,
-            environment,
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-            ),
-          );
-        return yield* openCodeRuntime
-          .loadOpenCodeInventory(
-            openCodeRuntime.createOpenCodeSdkClient({
-              baseUrl: server.url,
-              directory: cwd,
-              ...(isExternalServer && openCodeSettings.serverPassword
-                ? { serverPassword: openCodeSettings.serverPassword }
-                : {}),
-            }),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-            ),
-          );
-      }),
+    (isExternalServer
+      ? Effect.scoped(
+          Effect.gen(function* () {
+            const server = yield* openCodeRuntime.connectToOpenCodeServer({
+              binaryPath: openCodeSettings.binaryPath,
+              serverUrl: openCodeSettings.serverUrl,
+              environment: resolvedEnvironment,
+            });
+            return yield* openCodeRuntime.loadOpenCodeInventory(
+              openCodeRuntime.createOpenCodeSdkClient({
+                baseUrl: server.url,
+                directory: cwd,
+                ...(openCodeSettings.serverPassword
+                  ? { serverPassword: openCodeSettings.serverPassword }
+                  : {}),
+              }),
+            );
+          }),
+        )
+      : openCodeRuntime.loadInventoryFromCli({
+          binaryPath: openCodeSettings.binaryPath,
+          environment: resolvedEnvironment,
+        })
+    ).pipe(
+      Effect.mapError(
+        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+      ),
     ),
   );
   if (inventoryExit._tag === "Failure") {
@@ -442,7 +426,6 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
 
   const models = providerModelsFromSettings(
     flattenOpenCodeModels(inventoryExit.value),
-    PROVIDER,
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );

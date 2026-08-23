@@ -1,4 +1,4 @@
-import { type SVGProps, useId } from "react";
+import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
@@ -196,6 +196,18 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
     className={cn("fill-[#26251E] dark:fill-[#EDECEC]", className)}
   >
     <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
+  </svg>
+);
+
+export const GrokIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
+  >
+    <path d="M9.26905 15.284L17.2479 9.36086C17.6391 9.07047 18.1981 9.18374 18.3845 9.63478C19.3655 12.0135 18.9272 14.8721 16.9755 16.8349C15.0238 18.7976 12.3082 19.228 9.8261 18.2477L7.1146 19.5102C11.0037 22.1834 15.7263 21.5223 18.6774 18.5525C21.0182 16.1985 21.7432 12.9897 21.0653 10.0961L21.0714 10.1023C20.0884 5.85143 21.3131 4.15233 23.8218 0.677913C23.8812 0.595532 23.9406 0.513151 24 0.428711L20.6987 3.74866V3.73836L9.267 15.2861" />
+    <path d="M7.62249 16.7237C4.83113 14.0422 5.3124 9.89222 7.69417 7.49905C9.45541 5.72786 12.341 5.00497 14.86 6.06768L17.5653 4.81138C17.0779 4.45714 16.4533 4.07613 15.7365 3.80839C12.4966 2.46764 8.6178 3.13492 5.98413 5.78141C3.45081 8.32904 2.65415 12.2463 4.02219 15.5889C5.04412 18.0871 3.36889 19.8541 1.68137 21.6377C1.08337 22.2699 0.483318 22.9022 0 23.5716L7.62045 16.7257" />
   </svg>
 );
 
@@ -634,107 +646,6 @@ export const AntigravityIcon: Icon = (props) => (
     <image href={ANTIGRAVITY_ICON_DATA_URL} width="128" height="128" />
   </svg>
 );
-
-export const IntelliJIdeaIcon: Icon = (props) => {
-  const id = useId();
-  const gradientAId = `${id}-idea-a`;
-  const gradientBId = `${id}-idea-b`;
-  const gradientCId = `${id}-idea-c`;
-  const gradientDId = `${id}-idea-d`;
-
-  return (
-    <svg {...props} viewBox="0 0 70 70" fill="none">
-      <defs>
-        <linearGradient
-          id={gradientAId}
-          x1="0.7898"
-          y1="40.0893"
-          x2="33.3172"
-          y2="40.0893"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0.2581" stopColor="#F97A12" />
-          <stop offset="0.4591" stopColor="#B07B58" />
-          <stop offset="0.7241" stopColor="#577BAE" />
-          <stop offset="0.9105" stopColor="#1E7CE5" />
-          <stop offset="1" stopColor="#087CFA" />
-        </linearGradient>
-        <linearGradient
-          id={gradientBId}
-          x1="25.7674"
-          y1="24.88"
-          x2="79.424"
-          y2="54.57"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#F97A12" />
-          <stop offset="0.07179946" stopColor="#CB7A3E" />
-          <stop offset="0.1541" stopColor="#9E7B6A" />
-          <stop offset="0.242" stopColor="#757B91" />
-          <stop offset="0.3344" stopColor="#537BB1" />
-          <stop offset="0.4324" stopColor="#387CCC" />
-          <stop offset="0.5381" stopColor="#237CE0" />
-          <stop offset="0.6552" stopColor="#147CEF" />
-          <stop offset="0.7925" stopColor="#0B7CF7" />
-          <stop offset="1" stopColor="#087CFA" />
-        </linearGradient>
-        <linearGradient
-          id={gradientCId}
-          x1="63.2277"
-          y1="42.9153"
-          x2="48.2903"
-          y2="-1.7191"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#FE315D" />
-          <stop offset="0.07840246" stopColor="#CB417E" />
-          <stop offset="0.1601" stopColor="#9E4E9B" />
-          <stop offset="0.2474" stopColor="#755BB4" />
-          <stop offset="0.3392" stopColor="#5365CA" />
-          <stop offset="0.4365" stopColor="#386DDB" />
-          <stop offset="0.5414" stopColor="#2374E9" />
-          <stop offset="0.6576" stopColor="#1478F3" />
-          <stop offset="0.794" stopColor="#0B7BF8" />
-          <stop offset="1" stopColor="#087CFA" />
-        </linearGradient>
-        <linearGradient
-          id={gradientDId}
-          x1="10.7204"
-          y1="16.473"
-          x2="55.5237"
-          y2="90.58"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#FE315D" />
-          <stop offset="0.04023279" stopColor="#F63462" />
-          <stop offset="0.1037" stopColor="#DF3A71" />
-          <stop offset="0.1667" stopColor="#C24383" />
-          <stop offset="0.2912" stopColor="#AD4A91" />
-          <stop offset="0.5498" stopColor="#755BB4" />
-          <stop offset="0.9175" stopColor="#1D76ED" />
-          <stop offset="1" stopColor="#087CFA" />
-        </linearGradient>
-      </defs>
-      <polygon points="17.7,54.6 0.8,41.2 9.2,25.6 33.3,35" fill={`url(#${gradientAId})`} />
-      <path
-        d="M70 18.7 68.7 59.2 41.8 70 25.6 59.6 49.3 35 38.9 12.3 48.2 1.1Z"
-        fill={`url(#${gradientBId})`}
-      />
-      <polygon points="70,18.7 48.7,43.9 38.9,12.3 48.2,1.1" fill={`url(#${gradientCId})`} />
-      <path
-        d="M33.7 58.1 5.6 68.3 10.1 52.5 16 33.1 0 27.7 10.1 0 32.1 2.7 53.7 27.4Z"
-        fill={`url(#${gradientDId})`}
-      />
-      <rect x="13.7" y="13.5" width="43.2" height="43.2" fill="#000" />
-      <rect x="17.7" y="48.6" width="16.2" height="2.7" fill="#fff" />
-      <path d="M29.4 22.4v-3.3h-9v3.3h2.6v11.3h-2.6V37h9v-3.3h-2.5V22.4h2.5Z" fill="#fff" />
-      <path
-        d="M38 37.3c-1.4 0-2.6-.3-3.5-.8-.9-.5-1.7-1.2-2.3-1.9l2.5-2.8c.5.6 1 1 1.5 1.3.5.3 1.1.5 1.7.5.7 0 1.3-.2 1.8-.7.4-.5.6-1.2.6-2.3V19.1h4v11.7c0 1.1-.1 2-.4 2.8-.3.8-.7 1.4-1.3 2-.5.5-1.2 1-2 1.2-.8.3-1.6.5-2.6.5Z"
-        fill="#fff"
-      />
-    </svg>
-  );
-};
 
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">

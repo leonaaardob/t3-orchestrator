@@ -20,19 +20,28 @@ import {
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
+  type RuntimeTaskUsage,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import { Effect, Exit, Fiber, FileSystem, Queue, Schema, Scope, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import {
-  getModelSelectionBooleanOptionValue,
-  getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -54,6 +63,13 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
+const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
+const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
+  CodexSessionRuntimeThreadIdMissingError,
+);
+const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -84,10 +100,7 @@ function mapCodexRuntimeError(
   method: string,
   error: CodexSessionRuntimeError,
 ): ProviderAdapterError {
-  if (
-    Schema.is(CodexErrors.CodexAppServerProcessExitedError)(error) ||
-    Schema.is(CodexErrors.CodexAppServerTransportError)(error)
-  ) {
+  if (isCodexAppServerProcessExitedError(error) || isCodexAppServerTransportError(error)) {
     return new ProviderAdapterSessionClosedError({
       provider: PROVIDER,
       threadId,
@@ -95,7 +108,7 @@ function mapCodexRuntimeError(
     });
   }
 
-  if (Schema.is(CodexSessionRuntimeThreadIdMissingError)(error)) {
+  if (isCodexSessionRuntimeThreadIdMissingError(error)) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
       threadId,
@@ -127,7 +140,8 @@ function readPayload<A>(
   schema: Schema.Schema<A>,
   payload: ProviderEvent["payload"],
 ): A | undefined {
-  return Schema.is(schema)(payload) ? payload : undefined;
+  const isPayload = Schema.is(schema);
+  return isPayload(payload) ? payload : undefined;
 }
 
 function trimText(value: string | undefined | null): string | undefined {
@@ -224,7 +238,10 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType): string | undefined {
+function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
+  if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
+    return `${item.server} · ${item.tool}`;
+  }
   switch (itemType) {
     case "assistant_message":
       return "Assistant message";
@@ -253,8 +270,14 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
   }
 }
 
-function itemDetail(item: CodexLifecycleItem): string | undefined {
+function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
+  const itemRecord = item as Record<string, unknown>;
+  const action = itemRecord.action as Record<string, unknown> | undefined;
+  const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
+    ...(itemType === "web_search"
+      ? [itemRecord.query, action?.query, ...actionQueries, action?.pattern, action?.url]
+      : []),
     "command" in item ? item.command : undefined,
     "title" in item ? item.title : undefined,
     "summary" in item ? item.summary : undefined,
@@ -262,6 +285,7 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     "path" in item ? item.path : undefined,
     "prompt" in item ? item.prompt : undefined,
   ];
+
   for (const candidate of candidates) {
     const trimmed = typeof candidate === "string" ? trimText(candidate) : undefined;
     if (!trimmed) continue;
@@ -451,7 +475,7 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const detail = itemDetail(item);
+  const detail = itemDetail(itemType, item);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -465,17 +489,283 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
 }
 
+/**
+ * Maps the session runtime's synthetic `collabAgent/*` events (native
+ * multi-agent v2 child-thread signals) into the shared task.* lifecycle.
+ * Agent identity = child thread id; nickname is the display title, role is
+ * agentRole (fallback: last agentPath segment, then "general-purpose").
+ * A completed child turn is idle (resumable), not terminal. timelineBypass
+ * keeps these rows out of the parent chat.
+ */
+function mapCollabAgentEvent(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as Record<string, unknown>)
+      : undefined;
+  const agentThreadId = typeof payload?.agentThreadId === "string" ? payload.agentThreadId : "";
+  if (!payload || agentThreadId.length === 0) {
+    return [];
+  }
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const taskId = RuntimeTaskId.make(agentThreadId);
+  const agentPath = typeof payload.agentPath === "string" ? payload.agentPath : undefined;
+  const pathLeaf = agentPath?.split("/").findLast((segment) => segment.length > 0);
+  const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
+  const role =
+    (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
+  // A bare thread id is not a name. Omitting the title lets the client fold
+  // keep the real one from task.started instead of clobbering it (probe
+  // finding: progress rows renamed math_one to its UUID).
+  const knownName = nickname ?? pathLeaf;
+  const title = knownName ?? agentThreadId;
+  // Identity repeated on every status patch so rows are self-describing when
+  // the start row ages out of activity retention (review finding: a
+  // reconstructed agent had a UUID name and no role/path).
+  const statusLinkage = {
+    role,
+    ...(knownName ? { title: knownName } : {}),
+    ...(agentPath ? { agentPath } : {}),
+    timelineBypass: true,
+  } as const;
+
+  switch (event.method) {
+    case "collabAgent/started":
+      return [
+        {
+          ...base,
+          type: "task.started",
+          payload: {
+            taskId,
+            description: title,
+            title,
+            role,
+            ...(agentPath ? { agentPath } : {}),
+            ...(typeof payload.parentThreadId === "string"
+              ? { parentAgentId: payload.parentThreadId }
+              : {}),
+            timelineBypass: true,
+          },
+        },
+      ];
+    case "collabAgent/activity": {
+      const activityKind = typeof payload.activityKind === "string" ? payload.activityKind : "";
+      if (activityKind === "interrupted") {
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "interrupted", ...statusLinkage },
+          },
+        ];
+      }
+      if (activityKind === "started") {
+        // Wire-probe finding: children often register via subAgentActivity
+        // alone (no thread/started with a spawn source), so this is the one
+        // shot at a task.started with a real name — agentPath leaf beats a
+        // bare thread-id title.
+        return [
+          {
+            ...base,
+            type: "task.started",
+            payload: {
+              taskId,
+              description: title,
+              title,
+              role,
+              ...(agentPath ? { agentPath } : {}),
+              timelineBypass: true,
+            },
+          },
+        ];
+      }
+      // interacted → the child is (again) actively driven.
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status: "running", ...statusLinkage },
+        },
+      ];
+    }
+    case "collabAgent/turnStarted":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status: "running", ...statusLinkage },
+        },
+      ];
+    case "collabAgent/turnCompleted": {
+      // Idle, not terminal: the identity is resumable via sendInput/resume.
+      const turn =
+        typeof payload.turn === "object" && payload.turn !== null
+          ? (payload.turn as Record<string, unknown>)
+          : undefined;
+      const turnStatus = typeof turn?.status === "string" ? turn.status : undefined;
+      const status =
+        turnStatus === "failed"
+          ? ("failed" as const)
+          : turnStatus === "interrupted"
+            ? ("interrupted" as const)
+            : ("idle" as const);
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status, ...statusLinkage },
+        },
+      ];
+    }
+    case "collabAgent/statusChanged": {
+      const status =
+        typeof payload.status === "object" && payload.status !== null
+          ? (payload.status as Record<string, unknown>)
+          : undefined;
+      const statusType = typeof status?.type === "string" ? status.type : undefined;
+      if (statusType === "systemError") {
+        // Silently dropping this once left children stuck running forever.
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "failed", ...statusLinkage },
+          },
+        ];
+      }
+      if (statusType === "active") {
+        const flags = Array.isArray(status?.activeFlags) ? status.activeFlags : [];
+        const waiting = flags.some(
+          (flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput",
+        );
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: waiting ? "waiting" : "running", ...statusLinkage },
+          },
+        ];
+      }
+      if (statusType === "idle") {
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "idle", ...statusLinkage },
+          },
+        ];
+      }
+      return [];
+    }
+    case "collabAgent/tokenUsage": {
+      // Cumulative per child thread: always the `total` breakdown, never
+      // `last` (which shrinks on follow-ups). Client folds max-merge.
+      const tokenUsage =
+        typeof payload.tokenUsage === "object" && payload.tokenUsage !== null
+          ? (payload.tokenUsage as Record<string, unknown>)
+          : undefined;
+      const total =
+        typeof tokenUsage?.total === "object" && tokenUsage.total !== null
+          ? (tokenUsage.total as Record<string, unknown>)
+          : undefined;
+      const count = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+      // Same validation as every other field: RuntimeTaskUsage.totalTokens
+      // is NonNegativeInt, so NaN/Infinity/negative wire values must miss.
+      const totalTokens = count(total?.totalTokens);
+      if (totalTokens === undefined) {
+        return [];
+      }
+      const typedUsage: RuntimeTaskUsage = {
+        totalTokens,
+        ...(count(total?.inputTokens) !== undefined
+          ? { inputTokens: count(total?.inputTokens) }
+          : {}),
+        ...(count(total?.cachedInputTokens) !== undefined
+          ? { cachedInputTokens: count(total?.cachedInputTokens) }
+          : {}),
+        ...(count(total?.outputTokens) !== undefined
+          ? { outputTokens: count(total?.outputTokens) }
+          : {}),
+        ...(count(total?.reasoningOutputTokens) !== undefined
+          ? { reasoningOutputTokens: count(total?.reasoningOutputTokens) }
+          : {}),
+      };
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            taskId,
+            description: title,
+            ...(knownName ? { title: knownName } : {}),
+            typedUsage,
+            timelineBypass: true,
+          },
+        },
+      ];
+    }
+    case "collabAgent/item": {
+      const item =
+        typeof payload.item === "object" && payload.item !== null
+          ? (payload.item as Record<string, unknown>)
+          : undefined;
+      const itemTypeRaw = typeof item?.type === "string" ? item.type : undefined;
+      if (!itemTypeRaw) {
+        return [];
+      }
+      // A loose summary from the raw item: the child stream is untyped at
+      // this boundary (synthetic event payload), so read best-effort fields
+      // rather than force a schema decode.
+      const looseSummary =
+        (typeof item?.command === "string" ? item.command : undefined) ??
+        (typeof item?.title === "string" ? item.title : undefined) ??
+        (typeof item?.query === "string" ? item.query : undefined);
+      const canonical = toCanonicalItemType(itemTypeRaw);
+      const summary = looseSummary ?? canonical.replaceAll("_", " ");
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            taskId,
+            description: title,
+            ...(knownName ? { title: knownName } : {}),
+            summary,
+            timelineBypass: true,
+          },
+        },
+      ];
+    }
+    case "collabAgent/closed":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status: "interrupted", ...statusLinkage },
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
+    return mapCollabAgentEvent(event, canonicalThreadId);
+  }
   if (event.kind === "error") {
     if (!event.message) {
       return [];
@@ -825,7 +1115,7 @@ function mapToRuntimeEvents(
     }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
-      const detail = itemDetail(item);
+      const detail = itemDetail(itemType, item);
       if (!detail) {
         return [];
       }
@@ -1151,7 +1441,7 @@ function mapToRuntimeEvents(
         type: "thread.realtime.started",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          realtimeSessionId: payload.sessionId ?? undefined,
+          realtimeSessionId: payload.realtimeSessionId ?? undefined,
         },
       },
     ];
@@ -1338,6 +1628,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -1367,23 +1658,40 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const serviceTier =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? getCodexServiceTierOptionValue(input.modelSelection)
+            : undefined;
+        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
+          ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
-          ...(input.modelSelection?.instanceId === boundInstanceId &&
-          getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode") === true
-            ? { serviceTier: "fast" }
+          ...(serviceTier ? { serviceTier } : {}),
+          ...(mcpSession
+            ? {
+                environment: {
+                  ...(options?.environment ?? process.env),
+                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                },
+                appServerArgs: [
+                  "-c",
+                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                  "-c",
+                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                ],
+              }
             : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
@@ -1395,6 +1703,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtime = yield* createRuntime(runtimeInput).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -1499,9 +1808,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
         : undefined;
-    const fastMode =
+    const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode")
+        ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
     return yield* session.runtime
       .sendTurn({
@@ -1514,7 +1823,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
             }
           : {}),
-        ...(fastMode === true ? { serviceTier: "fast" } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
@@ -1605,7 +1914,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
-  const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
+  const writeNativeEvent = Effect.fnUntraced(function* (event: ProviderEvent) {
     if (!nativeEventLogger) {
       return;
     }

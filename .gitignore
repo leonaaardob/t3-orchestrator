@@ -5,10 +5,11 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+infra/*/dist
 .astro
 packages/*/dist
-.env
-.env.local
+.env*
+!.env.example
 build/
 .logs/
 release/
@@ -28,3 +29,11 @@ squashfs-root/
 .docs/
 .plans/
 .vscode/
+.gstack/
+dist-electron/
+.electron-runtime/
+.showcase/
+apps/mobile/.showcase/
+artifacts/app-store/screenshots/
+native/**/target/
+.alchemy/

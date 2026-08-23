@@ -9,8 +9,15 @@ import {
   type OrchestrationEvent,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
-import { describe, expect, it } from "vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -20,10 +27,12 @@ import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
-import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -31,7 +40,6 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -42,27 +50,35 @@ async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
-  const orchestrationLayer = OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+  const orchestrationLayer = Layer.mergeAll(
+    OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+    ),
+    OrchestrationProjectionSnapshotQueryLive,
+  ).pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolverLive),
+    Layer.provide(RepositoryIdentityResolver.layer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
+    readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
 }
 
 function now() {
-  return new Date().toISOString();
+  return "2026-01-01T00:00:00.000Z";
 }
 
 const hasMetricSnapshot = (
@@ -77,15 +93,18 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
-  it("bootstraps the in-memory read model from persisted projections", async () => {
-    const failOnHistoricalReplayStore: OrchestrationEventStoreShape = {
-      append: () =>
-        Effect.fail(
-          new PersistenceSqlError({
-            operation: "test.append",
-            detail: "append should not be called during bootstrap",
-          }),
-        ),
+  it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
+    let nextSequence = 8;
+    const eventStore: OrchestrationEventStoreShape = {
+      append: (event) =>
+        Effect.sync(() => {
+          const savedEvent = {
+            ...event,
+            sequence: nextSequence,
+          } as OrchestrationEvent;
+          nextSequence += 1;
+          return savedEvent;
+        }),
       readFromSequence: () => Stream.empty,
       readAll: () =>
         Stream.fail(
@@ -131,6 +150,8 @@ describe("OrchestrationEngine", () => {
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -140,11 +161,27 @@ describe("OrchestrationEngine", () => {
         },
       ],
     };
+    const commandReadModel = {
+      ...projectionSnapshot,
+      threads: projectionSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+        checkpoints: [],
+      })),
+    };
+    let fullSnapshotReadCount = 0;
 
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
-          getSnapshot: () => Effect.succeed(projectionSnapshot),
+          getCommandReadModel: () => Effect.succeed(commandReadModel),
+          getSnapshot: () =>
+            Effect.sync(() => {
+              fullSnapshotReadCount += 1;
+              return projectionSnapshot;
+            }),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
@@ -152,13 +189,25 @@ describe("OrchestrationEngine", () => {
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
+          getArchivedShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: projectionSnapshot.snapshotSequence,
+              projects: [],
+              threads: [],
+              updatedAt: projectionSnapshot.updatedAt,
+            }),
+          getSnapshotSequence: () =>
+            Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+          getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          searchThreads: () => Effect.succeed({ matches: [] }),
         }),
       ),
       Layer.provide(
@@ -167,26 +216,33 @@ describe("OrchestrationEngine", () => {
           projectEvent: () => Effect.void,
         } satisfies OrchestrationProjectionPipelineShape),
       ),
-      Layer.provide(Layer.succeed(OrchestrationEventStore, failOnHistoricalReplayStore)),
+      Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
+      Layer.provideMerge(NodeServices.layer),
     );
 
     const runtime = ManagedRuntime.make(layer);
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const readModel = await runtime.runPromise(engine.getReadModel());
+    expect(await runtime.runPromise(engine.latestSequence)).toBe(7);
+    const result = await runtime.runPromise(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-bootstrap-thread-update"),
+        threadId: ThreadId.make("thread-bootstrap"),
+        title: "Updated Bootstrap Thread",
+      }),
+    );
 
-    expect(readModel.snapshotSequence).toBe(7);
-    expect(readModel.projects).toHaveLength(1);
-    expect(readModel.projects[0]?.title).toBe("Bootstrap Project");
-    expect(readModel.threads).toHaveLength(1);
-    expect(readModel.threads[0]?.title).toBe("Bootstrap Thread");
+    expect(result.sequence).toBe(8);
+    expect(await runtime.runPromise(engine.latestSequence)).toBe(8);
+    expect(fullSnapshotReadCount).toBe(0);
 
     await runtime.dispose();
   });
 
-  it("returns deterministic read models for repeated reads", async () => {
+  it("persists deterministic read models for repeated snapshot reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -240,8 +296,8 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const readModelA = await system.run(engine.getReadModel());
-    const readModelB = await system.run(engine.getReadModel());
+    const readModelA = await system.readModel();
+    const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
     await system.dispose();
   });
@@ -286,16 +342,27 @@ describe("OrchestrationEngine", () => {
 
     await system.run(
       engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-archive-title-regeneration"),
+        threadId: ThreadId.make("thread-archive"),
+        regenerateTitle: true,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("cmd-thread-archive"),
         threadId: ThreadId.make("thread-archive"),
       }),
     );
     expect(
-      (await system.run(engine.getReadModel())).threads.find(
-        (thread) => thread.id === "thread-archive",
-      )?.archivedAt,
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.archivedAt,
     ).not.toBeNull();
+    expect(
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.titleRegeneration,
+    ).toBeNull();
 
     await system.run(
       engine.dispatch({
@@ -305,10 +372,25 @@ describe("OrchestrationEngine", () => {
       }),
     );
     expect(
-      (await system.run(engine.getReadModel())).threads.find(
-        (thread) => thread.id === "thread-archive",
-      )?.archivedAt,
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.archivedAt,
     ).toBeNull();
+    expect(
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.titleRegeneration,
+    ).toBeNull();
+    await system.run(
+      engine.dispatch({
+        type: "thread.title.regeneration.complete",
+        commandId: CommandId.make("cmd-thread-archive-stale-title-completion"),
+        threadId: ThreadId.make("thread-archive"),
+        requestId: CommandId.make("cmd-thread-archive-title-regeneration"),
+        title: "Stale generated title",
+      }),
+    );
+    expect(
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")?.title,
+    ).toBe("Archive me");
 
     await system.dispose();
   });
@@ -429,6 +511,112 @@ describe("OrchestrationEngine", () => {
     );
 
     expect(eventTypes).toEqual(["thread.created", "thread.meta-updated"]);
+    await system.dispose();
+  });
+
+  it("does not regress a generated branch to a stale temporary worktree branch", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-branch-race-project-create"),
+        projectId: asProjectId("project-branch-race"),
+        title: "Branch Race Project",
+        workspaceRoot: "/tmp/project-branch-race",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-branch-race-thread-create"),
+        threadId: ThreadId.make("thread-branch-race"),
+        projectId: asProjectId("project-branch-race"),
+        title: "Branch Race Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "t3code/generated-branch-name",
+        worktreePath: "/tmp/project-branch-race-worktree",
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-stale-temporary-branch-sync"),
+        threadId: ThreadId.make("thread-branch-race"),
+        branch: "t3code/1234abcd",
+        expectedBranch: "t3code/1234abcd",
+      }),
+    );
+
+    const snapshot = await system.readModel();
+    expect(snapshot.threads[0]?.branch).toBe("t3code/generated-branch-name");
+    await system.dispose();
+  });
+
+  it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-worktree-bootstrap-project-create"),
+        projectId: asProjectId("project-worktree-bootstrap"),
+        title: "Worktree Bootstrap Project",
+        workspaceRoot: "/tmp/project-worktree-bootstrap",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-worktree-bootstrap-thread-create"),
+        threadId: ThreadId.make("thread-worktree-bootstrap"),
+        projectId: asProjectId("project-worktree-bootstrap"),
+        title: "Worktree Bootstrap Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "main",
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-authoritative-worktree-bootstrap"),
+        threadId: ThreadId.make("thread-worktree-bootstrap"),
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/project-worktree-bootstrap-worktree",
+      }),
+    );
+
+    const snapshot = await system.readModel();
+    expect(snapshot.threads[0]?.branch).toBe("t3code/1234abcd");
+    expect(snapshot.threads[0]?.worktreePath).toBe("/tmp/project-worktree-bootstrap-worktree");
     await system.dispose();
   });
 
@@ -573,7 +761,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const thread = (await system.run(engine.getReadModel())).threads.find(
+    const thread = (await system.readModel()).threads.find(
       (entry) => entry.id === "thread-turn-diff",
     );
     expect(thread?.checkpoints).toEqual([
@@ -633,10 +821,12 @@ describe("OrchestrationEngine", () => {
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(ThreadBackgroundLiveness.layer),
+        Layer.provide(ThreadPlanProgress.layer),
         Layer.provide(OrchestrationProjectionPipelineLive),
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
         Layer.provideMerge(ServerConfigLayer),
         Layer.provideMerge(NodeServices.layer),
@@ -701,7 +891,15 @@ describe("OrchestrationEngine", () => {
     );
 
     expect(result.sequence).toBe(2);
-    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    const eventsAfterRetry = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterRetry.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+    ]);
     await runtime.dispose();
   });
 
@@ -730,11 +928,14 @@ describe("OrchestrationEngine", () => {
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(ThreadBackgroundLiveness.layer),
+        Layer.provide(ThreadPlanProgress.layer),
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(OrchestrationEventStoreLive),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -801,7 +1002,6 @@ describe("OrchestrationEngine", () => {
       "project.created",
       "thread.created",
     ]);
-    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
 
     const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
     expect(retryResult.sequence).toBe(4);
@@ -824,7 +1024,7 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
-  it("reconciles in-memory state when append persists but projection fails", async () => {
+  it("reconciles command state when append persists but projection fails", async () => {
     type StoredEvent =
       ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
         ? A
@@ -856,7 +1056,7 @@ describe("OrchestrationEngine", () => {
       projectEvent: (event) => {
         if (
           shouldFailProjection &&
-          event.commandId === CommandId.make("cmd-thread-meta-sync-fail")
+          event.commandId === CommandId.make("cmd-thread-archive-sync-fail")
         ) {
           shouldFailProjection = false;
           return Effect.fail(
@@ -873,11 +1073,14 @@ describe("OrchestrationEngine", () => {
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(ThreadBackgroundLiveness.layer),
+        Layer.provide(ThreadPlanProgress.layer),
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-        Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
       ),
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -919,20 +1122,22 @@ describe("OrchestrationEngine", () => {
     await expect(
       runtime.runPromise(
         engine.dispatch({
-          type: "thread.meta.update",
-          commandId: CommandId.make("cmd-thread-meta-sync-fail"),
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-thread-archive-sync-fail"),
           threadId: ThreadId.make("thread-sync"),
-          title: "sync-after-failed-projection",
         }),
       ),
     ).rejects.toThrow("projection failed");
 
-    const readModelAfterFailure = await runtime.runPromise(engine.getReadModel());
-    const updatedThread = readModelAfterFailure.threads.find(
-      (thread) => thread.id === "thread-sync",
-    );
-    expect(readModelAfterFailure.snapshotSequence).toBe(3);
-    expect(updatedThread?.title).toBe("sync-after-failed-projection");
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-thread-archive-sync-retry"),
+          threadId: ThreadId.make("thread-sync"),
+        }),
+      ),
+    ).rejects.toThrow("already archived");
 
     await runtime.dispose();
   });

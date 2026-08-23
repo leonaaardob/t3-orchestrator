@@ -2,7 +2,8 @@ import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 
 import {
   makeClaudeCapabilitiesCacheKey,
@@ -30,11 +31,20 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const resolved = path.resolve(NodeOS.homedir(), ".claude-work");
 
         expect(yield* resolveClaudeHomePath({ homePath })).toBe(resolved);
-        expect((yield* makeClaudeEnvironment({ homePath })).HOME).toBe(resolved);
+        expect((yield* makeClaudeEnvironment({ homePath })).CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(yield* makeClaudeContinuationGroupKey({ homePath })).toBe(`claude:home:${resolved}`);
         expect(yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath })).toBe(
-          `claude\0${resolved}`,
+          `claude\0${resolved}\0`,
         );
+      }),
+    );
+
+    it.effect("separates capability probes by cwd", () =>
+      Effect.gen(function* () {
+        const config = { binaryPath: "claude", homePath: "" };
+        const first = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-a");
+        const second = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-b");
+        expect(first).not.toBe(second);
       }),
     );
 

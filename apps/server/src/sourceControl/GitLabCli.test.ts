@@ -1,5 +1,6 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -7,7 +8,7 @@ import { VcsProcessExitError } from "@t3tools/contracts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 
-const mockedRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
+const mockedRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 const layer = it.layer(
   GitLabCli.layer.pipe(
     Layer.provide(
@@ -38,6 +39,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               iid: 42,
               title: "Add MR thread creation",
@@ -89,6 +91,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 iid: 0,
@@ -154,6 +157,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               path_with_namespace: "octocat/t3code",
               web_url: "https://gitlab.com/octocat/t3code",
@@ -219,10 +223,19 @@ layer("GitLabCli.layer", (it) => {
   it.effect("creates repositories under an explicit namespace", () =>
     Effect.gen(function* () {
       mockedRun
-        .mockReturnValueOnce(Effect.succeed(processOutput(JSON.stringify({ id: 1234 }))))
+
         .mockReturnValueOnce(
           Effect.succeed(
             processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({ id: 1234 }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
               JSON.stringify({
                 path_with_namespace: "octocat/t3code",
                 web_url: "https://gitlab.com/octocat/t3code",
@@ -300,17 +313,15 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect("surfaces a friendly error when the merge request is not found", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.fail(
-          new VcsProcessExitError({
-            operation: "GitLabCli.execute",
-            command: "glab mr view 4888",
-            cwd: "/repo",
-            exitCode: 1,
-            detail: "GET 404 merge request not found",
-          }),
-        ),
-      );
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "GET 404 merge request not found",
+        failureKind: "not-found",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
 
       const error = yield* Effect.gen(function* () {
         const glab = yield* GitLabCli.GitLabCli;
@@ -320,7 +331,37 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.equal(error.message.includes("Merge request not found"), true);
+      assert.equal(error.message.includes("Merge request 4888 was not found"), true);
+      assert.strictEqual(error._tag, "GitLabMergeRequestNotFoundError");
+      assert.strictEqual(error.command, "glab");
+      assert.strictEqual(error.cwd, "/repo");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message.includes(cause.detail), false);
+    }),
+  );
+
+  it.effect("keeps non-merge-request not-found failures generic", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "GET 404 project not found",
+        failureKind: "not-found",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "missing/project",
+        });
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabCliCommandError");
+      assert.strictEqual(error.cause, cause);
     }),
   );
 });

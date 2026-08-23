@@ -1,4 +1,12 @@
-import { Context, DateTime, Effect, Layer, Option } from "effect";
+import * as NodeCrypto from "node:crypto";
+
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -10,6 +18,10 @@ import {
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
+  type ReviewDiffFileContentsInput,
+  type ReviewDiffFileContentsResult,
   type VcsInitInput,
   type VcsListRefsInput,
   type VcsListRefsResult,
@@ -18,7 +30,7 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import * as GitVcsDriverCore from "./GitVcsDriverCore.ts";
+import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -31,7 +43,7 @@ export interface ExecuteGitInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
-  readonly truncateOutputAtMaxBytes?: boolean;
+  readonly appendTruncationMarker?: boolean;
   readonly progress?: ExecuteGitProgress;
 }
 
@@ -52,6 +64,17 @@ export interface GitStatusDetails {
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;
   workingTree: VcsStatusResult["workingTree"];
+  hasUpstream: boolean;
+  aheadCount: number;
+  behindCount: number;
+  aheadOfDefaultCount: number;
+}
+
+export interface GitRemoteStatusDetails {
+  isRepo: boolean;
+  isDefaultBranch: boolean;
+  branch: string | null;
+  upstreamRef: string | null;
   hasUpstream: boolean;
   aheadCount: number;
   behindCount: number;
@@ -140,6 +163,27 @@ export interface GitFetchRemoteTrackingBranchInput {
   remoteBranch: string;
 }
 
+export interface GitFetchRemoteInput {
+  cwd: string;
+  remoteName: string;
+}
+
+export interface GitRemoteExistsInput {
+  cwd: string;
+  remoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitInput {
+  cwd: string;
+  refName: string;
+  fallbackRemoteName: string;
+}
+
+export interface GitResolveRemoteTrackingCommitResult {
+  commitSha: string;
+  remoteRefName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -147,73 +191,96 @@ export interface GitSetBranchUpstreamInput {
   remoteBranch: string;
 }
 
-export interface GitVcsDriverShape {
-  readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
-  readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
-  readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
-  readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
-  readonly prepareCommitContext: (
-    cwd: string,
-    filePaths?: readonly string[],
-  ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
-  readonly commit: (
-    cwd: string,
-    subject: string,
-    body: string,
-    options?: GitCommitOptions,
-  ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
-  readonly pushCurrentBranch: (
-    cwd: string,
-    fallbackBranch: string | null,
-    options?: { readonly remoteName?: string | null },
-  ) => Effect.Effect<GitPushResult, GitCommandError>;
-  readonly readRangeContext: (
-    cwd: string,
-    baseRef: string,
-  ) => Effect.Effect<GitRangeContext, GitCommandError>;
-  readonly readConfigValue: (
-    cwd: string,
-    key: string,
-  ) => Effect.Effect<string | null, GitCommandError>;
-  readonly listRefs: (input: VcsListRefsInput) => Effect.Effect<VcsListRefsResult, GitCommandError>;
-  readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
-  readonly createWorktree: (
-    input: VcsCreateWorktreeInput,
-  ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
-  readonly fetchPullRequestBranch: (
-    input: GitFetchPullRequestBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
-  readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
-  readonly fetchRemoteBranch: (
-    input: GitFetchRemoteBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly fetchRemoteTrackingBranch: (
-    input: GitFetchRemoteTrackingBranchInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly setBranchUpstream: (
-    input: GitSetBranchUpstreamInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
-  readonly renameBranch: (
-    input: GitRenameBranchInput,
-  ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
-  readonly createRef: (
-    input: VcsCreateRefInput,
-  ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
-  readonly switchRef: (
-    input: VcsSwitchRefInput,
-  ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
-  readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
-  readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+export interface GitRemoteStatusOptions {
+  readonly refreshUpstream?: boolean;
 }
 
-export class GitVcsDriver extends Context.Service<GitVcsDriver, GitVcsDriverShape>()(
-  "t3/vcs/GitVcsDriver",
-) {}
+export class GitVcsDriver extends Context.Service<
+  GitVcsDriver,
+  {
+    readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
+    readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
+    readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusDetailsRemote: (
+      cwd: string,
+      options?: GitRemoteStatusOptions,
+    ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    readonly prepareCommitContext: (
+      cwd: string,
+      filePaths?: readonly string[],
+    ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
+    readonly commit: (
+      cwd: string,
+      subject: string,
+      body: string,
+      options?: GitCommitOptions,
+    ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
+    readonly pushCurrentBranch: (
+      cwd: string,
+      fallbackBranch: string | null,
+      options?: { readonly remoteName?: string | null },
+    ) => Effect.Effect<GitPushResult, GitCommandError>;
+    readonly readRangeContext: (
+      cwd: string,
+      baseRef: string,
+    ) => Effect.Effect<GitRangeContext, GitCommandError>;
+    readonly getReviewDiffPreview: (
+      input: ReviewDiffPreviewInput,
+    ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
+    readonly getReviewDiffFileContents: (
+      input: ReviewDiffFileContentsInput,
+    ) => Effect.Effect<ReviewDiffFileContentsResult, GitCommandError>;
+    readonly readConfigValue: (
+      cwd: string,
+      key: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
+    readonly listRefs: (
+      input: VcsListRefsInput,
+    ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly createWorktree: (
+      input: VcsCreateWorktreeInput,
+    ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    readonly fetchPullRequestBranch: (
+      input: GitFetchPullRequestBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
+    readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+    readonly fetchRemote: (input: GitFetchRemoteInput) => Effect.Effect<void, GitCommandError>;
+    readonly remoteExists: (input: GitRemoteExistsInput) => Effect.Effect<boolean, GitCommandError>;
+    readonly resolveRemoteTrackingCommit: (
+      input: GitResolveRemoteTrackingCommitInput,
+    ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
+    readonly fetchRemoteBranch: (
+      input: GitFetchRemoteBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly fetchRemoteTrackingBranch: (
+      input: GitFetchRemoteTrackingBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly setBranchUpstream: (
+      input: GitSetBranchUpstreamInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly removeWorktree: (
+      input: VcsRemoveWorktreeInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly renameBranch: (
+      input: GitRenameBranchInput,
+    ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;
+    readonly createRef: (
+      input: VcsCreateRefInput,
+    ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
+    readonly switchRef: (
+      input: VcsSwitchRefInput,
+    ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
+    readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+  }
+>()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
+const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -304,7 +371,7 @@ function parseGitRemoteVerboseOutput(
 }
 
 const gitCommand = (
-  process: VcsProcess.VcsProcessShape,
+  process: VcsProcess.VcsProcess["Service"],
   operation: string,
   cwd: string,
   args: ReadonlyArray<string>,
@@ -314,14 +381,15 @@ const gitCommand = (
     readonly allowNonZeroExit?: boolean;
     readonly timeoutMs?: number;
     readonly maxOutputBytes?: number;
-    readonly truncateOutputAtMaxBytes?: boolean;
+    readonly appendTruncationMarker?: boolean;
   },
 ) =>
   process.run({
     operation,
     command: "git",
-    args,
+    args: ["-C", cwd, ...args],
     cwd,
+    spawnCwd: globalThis.process.cwd(),
     ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
     ...(options?.env !== undefined ? { env: options.env } : {}),
     ...(options?.allowNonZeroExit !== undefined
@@ -329,13 +397,15 @@ const gitCommand = (
       : {}),
     ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-    ...(options?.truncateOutputAtMaxBytes !== undefined
-      ? { truncateOutputAtMaxBytes: options.truncateOutputAtMaxBytes }
+    ...(options?.appendTruncationMarker !== undefined
+      ? { appendTruncationMarker: options.appendTruncationMarker }
       : {}),
   });
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
-  const process = yield* VcsProcess.VcsProcess;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -345,9 +415,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     ignoreClassifier: "native" as const,
   };
 
-  const isInsideWorkTree: VcsDriver.VcsDriverShape["isInsideWorkTree"] = (cwd) =>
+  const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
     gitCommand(
-      process,
+      vcsProcess,
       "GitVcsDriver.isInsideWorkTree",
       cwd,
       ["rev-parse", "--is-inside-work-tree"],
@@ -358,35 +428,35 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
 
-  const execute: VcsDriver.VcsDriverShape["execute"] = (input) =>
-    gitCommand(process, input.operation, input.cwd, input.args, {
+  const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
+    gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
       ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
-      ...(input.truncateOutputAtMaxBytes !== undefined
-        ? { truncateOutputAtMaxBytes: input.truncateOutputAtMaxBytes }
+      ...(input.appendTruncationMarker !== undefined
+        ? { appendTruncationMarker: input.appendTruncationMarker }
         : {}),
     });
 
-  const detectRepository: VcsDriver.VcsDriverShape["detectRepository"] = Effect.fn(
+  const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
     if (!(yield* isInsideWorkTree(cwd))) {
       return null;
     }
 
-    const root = yield* gitCommand(process, "GitVcsDriver.detectRepository.root", cwd, [
+    const root = yield* gitCommand(vcsProcess, "GitVcsDriver.detectRepository.root", cwd, [
       "rev-parse",
       "--show-toplevel",
     ]);
     const gitCommonDir = yield* gitCommand(
-      process,
+      vcsProcess,
       "GitVcsDriver.detectRepository.commonDir",
       cwd,
       ["rev-parse", "--git-common-dir"],
-    ).pipe(Effect.catch(() => Effect.succeed(null)));
+    ).pipe(Effect.orElseSucceed(() => null));
 
     return {
       kind: "git" as const,
@@ -396,9 +466,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     };
   });
 
-  const listWorkspaceFiles: VcsDriver.VcsDriverShape["listWorkspaceFiles"] = (cwd) =>
+  const listWorkspaceFiles: VcsDriver.VcsDriver["Service"]["listWorkspaceFiles"] = (cwd) =>
     gitCommand(
-      process,
+      vcsProcess,
       "GitVcsDriver.listWorkspaceFiles",
       cwd,
       [
@@ -413,7 +483,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         allowNonZeroExit: true,
         timeoutMs: 20_000,
         maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-        truncateOutputAtMaxBytes: true,
+        appendTruncationMarker: true,
       },
     ).pipe(
       Effect.flatMap((result) =>
@@ -438,13 +508,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ),
     );
 
-  const listRemotes: VcsDriver.VcsDriverShape["listRemotes"] = Effect.fn("listRemotes")(
+  const listRemotes: VcsDriver.VcsDriver["Service"]["listRemotes"] = Effect.fn("listRemotes")(
     function* (cwd) {
-      const result = yield* gitCommand(process, "GitVcsDriver.listRemotes", cwd, ["remote", "-v"], {
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 64 * 1024,
-      });
+      const result = yield* gitCommand(
+        vcsProcess,
+        "GitVcsDriver.listRemotes",
+        cwd,
+        ["remote", "-v"],
+        {
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 64 * 1024,
+        },
+      );
 
       if (result.exitCode !== 0) {
         return yield* new VcsProcessExitError({
@@ -478,7 +554,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     },
   );
 
-  const filterIgnoredPaths: VcsDriver.VcsDriverShape["filterIgnoredPaths"] = Effect.fn(
+  const filterIgnoredPaths: VcsDriver.VcsDriver["Service"]["filterIgnoredPaths"] = Effect.fn(
     "filterIgnoredPaths",
   )(function* (cwd, relativePaths) {
     if (relativePaths.length === 0) {
@@ -490,7 +566,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     for (const chunk of chunks) {
       const result = yield* gitCommand(
-        process,
+        vcsProcess,
         "GitVcsDriver.filterIgnoredPaths",
         cwd,
         [...WORKSPACE_GIT_HARDENED_CONFIG_ARGS, "check-ignore", "--no-index", "-z", "--stdin"],
@@ -499,7 +575,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           allowNonZeroExit: true,
           timeoutMs: 20_000,
           maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-          truncateOutputAtMaxBytes: true,
+          appendTruncationMarker: true,
         },
       );
 
@@ -525,33 +601,288 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
   });
 
-  const initRepository: VcsDriver.VcsDriverShape["initRepository"] = (input) =>
-    gitCommand(process, "GitVcsDriver.initRepository", input.cwd, ["init"], {
+  const initRepository: VcsDriver.VcsDriver["Service"]["initRepository"] = (input) =>
+    gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
     }).pipe(Effect.asVoid);
 
-  return VcsDriver.VcsDriver.of({
+  const resolveHeadCommit = (cwd: string) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveHeadCommit",
+      cwd,
+      args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        if (result.exitCode !== 0) {
+          return null;
+        }
+        const commit = result.stdout.trim();
+        return commit.length > 0 ? commit : null;
+      }),
+    );
+
+  const hasHeadCommit = (cwd: string) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.hasHeadCommit",
+      cwd,
+      args: ["rev-parse", "--verify", "HEAD"],
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => result.exitCode === 0));
+
+  const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
+      cwd,
+      args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((result) => {
+        if (result.exitCode !== 0) {
+          return null;
+        }
+        const commit = result.stdout.trim();
+        return commit.length > 0 ? commit : null;
+      }),
+    );
+
+  const resolveGitCommonDir = (cwd: string) =>
+    Effect.gen(function* () {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
+        cwd,
+        args: ["rev-parse", "--git-common-dir"],
+      });
+      const gitCommonDir = result.stdout.trim();
+      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+    });
+
+  const checkpoints: VcsDriver.VcsCheckpointOps = {
+    captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
+      const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
+      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+      const tempIndexPath = path.join(
+        gitCommonDir,
+        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
+      );
+      const commitEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        GIT_INDEX_FILE: tempIndexPath,
+        GIT_AUTHOR_NAME: "T3 Code",
+        GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
+        GIT_COMMITTER_NAME: "T3 Code",
+        GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+      };
+
+      const cleanupTempIndex = fileSystem
+        .remove(tempIndexPath, { force: true })
+        .pipe(Effect.ignore);
+
+      yield* Effect.gen(function* () {
+        const headExists = yield* hasHeadCommit(input.cwd);
+        if (headExists) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["read-tree", "HEAD"],
+            env: commitEnv,
+          });
+        }
+
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["add", "-A", "--", "."],
+          env: commitEnv,
+        });
+
+        const writeTreeResult = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["write-tree"],
+          env: commitEnv,
+        });
+        const treeOid = writeTreeResult.stdout.trim();
+        if (treeOid.length === 0) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git write-tree",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "git write-tree returned an empty tree oid.",
+          });
+        }
+
+        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const commitTreeResult = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["commit-tree", treeOid, "-m", message],
+          env: commitEnv,
+        });
+        const commitOid = commitTreeResult.stdout.trim();
+        if (commitOid.length === 0) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git commit-tree",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: "git commit-tree returned an empty commit oid.",
+          });
+        }
+
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["update-ref", input.checkpointRef, commitOid],
+        });
+      }).pipe(Effect.ensuring(cleanupTempIndex));
+    }),
+
+    hasCheckpointRef: (input) =>
+      resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
+        Effect.map((commit) => commit !== null),
+      ),
+
+    restoreCheckpoint: Effect.fn("GitVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {
+      const operation = "GitVcsDriver.checkpoints.restoreCheckpoint";
+
+      let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
+
+      if (!commitOid && input.fallbackToHead === true) {
+        commitOid = yield* resolveHeadCommit(input.cwd);
+      }
+
+      if (!commitOid) {
+        return false;
+      }
+
+      yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+      });
+      yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["clean", "-fd", "--", "."],
+      });
+
+      const headExists = yield* hasHeadCommit(input.cwd);
+      if (headExists) {
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["reset", "--quiet", "--", "."],
+        });
+      }
+
+      return true;
+    }),
+
+    diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
+      const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
+      yield* Effect.annotateCurrentSpan({
+        "checkpoint.cwd": input.cwd,
+        "checkpoint.from_ref": input.fromCheckpointRef,
+        "checkpoint.to_ref": input.toCheckpointRef,
+        "checkpoint.ignore_whitespace": input.ignoreWhitespace,
+        "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
+      });
+
+      let fromRevision: string = input.fromCheckpointRef;
+      if (input.fallbackFromToHead === true) {
+        const resolvedFromCommit = yield* resolveCheckpointCommit(
+          input.cwd,
+          input.fromCheckpointRef,
+        );
+        if (resolvedFromCommit) {
+          fromRevision = resolvedFromCommit;
+        } else {
+          const headCommit = yield* resolveHeadCommit(input.cwd);
+          if (!headCommit) {
+            return yield* new VcsProcessExitError({
+              operation,
+              command: "git diff",
+              cwd: input.cwd,
+              exitCode: 1,
+              detail: "Checkpoint ref is unavailable for diff operation.",
+            });
+          }
+          fromRevision = headCommit;
+        }
+      }
+
+      const result = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          "diff",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+          `${fromRevision}^{commit}`,
+          `${input.toCheckpointRef}^{commit}`,
+        ],
+        allowNonZeroExit: true,
+        maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+      });
+
+      if (result.exitCode !== 0) {
+        return yield* new VcsProcessExitError({
+          operation,
+          command: "git diff",
+          cwd: input.cwd,
+          exitCode: result.exitCode,
+          detail: result.stderr.trim() || "Checkpoint ref is unavailable for diff operation.",
+        });
+      }
+
+      return result.stdout;
+    }),
+
+    deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
+      function* (input) {
+        yield* Effect.forEach(
+          input.checkpointRefs,
+          (checkpointRef) =>
+            execute({
+              operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+              cwd: input.cwd,
+              args: ["update-ref", "-d", checkpointRef],
+              allowNonZeroExit: true,
+            }),
+          { discard: true },
+        );
+      },
+    ),
+  };
+
+  return {
     capabilities,
     execute,
+    checkpoints,
     detectRepository,
     isInsideWorkTree,
     listWorkspaceFiles,
     listRemotes,
     filterIgnoredPaths,
     initRepository,
-  });
+  };
 });
 
-export const makeVcsDriver = Effect.fn("makeGitVcsDriver")(function* () {
+export const makeVcsDriver = Effect.gen(function* () {
   const driver = yield* makeVcsDriverShape();
   return VcsDriver.VcsDriver.of(driver);
 });
 
-export const make = Effect.fn("makeGitVcsDriverService")(function* () {
-  const git = yield* GitVcsDriverCore.makeGitVcsDriverCore();
+export const make = Effect.gen(function* () {
+  const git = yield* makeGitVcsDriverCore();
   return GitVcsDriver.of(git);
 });
 
-export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver());
-export const layer = Layer.effect(GitVcsDriver, make());
+export const vcsLayer = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
+export const layer = Layer.effect(GitVcsDriver, make);

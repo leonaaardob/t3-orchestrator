@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 export function isGitRepository(cwd: string): boolean {
-  return existsSync(join(cwd, ".git"));
+  return NodeFS.existsSync(NodePath.join(cwd, ".git"));
 }

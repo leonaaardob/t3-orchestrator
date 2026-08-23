@@ -12,7 +12,7 @@ import {
   AgentBoardFileSystemError,
   type AgentBoardFileSystemShape,
 } from "../Services/AgentBoardFileSystem.ts";
-import { WorkspacePaths } from "../../workspace/Services/WorkspacePaths.ts";
+import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
 
 const BOARD_RELATIVE_PATH = ".t3/agent-board.json" as const;
 

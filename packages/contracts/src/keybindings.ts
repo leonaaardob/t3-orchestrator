@@ -1,8 +1,8 @@
-import { Schema } from "effect";
-import { TrimmedString } from "./baseSchemas.ts";
+import * as Schema from "effect/Schema";
+import { ForwardCompatibleArray, TrimmedString } from "./baseSchemas.ts";
 
 export const MAX_KEYBINDING_VALUE_LENGTH = 64;
-const MAX_KEYBINDING_WHEN_LENGTH = 256;
+export const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
@@ -48,12 +48,25 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
 const STATIC_KEYBINDING_COMMANDS = [
+  "sidebar.toggle",
   "terminal.toggle",
   "terminal.split",
+  "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
+  "rightPanel.toggle",
   "diff.toggle",
+  "preview.toggle",
+  "preview.refresh",
+  "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
   "commandPalette.toggle",
+  "filePicker.toggle",
+  "projectSearch.toggle",
+  "themeEditor.toggle",
+  "composer.stash",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
@@ -76,12 +89,12 @@ export const KeybindingCommand = Schema.Union([
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-const KeybindingValue = TrimmedString.check(
+export const KeybindingValue = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
 );
 
-const KeybindingWhen = TrimmedString.check(
+export const KeybindingWhen = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
 );
@@ -143,7 +156,14 @@ export const ResolvedKeybindingRule = Schema.Struct({
 }).annotate({ parseOptions: { onExcessProperty: "ignore" } });
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
-export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(
+/**
+ * The command set grows over time, so a client may receive rules it cannot
+ * represent (a command or `when` node added after that client shipped).
+ * Decoding drops those rules instead of failing the whole payload —
+ * rejecting the config would take down the connection over a shortcut the
+ * client couldn't dispatch anyway.
+ */
+export const ResolvedKeybindingsConfig = ForwardCompatibleArray(ResolvedKeybindingRule).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
@@ -153,7 +173,7 @@ export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsC
   {
     configPath: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
