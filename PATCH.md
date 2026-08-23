@@ -1,6 +1,6 @@
 # T3 Code Planning Patch
 
-Status: Draft
+Status: Active — synced onto upstream T3 Code **v0.0.33** (tag `planning-fork-upstream-sync-0.0.33`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -43,24 +43,82 @@ harder to inspect.
 
 The current patch attaches to upstream T3 Code through these areas:
 
-- `packages/contracts/src/agentBoard.ts`
-  - Shared board schema, card states, runtime metadata, graph links, and claim
-    contract types.
-- `packages/contracts/src/agentBoard.test.ts`
-  - Contract coverage for the board file shape.
-- `apps/server/src/agentBoard/`
-  - Project-local board file load/save/claim behavior.
-- `apps/server/src/ws.ts` and related RPC wiring
-  - Board operations exposed to the web client.
-- `apps/web/src/environmentApi.ts` and RPC client wiring
-  - Client access to board operations.
-- `apps/web/src/components/AgentBoardPanel.tsx`
-  - Kanban, Planning table, card detail editor, and Dependency tree UI.
-- `apps/web/src/components/ChatView.tsx`
-  - Planning tab entry point, board panel integration, and the persisted
-    `Break` safety control that disables Planning features at runtime.
-- `apps/web/src/agentBoardPrompt.ts`
-  - Board-card handoff prompt construction when present.
+### Contracts (`packages/contracts`)
+
+- `src/agentBoard.ts`
+  - Shared board schema, card states, runtime metadata, graph links, claim
+    contract types, and the `AgentBoardFileError` RPC error.
+- `src/agentBoard.test.ts`
+  - Contract coverage for the board file shape (runner: `vite-plus/test`).
+- `src/rpc.ts`
+  - Three `WS_METHODS` entries, three `Rpc.make` definitions, and their
+    registration in `WsRpcGroup`. Their `error:` must be
+    `Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError])` —
+    the auth-wrapped handler adds the authorization error at runtime.
+- `src/ipc.ts`
+  - Three methods on the `EnvironmentApi.projects` interface.
+- `src/index.ts`
+  - Barrel re-export of `./agentBoard.ts`.
+
+### Server (`apps/server`)
+
+- `src/agentBoard/Services/AgentBoardFileSystem.ts`
+  - Service tag + shape; error union must include every
+    `WorkspacePaths*Error` variant (including `WorkspaceRootStatFailedError`).
+- `src/agentBoard/Layers/AgentBoardFileSystem.ts`
+  - Load/save/claim over `.t3/agent-board.json`, workspace-isolated claim
+    directories, Effect beta.103 idioms (`DateTime.now`,
+    `fromJsonStringPretty`, hoisted schema codecs).
+- `src/agentBoard/Layers/AgentBoardFileSystem.test.ts`
+  - Service tests (temp dirs via NodeServices + WorkspacePaths.layer).
+- `src/server.ts`
+  - `AgentBoardFileSystemLayerLive` merged into `WorkspaceLayerLive`.
+- `src/ws.ts`
+  - `agentBoardFileSystem` yield in the RPC handler generator and three
+    `observeRpcEffect(...)` handler entries.
+- `src/auth/RpcAuthorization.ts`
+  - Scope entries for the three methods (`RPC_REQUIRED_SCOPES` is exhaustive
+    by type — adding an RPC without a scope entry is a compile error).
+- `src/server.test.ts`
+  - Agent board layer added to the test app wiring.
+
+### Web (`apps/web`)
+
+- `src/state/agentBoard.ts`
+  - Atom commands for load/save/claimCard over the client-runtime
+    environment RPC runtime (replaces the pre-0.0.23 `environmentApi` /
+    `wsRpcClient` surface deleted upstream).
+- `src/components/AgentBoardPanel.tsx`
+  - Kanban, Planning table, card detail editor, Dependency tree UI; consumes
+    the atom commands above plus `projectEnvironment.writeFile`.
+- `src/components/ChatView.tsx`
+  - Planning tab strip + persisted `Break` safety control +
+    `onRunClaimedAgentBoardCard` (thread creation via upstream's
+    `createThread` / `startThreadTurn` atom commands).
+- `src/agentBoardPrompt.ts`
+  - Board-card worker handoff prompt construction.
+
+### Theme customization addon (fork-local addon)
+
+- `apps/web/src/localAddons/theme-customization/themeCustomization.ts`
+  - Accent / font / background-effect preference store.
+- `apps/web/src/hooks/useTheme.ts`
+  - Calls `applyThemeCustomization()` after each theme application.
+- `apps/web/src/index.css`
+  - Tail of file: font stacks, accent palettes, background-effect canvas
+    layers. Overlay layers are scoped to non-default effects so the default
+    look/perf matches upstream exactly (upstream moved grain into per-surface
+    backgrounds for compositor-cost reasons).
+- `apps/web/src/index.html`
+  - Google Fonts stylesheet for the optional interface fonts.
+- `apps/web/src/components/settings/settingsLayout.tsx`
+  - `data-slot="settings-section-accent"` / `-surface` hooks on
+    `SettingsSection`.
+- `apps/web/src/components/settings/SettingsPanels.tsx`
+  - Theme customization row inside `AppearanceSettingsPanel`; restore-defaults
+    integration in `useSettingsRestore`.
+- `apps/web/src/components/settings/settingsSearch.ts`
+  - `theme-customization` search entry.
 
 If upstream T3 Code changes navigation, project routing, RPC transport,
 provider orchestration, or chat layout, start repair from these files.
@@ -165,13 +223,40 @@ layers:
 1. Copy planning docs and templates.
 2. Add shared board contracts.
 3. Add server board file service and RPC methods.
-4. Add web board API client methods.
-5. Add Planning tab and `AgentBoardPanel`.
-6. Wire Run/claim behavior into orchestration.
-7. Run `bun fmt`, `bun lint`, and `bun typecheck`.
+4. Add web board atom commands and Planning UI.
+5. Wire Run/claim behavior into orchestration.
+6. Run `vp fmt --check`, `vp lint`, and `vp run -r typecheck`.
 
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
+
+## v0.0.33 Sync Notes (2026-08-23)
+
+Baseline: fork snapshot matched upstream `cb3211c8` (2026-05-03, between
+v0.0.22 nightlies). Ancestry was grafted onto that commit so future syncs are
+regular merges; the sync merged tag **v0.0.33** (2026-08-10).
+
+Packaging follows upstream: **pnpm + vite-plus** (`pnpm-workspace.yaml`,
+`pnpm-lock.yaml`). The earlier bun migration was dropped in this sync;
+`bun.lock` is gone and repo commands are `vp i` / `vp run dev`.
+
+Adaptations made while porting (behavior-preserving unless noted):
+
+- Theme overlay CSS is gated on a non-default background effect; upstream
+  removed full-viewport overlays for compositor-cost reasons, so the default
+  look now matches upstream exactly.
+- The seeded-board contract test reads the committed
+  `docs/agents/templates/agent-board.example.json` shape inline instead of the
+  gitignored local `.t3/agent-board.json`.
+- Server board save still trusts client-provided `updatedAt` (no server-side
+  timestamp override was introduced).
+
+Verification at sync time: contracts/server/web typecheck clean under the
+patched tsgo; contracts board tests 3/3; server board service tests 6/6;
+server boots headless with migrations, serves the built web bundle, and the
+live auth path (bootstrap → access token → WS ticket → upgrade) passes end to
+end. Provider-level checks (Codex/Cursor/OpenCode runs) and an interactive
+browser pass over the Planning tab remain manual follow-ups.
 
 ## Upstream Break Risks
 
