@@ -1830,60 +1830,66 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
             </div>
             <Input
               value={intentDraft.intent}
-              onChange={(event) =>
-                setIntentDraft((draft) => ({ ...draft, intent: event.currentTarget.value }))
-              }
+              onChange={(event) => {
+                const { value } = event.currentTarget;
+                setIntentDraft((draft) => ({ ...draft, intent: value }));
+              }}
               placeholder="Intent"
               className="h-8 text-xs"
             />
             <Input
               value={intentDraft.desiredOutcome}
-              onChange={(event) =>
+              onChange={(event) => {
+                const { value } = event.currentTarget;
                 setIntentDraft((draft) => ({
                   ...draft,
-                  desiredOutcome: event.currentTarget.value,
-                }))
-              }
+                  desiredOutcome: value,
+                }));
+              }}
               placeholder="Desired outcome"
               className="h-8 text-xs"
             />
             <textarea
               value={intentDraft.acceptanceCriteria}
-              onChange={(event) =>
+              onChange={(event) => {
+                const { value } = event.currentTarget;
                 setIntentDraft((draft) => ({
                   ...draft,
-                  acceptanceCriteria: event.currentTarget.value,
-                }))
-              }
+                  acceptanceCriteria: value,
+                }));
+              }}
               placeholder="Acceptance criteria, one per line"
               className="min-h-20 w-full resize-none rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-hidden transition-colors placeholder:text-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
             <div className="grid grid-cols-2 gap-2">
               <textarea
                 value={intentDraft.constraints}
-                onChange={(event) =>
-                  setIntentDraft((draft) => ({ ...draft, constraints: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const { value } = event.currentTarget;
+                  setIntentDraft((draft) => ({ ...draft, constraints: value }));
+                }}
                 placeholder="Constraints"
                 className="min-h-16 resize-none rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-hidden placeholder:text-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />
               <textarea
                 value={intentDraft.nonGoals}
-                onChange={(event) =>
-                  setIntentDraft((draft) => ({ ...draft, nonGoals: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const { value } = event.currentTarget;
+                  setIntentDraft((draft) => ({ ...draft, nonGoals: value }));
+                }}
                 placeholder="Non-goals"
                 className="min-h-16 resize-none rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-hidden placeholder:text-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               />
             </div>
             <textarea
               value={intentDraft.openDecisions}
-              onChange={(event) =>
+              onChange={(event) => {
+                const { value } = event.currentTarget;
                 setIntentDraft((draft) => ({
                   ...draft,
-                  openDecisions: event.currentTarget.value,
-                }))
-              }
+                  openDecisions: value,
+                }));
+              }}
               placeholder="Open decisions"
               className="min-h-14 w-full resize-none rounded-md border border-input bg-transparent px-2 py-1.5 text-xs outline-hidden placeholder:text-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />
@@ -3024,12 +3030,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     <span className="text-[11px] font-medium text-muted-foreground">Title</span>
                     <Input
                       value={detailDraft?.title ?? detailCard.title}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setDetailDraft((draft) => ({
                           ...(draft ?? detailDraftFromCard(detailCard)),
-                          title: event.currentTarget.value,
-                        }))
-                      }
+                          title: value,
+                        }));
+                      }}
                       onBlur={scheduleDetailDraftCommit}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
@@ -3066,12 +3073,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     <span className="text-[11px] font-medium text-muted-foreground">Area</span>
                     <Input
                       value={detailDraft?.area ?? detailCard.area ?? ""}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setDetailDraft((draft) => ({
                           ...(draft ?? detailDraftFromCard(detailCard)),
-                          area: event.currentTarget.value,
-                        }))
-                      }
+                          area: value,
+                        }));
+                      }}
                       onBlur={scheduleDetailDraftCommit}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
@@ -3084,12 +3092,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     <span className="text-[11px] font-medium text-muted-foreground">Slice</span>
                     <Input
                       value={detailDraft?.slice ?? detailCard.slice ?? ""}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setDetailDraft((draft) => ({
                           ...(draft ?? detailDraftFromCard(detailCard)),
-                          slice: event.currentTarget.value,
-                        }))
-                      }
+                          slice: value,
+                        }));
+                      }}
                       onBlur={scheduleDetailDraftCommit}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
@@ -3104,12 +3113,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     </span>
                     <Input
                       value={detailDraft?.slicePlanPath ?? detailCard.slicePlanPath ?? ""}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setDetailDraft((draft) => ({
                           ...(draft ?? detailDraftFromCard(detailCard)),
-                          slicePlanPath: event.currentTarget.value,
-                        }))
-                      }
+                          slicePlanPath: value,
+                        }));
+                      }}
                       onBlur={scheduleDetailDraftCommit}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
@@ -3151,12 +3161,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       <span className="text-[11px] font-medium text-muted-foreground">Intent</span>
                       <Input
                         value={intentDraft.intent}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const { value } = event.currentTarget;
                           setIntentDraft((draft) => ({
                             ...draft,
-                            intent: event.currentTarget.value,
-                          }))
-                        }
+                            intent: value,
+                          }));
+                        }}
                         className="h-9 text-sm"
                       />
                     </label>
@@ -3166,12 +3177,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       </span>
                       <Input
                         value={intentDraft.desiredOutcome}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const { value } = event.currentTarget;
                           setIntentDraft((draft) => ({
                             ...draft,
-                            desiredOutcome: event.currentTarget.value,
-                          }))
-                        }
+                            desiredOutcome: value,
+                          }));
+                        }}
                         className="h-9 text-sm"
                       />
                     </label>
@@ -3182,12 +3194,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     </span>
                     <Textarea
                       value={intentDraft.acceptanceCriteria}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setIntentDraft((draft) => ({
                           ...draft,
-                          acceptanceCriteria: event.currentTarget.value,
-                        }))
-                      }
+                          acceptanceCriteria: value,
+                        }));
+                      }}
                       placeholder="One per line"
                     />
                   </label>
@@ -3198,12 +3211,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       </span>
                       <Textarea
                         value={intentDraft.constraints}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const { value } = event.currentTarget;
                           setIntentDraft((draft) => ({
                             ...draft,
-                            constraints: event.currentTarget.value,
-                          }))
-                        }
+                            constraints: value,
+                          }));
+                        }}
                       />
                     </label>
                     <label className="space-y-1.5">
@@ -3212,12 +3226,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       </span>
                       <Textarea
                         value={intentDraft.nonGoals}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const { value } = event.currentTarget;
                           setIntentDraft((draft) => ({
                             ...draft,
-                            nonGoals: event.currentTarget.value,
-                          }))
-                        }
+                            nonGoals: value,
+                          }));
+                        }}
                       />
                     </label>
                     <label className="space-y-1.5">
@@ -3226,12 +3241,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       </span>
                       <Textarea
                         value={intentDraft.openDecisions}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const { value } = event.currentTarget;
                           setIntentDraft((draft) => ({
                             ...draft,
-                            openDecisions: event.currentTarget.value,
-                          }))
-                        }
+                            openDecisions: value,
+                          }));
+                        }}
                       />
                     </label>
                   </div>
@@ -3262,12 +3278,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     </span>
                     <Textarea
                       value={detailDraft?.dependencies ?? dependencyDraftFromCard(detailCard)}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const { value } = event.currentTarget;
                         setDetailDraft((draft) => ({
                           ...(draft ?? detailDraftFromCard(detailCard)),
-                          dependencies: event.currentTarget.value,
-                        }))
-                      }
+                          dependencies: value,
+                        }));
+                      }}
                       onBlur={scheduleDetailDraftCommit}
                       placeholder="One card ID per line"
                     />
