@@ -5,11 +5,11 @@ import { AgentBoardFile, type AgentBoardCardId } from "@t3tools/contracts";
 
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
 import { AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
-import { WorkspacePathsLive } from "../../workspace/Layers/WorkspacePaths.ts";
+import * as WorkspacePathsModule from "../../workspace/WorkspacePaths.ts";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePathsLive))),
-  Layer.provideMerge(WorkspacePathsLive),
+  Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePathsModule.layer))),
+  Layer.provideMerge(WorkspacePathsModule.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -75,7 +75,7 @@ it.layer(TestLayer)("AgentBoardFileSystemLive", (it) => {
             },
           ],
           updatedAt: "2026-05-05T12:00:00.000Z",
-        } as unknown as typeof AgentBoardFile.Type;
+        } as unknown as AgentBoardFile;
 
         const result = yield* service.save({ cwd, board: nextBoard });
 
@@ -101,7 +101,7 @@ it.layer(TestLayer)("AgentBoardFileSystemLive", (it) => {
               updatedAt: "2026-05-05T12:00:00.000Z",
             },
           ],
-        } as unknown as typeof AgentBoardFile.Type;
+        } as unknown as AgentBoardFile;
 
         const error = yield* service.save({ cwd, board: invalidBoard }).pipe(Effect.flip);
 
@@ -143,7 +143,7 @@ it.layer(TestLayer)("AgentBoardFileSystemLive", (it) => {
             },
           ],
           updatedAt: "2026-05-05T12:00:00.000Z",
-        } as unknown as typeof AgentBoardFile.Type;
+        } as unknown as AgentBoardFile;
         yield* service.save({ cwd, board: readyBoard });
 
         const result = yield* service.claim({ cwd, cardId });
@@ -176,7 +176,7 @@ it.layer(TestLayer)("AgentBoardFileSystemLive", (it) => {
               updatedAt: "2026-05-05T12:00:00.000Z",
             },
           ],
-        } as unknown as typeof AgentBoardFile.Type;
+        } as unknown as AgentBoardFile;
         yield* service.save({ cwd, board: draftBoard });
 
         const error = yield* service.claim({ cwd, cardId }).pipe(Effect.flip);

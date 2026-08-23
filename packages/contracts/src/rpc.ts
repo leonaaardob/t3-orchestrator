@@ -493,19 +493,19 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
 export const WsProjectsLoadAgentBoardRpc = Rpc.make(WS_METHODS.projectsLoadAgentBoard, {
   payload: AgentBoardLoadInput,
   success: AgentBoardLoadResult,
-  error: AgentBoardFileError,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
 });
 
 export const WsProjectsSaveAgentBoardRpc = Rpc.make(WS_METHODS.projectsSaveAgentBoard, {
   payload: AgentBoardSaveInput,
   success: AgentBoardSaveResult,
-  error: AgentBoardFileError,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
 });
 
 export const WsProjectsClaimAgentBoardCardRpc = Rpc.make(WS_METHODS.projectsClaimAgentBoardCard, {
   payload: AgentBoardClaimInput,
   success: AgentBoardClaimResult,
-  error: AgentBoardFileError,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {

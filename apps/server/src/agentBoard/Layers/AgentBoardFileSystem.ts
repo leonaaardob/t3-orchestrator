@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
 import {
   type AgentBoardCard,
   AgentBoardFile,
@@ -6,6 +7,7 @@ import {
   type AgentBoardLoadResult,
   type AgentBoardSaveResult,
 } from "@t3tools/contracts";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
   AgentBoardFileSystem,
@@ -16,11 +18,12 @@ import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
 
 const BOARD_RELATIVE_PATH = ".t3/agent-board.json" as const;
 
-const decodeAgentBoardFile = Schema.decodeUnknownEffect(AgentBoardFile);
+/** Board JSON with stable 2-space formatting so git diffs stay reviewable. */
+const AgentBoardFileJsonString = fromJsonStringPretty(AgentBoardFile);
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
+const decodeAgentBoardFile = Schema.decodeUnknownEffect(AgentBoardFile);
+const decodeAgentBoardFileJsonString = Schema.decodeUnknownEffect(AgentBoardFileJsonString);
+const encodeAgentBoardFile = Schema.encodeEffect(AgentBoardFileJsonString);
 
 function safeWorkspaceSegment(value: string): string {
   const segment = value
@@ -35,6 +38,8 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths;
 
+  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
   const resolveBoardPath = Effect.fn("AgentBoardFileSystem.resolveBoardPath")(function* (
     cwd: string,
   ) {
@@ -46,11 +51,11 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
     return { projectRoot, boardPath };
   });
 
-  const makeDefaultBoard = (projectRoot: string): typeof AgentBoardFile.Type => {
-    const timestamp = nowIso();
-    return {
+  const makeDefaultBoard = Effect.map(
+    nowIso,
+    (timestamp): AgentBoardFile => ({
       schemaVersion: 1,
-      projectRoot,
+      projectRoot: "",
       defaultView: "kanban",
       runner: {
         maxConcurrentCards: 1,
@@ -60,13 +65,13 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       graphLinks: [],
       createdAt: timestamp,
       updatedAt: timestamp,
-    };
-  };
+    }),
+  );
 
   const writeBoard = Effect.fn("AgentBoardFileSystem.writeBoard")(function* (
     cwd: string,
     absolutePath: string,
-    board: typeof AgentBoardFile.Type,
+    board: AgentBoardFile,
   ) {
     yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true }).pipe(
       Effect.mapError(
@@ -79,7 +84,18 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(absolutePath, `${JSON.stringify(board, null, 2)}\n`).pipe(
+    const contents = yield* encodeAgentBoardFile(board).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd,
+            operation: "agentBoard.encode",
+            detail: String(cause),
+            cause,
+          }),
+      ),
+    );
+    yield* fileSystem.writeFileString(absolutePath, `${contents}\n`).pipe(
       Effect.mapError(
         (cause) =>
           new AgentBoardFileSystemError({
@@ -95,38 +111,30 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
   const load: AgentBoardFileSystemShape["load"] = (input) =>
     Effect.gen(function* () {
       const { projectRoot, boardPath } = yield* resolveBoardPath(input.cwd);
-      let created = false;
-      const raw = yield* fileSystem.readFileString(boardPath.absolutePath).pipe(
-        Effect.catch((cause) => {
-          if (!input.createIfMissing) {
-            return Effect.fail(
-              new AgentBoardFileSystemError({
-                cwd: input.cwd,
-                operation: "agentBoard.read",
-                detail: cause.message,
-                cause,
-              }),
-            );
-          }
-          const board = makeDefaultBoard(projectRoot);
-          created = true;
-          return writeBoard(input.cwd, boardPath.absolutePath, board).pipe(
-            Effect.as(JSON.stringify(board)),
-          );
-        }),
+      const readOutcome = yield* fileSystem.readFileString(boardPath.absolutePath).pipe(
+        Effect.map((contents) => ({ _tag: "contents" as const, contents })),
+        Effect.catch((error) => Effect.succeed({ _tag: "error" as const, error })),
       );
 
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(raw) as unknown,
-        catch: (cause) =>
-          new AgentBoardFileSystemError({
+      if (readOutcome._tag === "error") {
+        if (!input.createIfMissing) {
+          return yield* new AgentBoardFileSystemError({
             cwd: input.cwd,
-            operation: "agentBoard.parse",
-            detail: cause instanceof Error ? cause.message : "Invalid agent board JSON.",
-            cause,
-          }),
-      });
-      const board = yield* decodeAgentBoardFile(parsed).pipe(
+            operation: "agentBoard.read",
+            detail: readOutcome.error.message,
+            cause: readOutcome.error,
+          });
+        }
+        const defaultBoard = Object.assign(yield* makeDefaultBoard, { projectRoot });
+        yield* writeBoard(input.cwd, boardPath.absolutePath, defaultBoard);
+        return {
+          board: defaultBoard,
+          relativePath: BOARD_RELATIVE_PATH,
+          created: true,
+        } satisfies AgentBoardLoadResult;
+      }
+
+      const board = yield* decodeAgentBoardFileJsonString(readOutcome.contents).pipe(
         Effect.mapError(
           (cause) =>
             new AgentBoardFileSystemError({
@@ -141,7 +149,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       return {
         board,
         relativePath: BOARD_RELATIVE_PATH,
-        created,
+        created: false,
       } satisfies AgentBoardLoadResult;
     });
 
@@ -210,7 +218,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         ),
       );
 
-      const timestamp = nowIso();
+      const timestamp = yield* nowIso;
       const nextCards = loaded.board.cards.map((nextCard) => {
         if (nextCard.id !== input.cardId) return nextCard;
         const {

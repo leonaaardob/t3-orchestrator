@@ -5,7 +5,7 @@ import { RuntimeSessionId } from "./baseSchemas.ts";
 export const AgentBoardSchemaVersion = Schema.Literal(1);
 export type AgentBoardSchemaVersion = typeof AgentBoardSchemaVersion.Type;
 
-export const AgentBoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("AgentBoardCardId"));
+export const AgentBoardCardId = TrimmedNonEmptyString;
 export type AgentBoardCardId = typeof AgentBoardCardId.Type;
 
 export const AgentBoardState = Schema.Literals([
@@ -224,6 +224,6 @@ export class AgentBoardFileError extends Schema.TaggedErrorClass<AgentBoardFileE
   "AgentBoardFileError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}

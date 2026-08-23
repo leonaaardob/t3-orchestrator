@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
 import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { AgentBoardFile } from "./agentBoard.ts";
 
@@ -9,7 +8,7 @@ const decodeAgentBoardFile = Schema.decodeUnknownSync(AgentBoardFile);
 describe("AgentBoardFile", () => {
   it("decodes a minimal project-local board with defaults", () => {
     const decoded = decodeAgentBoardFile({
-      projectRoot: "G:/Software/T3code mods/t3 code source/t3code-main_alpha_0.0.21",
+      projectRoot: "/tmp/example-project",
       createdAt: "2026-05-05T12:00:00.000Z",
       updatedAt: "2026-05-05T12:00:00.000Z",
     });
@@ -25,7 +24,7 @@ describe("AgentBoardFile", () => {
 
   it("decodes a ready card with an intent brief and task references", () => {
     const decoded = decodeAgentBoardFile({
-      projectRoot: "G:/Software/T3code mods/t3 code source/t3code-main_alpha_0.0.21",
+      projectRoot: "/tmp/example-project",
       createdAt: "2026-05-05T12:00:00.000Z",
       updatedAt: "2026-05-05T12:00:00.000Z",
       graphLinks: [
@@ -80,7 +79,7 @@ describe("AgentBoardFile", () => {
   it("rejects a title-only ready card because the intent brief is missing", () => {
     expect(() =>
       decodeAgentBoardFile({
-        projectRoot: "G:/Software/T3code mods/t3 code source/t3code-main_alpha_0.0.21",
+        projectRoot: "/tmp/example-project",
         createdAt: "2026-05-05T12:00:00.000Z",
         updatedAt: "2026-05-05T12:00:00.000Z",
         cards: [
@@ -94,13 +93,5 @@ describe("AgentBoardFile", () => {
         ],
       }),
     ).toThrow();
-  });
-
-  it("decodes the seeded project board file", () => {
-    const seedBoardUrl = new URL("../../../.t3/agent-board.json", import.meta.url);
-    const decoded = decodeAgentBoardFile(JSON.parse(readFileSync(seedBoardUrl, "utf8")));
-
-    expect(decoded.cards[0]?.id).toBe("TASK-20260505-agent-board-contract");
-    expect(decoded.cards[0]?.state).toBe("Done");
   });
 });

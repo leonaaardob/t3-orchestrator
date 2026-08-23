@@ -13,6 +13,7 @@ import {
   WorkspaceRootCreateFailedError,
   WorkspaceRootNotDirectoryError,
   WorkspaceRootNotExistsError,
+  WorkspaceRootStatFailedError,
 } from "../../workspace/WorkspacePaths.ts";
 
 export class AgentBoardFileSystemError extends Schema.TaggedErrorClass<AgentBoardFileSystemError>()(
@@ -21,7 +22,7 @@ export class AgentBoardFileSystemError extends Schema.TaggedErrorClass<AgentBoar
     cwd: Schema.String,
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
@@ -33,6 +34,7 @@ export interface AgentBoardFileSystemShape {
     | AgentBoardFileSystemError
     | WorkspaceRootNotExistsError
     | WorkspaceRootCreateFailedError
+    | WorkspaceRootStatFailedError
     | WorkspaceRootNotDirectoryError
     | WorkspacePathOutsideRootError
   >;
@@ -43,6 +45,7 @@ export interface AgentBoardFileSystemShape {
     | AgentBoardFileSystemError
     | WorkspaceRootNotExistsError
     | WorkspaceRootCreateFailedError
+    | WorkspaceRootStatFailedError
     | WorkspaceRootNotDirectoryError
     | WorkspacePathOutsideRootError
   >;
@@ -53,6 +56,7 @@ export interface AgentBoardFileSystemShape {
     | AgentBoardFileSystemError
     | WorkspaceRootNotExistsError
     | WorkspaceRootCreateFailedError
+    | WorkspaceRootStatFailedError
     | WorkspaceRootNotDirectoryError
     | WorkspacePathOutsideRootError
   >;

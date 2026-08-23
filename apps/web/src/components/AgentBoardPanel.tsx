@@ -38,7 +38,10 @@ import {
 } from "lucide-react";
 import { Schema } from "effect";
 
-import { readEnvironmentApi } from "~/environmentApi";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { agentBoardEnvironment } from "~/state/agentBoard";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -347,9 +350,11 @@ function newDraftCard(title: string): AgentBoardCard {
   return newCardForState(title, "Draft");
 }
 
+const decodeAgentBoardCards = Schema.decodeUnknownSync(AgentBoardFile.fields.cards);
+
 function newCardForState(title: string, state: AgentBoardState): AgentBoardCard {
   const timestamp = new Date().toISOString();
-  return Schema.decodeUnknownSync(AgentBoardFile.fields.cards)([
+  return decodeAgentBoardCards([
     {
       id: `TASK-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${Date.now()}` as AgentBoardCardId,
       title,
@@ -1039,14 +1044,23 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     });
   }, []);
 
+  const loadAgentBoard = useAtomCommand(agentBoardEnvironment.load);
+
   const loadBoard = useCallback(() => {
-    const api = readEnvironmentApi(environmentId);
-    if (!api || !workspaceRoot) return;
+    if (!workspaceRoot) return;
     setLoading(true);
     setError(null);
-    void api.projects
-      .loadAgentBoard({ cwd: workspaceRoot, createIfMissing: true })
-      .then((result) => {
+    void loadAgentBoard({
+      environmentId,
+      input: { cwd: workspaceRoot, createIfMissing: true },
+    })
+      .then((outcome) => {
+        if (outcome._tag !== "Success") {
+          const loadError = squashAtomCommandFailure(outcome);
+          setError(loadError instanceof Error ? loadError.message : "Could not load board.");
+          return;
+        }
+        const result = outcome.value;
         setBoard(result.board);
         setSelectedCardId((existing) => {
           const selected =
@@ -1064,23 +1078,29 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         () => setLoading(false),
         () => setLoading(false),
       );
-  }, [environmentId, workspaceRoot]);
+  }, [environmentId, loadAgentBoard, workspaceRoot]);
 
   useEffect(() => {
     loadBoard();
   }, [loadBoard]);
 
+  const saveAgentBoardCommand = useAtomCommand(agentBoardEnvironment.save);
+
   const saveBoard = useCallback(
     (nextBoard: AgentBoardFileType) => {
-      const api = readEnvironmentApi(environmentId);
-      if (!api || !workspaceRoot) return;
+      if (!workspaceRoot) return;
       setBoard(nextBoard);
       setSaving(true);
       setError(null);
-      void api.projects
-        .saveAgentBoard({ cwd: workspaceRoot, board: nextBoard })
-        .then((result) => {
-          setBoard(result.board);
+      void saveAgentBoardCommand({
+        environmentId,
+        input: { cwd: workspaceRoot, board: nextBoard },
+      })
+        .then((outcome) => {
+          if (outcome._tag !== "Success") {
+            throw squashAtomCommandFailure(outcome);
+          }
+          setBoard(outcome.value.board);
         })
         .catch((saveError) => {
           const description =
@@ -1483,10 +1503,11 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     updateSelectedCard((card) => ({ ...card, intentBrief }) as AgentBoardCard);
   }, [intentDraft, updateSelectedCard]);
 
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile);
+
   const createTaskRecord = useCallback(() => {
-    const api = readEnvironmentApi(environmentId);
     const intentBrief = intentBriefFromDraft(intentDraft);
-    if (!api || !workspaceRoot || !board || !selectedCard || !intentBrief) {
+    if (!workspaceRoot || !board || !selectedCard || !intentBrief) {
       setError("Intent is required before creating a task record.");
       return;
     }
@@ -1509,15 +1530,24 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     };
     setSaving(true);
     setError(null);
-    void api.projects
-      .writeFile({
+    void writeProjectFile({
+      environmentId,
+      input: {
         cwd: workspaceRoot,
         relativePath: taskRecordPath,
         contents: taskRecordMarkdown({ card: nextCard, taskRecordPath, intentBrief }),
+      },
+    })
+      .then((outcome) => {
+        if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
+        return saveAgentBoardCommand({
+          environmentId,
+          input: { cwd: workspaceRoot, board: nextBoard },
+        });
       })
-      .then(() => api.projects.saveAgentBoard({ cwd: workspaceRoot, board: nextBoard }))
-      .then((result) => {
-        setBoard(result.board);
+      .then((outcome) => {
+        if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
+        setBoard(outcome.value.board);
         toastManager.add({
           type: "success",
           title: "Task record created",
@@ -1540,7 +1570,15 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         () => setSaving(false),
         () => setSaving(false),
       );
-  }, [board, environmentId, intentDraft, selectedCard, workspaceRoot]);
+  }, [
+    board,
+    environmentId,
+    intentDraft,
+    saveAgentBoardCommand,
+    selectedCard,
+    workspaceRoot,
+    writeProjectFile,
+  ]);
 
   const moveCard = useCallback(
     (cardId: AgentBoardCardId, state: AgentBoardState) => {
@@ -1576,15 +1614,20 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     [],
   );
 
+  const claimAgentBoardCard = useAtomCommand(agentBoardEnvironment.claimCard);
+
   const claimReadyCard = useCallback(
     (card: AgentBoardCard) => {
-      const api = readEnvironmentApi(environmentId);
-      if (!api || !workspaceRoot || card.state !== "Ready") return;
+      if (!workspaceRoot || card.state !== "Ready") return;
       setSaving(true);
       setError(null);
-      void api.projects
-        .claimAgentBoardCard({ cwd: workspaceRoot, cardId: card.id })
-        .then(async (result) => {
+      void claimAgentBoardCard({
+        environmentId,
+        input: { cwd: workspaceRoot, cardId: card.id },
+      })
+        .then(async (outcome) => {
+          if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
+          const result = outcome.value;
           const launchedBoard = await onRunClaimedCard?.(result);
           const nextBoard = launchedBoard ?? result.board;
           const nextCard =
@@ -1618,7 +1661,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           () => setSaving(false),
         );
     },
-    [environmentId, loadBoard, onRunClaimedCard, workspaceRoot],
+    [claimAgentBoardCard, environmentId, loadBoard, onRunClaimedCard, workspaceRoot],
   );
 
   return (
