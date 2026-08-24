@@ -172,12 +172,37 @@ apps/server/src/agentBoard/Layers/AgentBoardFileSystem.test.ts`
   criteria where the old code only threw; (2) JSON-string codec for
   round-trip tests matches the server persistence shape.
 
+### Integrated Pass (2026-08-24)
+
+Verified in the real web client against an isolated dev environment
+(`/tmp/t3code-test.4K0ovX`, project rooted at this repo):
+
+- Planning tab renders the `Worker execution` row with source label
+  `Project default — pick a model to override` and the effective selection
+  (GPT-5.6-Sol / Low).
+- Picking `GPT-5.6-Terra` in the model picker persisted
+  `runner.workerModelSelection {instanceId: codex, model: gpt-5.6-terra}` to
+  `.t3/agent-board.json` on disk; label flipped to
+  `Board override — used for every card run` and a `Use project default`
+  clear control appeared.
+- Setting reasoning effort `High` persisted
+  `options: [{id: reasoningEffort, value: high}, {id: serviceTier, value: default}]`.
+- `Use project default` removed the key from disk entirely (no null residue)
+  and reverted the label/effective selection to the project default.
+- The board loaded the seeded card `TASK-20260824-cross-provider-runner` in
+  the `Review` column.
+- Not exercised live: the missing-config `Blocked` run path (covered by
+  resolver unit tests; requires clearing both board and project defaults).
+
 ### Remaining Gaps
 
 - Claimed-card runs still use the thread's normal cwd/worktree; wiring the
   card workspace is brief 02 scope.
 - Picker reads primary-server provider atoms; on remote environments with
   divergent provider configs the display may differ from the run environment.
-- No integrated browser pass yet (Planning tab) and no live cross-provider
-  run (e.g. OpenCode-backed worker) — manual follow-ups.
-- Changes uncommitted by instruction; commit decision pending.
+- No before/after screenshots captured (preview media tooling failed during
+  the pass); capture when convenient for the PR description.
+- No live cross-provider run yet (e.g. OpenCode-backed worker) — only Codex
+  is configured in the test environment.
+- Changes committed in `3c97278e`; card remains in `Review` pending human
+  sign-off.
