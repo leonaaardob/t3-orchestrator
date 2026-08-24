@@ -5,7 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type UIEvent,
   type WheelEvent,
@@ -42,6 +42,17 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { cn } from "~/lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -67,29 +78,62 @@ interface AgentBoardPanelProps {
   onRunClaimedCard?: (result: AgentBoardClaimResult) => Promise<AgentBoardFileType | void>;
 }
 
-/**
- * Invisible drag image: the browser's default ghost snapshots the whole
- * viewport for these cards, which reads as the entire UI following the
- * cursor. A 1px transparent image disables it; feedback comes from the
- * dimmed source card and the column border instead.
- */
-let hiddenDragImage: HTMLImageElement | null = null;
-function getHiddenDragImage(): HTMLImageElement {
-  if (!hiddenDragImage) {
-    hiddenDragImage = document.createElement("img");
-    hiddenDragImage.src =
-      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-    hiddenDragImage.alt = "";
-    hiddenDragImage.style.position = "fixed";
-    hiddenDragImage.style.top = "-100px";
-    hiddenDragImage.style.left = "-100px";
-    hiddenDragImage.style.width = "1px";
-    hiddenDragImage.style.height = "1px";
-    hiddenDragImage.style.opacity = "0";
-    hiddenDragImage.style.pointerEvents = "none";
-    document.body.appendChild(hiddenDragImage);
-  }
-  return hiddenDragImage;
+function KanbanDroppableColumn({
+  id,
+  disabled,
+  className,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id, disabled });
+  return (
+    <section
+      ref={setNodeRef}
+      data-kanban-column={id}
+      className={cn(className, isOver && "border-emerald-500/50")}
+    >
+      {children}
+    </section>
+  );
+}
+
+function KanbanDraggableCard({
+  id,
+  disabled,
+  selected,
+  onClick,
+  onDoubleClick,
+  children,
+}: {
+  id: AgentBoardCardId;
+  disabled: boolean;
+  selected: boolean;
+  onClick: () => void;
+  onDoubleClick: () => void;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled });
+  return (
+    <article
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={cn(
+        "rounded-lg border bg-background/55 p-2.5 text-left transition-colors",
+        !disabled && "cursor-grab active:cursor-grabbing",
+        isDragging && "opacity-45 ring-1 ring-emerald-400/50",
+        selected ? "border-emerald-500/40" : "border-border/55 hover:border-border",
+      )}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+    >
+      {children}
+    </article>
+  );
 }
 
 const BOARD_COLUMNS: ReadonlyArray<{
@@ -557,7 +601,10 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const [selectedCardId, setSelectedCardId] = useState<AgentBoardCardId | null>(null);
   const [detailCardId, setDetailCardId] = useState<AgentBoardCardId | null>(null);
   const [draggingCardId, setDraggingCardId] = useState<AgentBoardCardId | null>(null);
-  const [dragOverState, setDragOverState] = useState<AgentBoardState | null>(null);
+  const draggingCard = useMemo(
+    () => board?.cards.find((card) => card.id === draggingCardId) ?? null,
+    [board?.cards, draggingCardId],
+  );
   const [isGraphPanning, setIsGraphPanning] = useState(false);
   const [graphPanOffset, setGraphPanOffset] = useState({ x: 0, y: 0 });
   const [graphZoom, setGraphZoom] = useState(1);
@@ -594,32 +641,6 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const syncingScrollRef = useRef(false);
   const planningCommitTimersRef = useRef(new Map<string, number>());
   const detailCommitTimerRef = useRef<number | null>(null);
-
-  // While a card drag is active, keep the browser's default drag behavior
-  // (text-selection sweep, stray-drop navigation) out of the way and clear
-  // the column highlight whenever the pointer leaves the kanban columns.
-  useEffect(() => {
-    if (!draggingCardId) return;
-    const handleWindowDragOver = (event: globalThis.DragEvent) => {
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-      const target = event.target;
-      if (!(target instanceof Element) || !target.closest("[data-kanban-column]")) {
-        setDragOverState(null);
-      }
-    };
-    const handleWindowDrop = (event: globalThis.DragEvent) => {
-      event.preventDefault();
-      setDraggingCardId(null);
-      setDragOverState(null);
-    };
-    window.addEventListener("dragover", handleWindowDragOver);
-    window.addEventListener("drop", handleWindowDrop);
-    return () => {
-      window.removeEventListener("dragover", handleWindowDragOver);
-      window.removeEventListener("drop", handleWindowDrop);
-    };
-  }, [draggingCardId]);
 
   useEffect(() => {
     const planningCommitTimers = planningCommitTimersRef.current;
@@ -1646,24 +1667,28 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     [board, saveBoard],
   );
 
-  const dropCardIntoState = useCallback(
-    (state: AgentBoardState) => {
-      if (!draggingCardId) return;
-      moveCard(draggingCardId, state);
-      setDraggingCardId(null);
-      setDragOverState(null);
-    },
-    [draggingCardId, moveCard],
+  const boardSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  const handleColumnDragOver = useCallback(
-    (event: DragEvent<HTMLElement>, state: AgentBoardState) => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      setDragOverState(state);
+  const handleBoardDragStart = useCallback((event: DragStartEvent) => {
+    setDraggingCardId(event.active.id as AgentBoardCardId);
+  }, []);
+
+  const handleBoardDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setDraggingCardId(null);
+      const target = event.over?.id;
+      if (!target || !event.active.id) return;
+      if (target === event.active.id) return;
+      moveCard(event.active.id as AgentBoardCardId, target as AgentBoardState);
     },
-    [],
+    [moveCard],
   );
+
+  const handleBoardDragCancel = useCallback(() => {
+    setDraggingCardId(null);
+  }, []);
 
   const claimAgentBoardCard = useAtomCommand(agentBoardEnvironment.claimCard);
 
@@ -2002,231 +2027,243 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
               : undefined
           }
         >
-          {loading && !board ? (
-            <div className="flex items-center gap-2 py-8 text-muted-foreground/50 text-xs">
-              <LoaderIcon className="size-3.5 animate-spin" />
-              Loading board
-            </div>
-          ) : null}
+          <DndContext
+            sensors={boardSensors}
+            onDragStart={handleBoardDragStart}
+            onDragEnd={handleBoardDragEnd}
+            onDragCancel={handleBoardDragCancel}
+          >
+            {loading && !board ? (
+              <div className="flex items-center gap-2 py-8 text-muted-foreground/50 text-xs">
+                <LoaderIcon className="size-3.5 animate-spin" />
+                Loading board
+              </div>
+            ) : null}
 
-          {board && board.cards.length === 0 ? (
-            <div className="py-10 text-center">
-              <p className="text-[13px] text-muted-foreground/45">No cards yet.</p>
-              <p className="mt-1 text-[11px] text-muted-foreground/35">
-                Add a draft card to start shaping work.
-              </p>
-            </div>
-          ) : null}
-
-          {columns.map((column) => (
-            <section
-              key={column.state}
-              data-kanban-column={column.state}
-              onDragOver={(event) => handleColumnDragOver(event, column.state)}
-              onDragLeave={() =>
-                setDragOverState((state) => (state === column.state ? null : state))
-              }
-              onDrop={(event) => {
-                event.preventDefault();
-                dropCardIntoState(column.state);
-              }}
-              className={cn(
-                "space-y-2",
-                mode === "page" &&
-                  "flex min-h-[520px] flex-col rounded-md border border-border/60 bg-muted/15 p-2",
-                dragOverState === column.state && "border-emerald-500/50",
-              )}
-            >
-              <div className="flex h-8 items-center justify-between">
-                <p className="text-[10px] font-semibold tracking-widest text-muted-foreground/55 uppercase">
-                  {column.label}
+            {board && board.cards.length === 0 ? (
+              <div className="py-10 text-center">
+                <p className="text-[13px] text-muted-foreground/45">No cards yet.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground/35">
+                  Add a draft card to start shaping work.
                 </p>
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-muted-foreground/35">
-                    {column.cards.length}
-                  </span>
-                  {mode === "page" ? (
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      className="size-6 text-muted-foreground/45 hover:text-foreground/80"
+              </div>
+            ) : null}
+
+            {columns.map((column) => (
+              <KanbanDroppableColumn
+                key={column.state}
+                id={column.state}
+                disabled={mode !== "page"}
+                className={cn(
+                  "space-y-2",
+                  mode === "page" &&
+                    "flex min-h-[520px] flex-col rounded-md border border-border/60 bg-muted/15 p-2",
+                )}
+              >
+                <div className="flex h-8 items-center justify-between">
+                  <p className="text-[10px] font-semibold tracking-widest text-muted-foreground/55 uppercase">
+                    {column.label}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground/35">
+                      {column.cards.length}
+                    </span>
+                    {mode === "page" ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        className="size-6 text-muted-foreground/45 hover:text-foreground/80"
+                        onClick={() => {
+                          setQuickAddState(column.state);
+                          setQuickAddTitle("");
+                        }}
+                        disabled={!board || saving}
+                        aria-label={`Add card to ${column.label}`}
+                      >
+                        <PlusIcon className="size-3.5" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                {quickAddState === column.state ? (
+                  <div className="rounded-md border border-border/70 bg-background/70 p-2">
+                    <Input
+                      autoFocus
+                      value={quickAddTitle}
+                      onChange={(event) => setQuickAddTitle(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          addCardToState(column.state);
+                        }
+                        if (event.key === "Escape") {
+                          setQuickAddState(null);
+                          setQuickAddTitle("");
+                        }
+                      }}
+                      placeholder={`Add ${column.label.toLowerCase()} card`}
+                      className="h-8 text-xs"
+                    />
+                    <div className="mt-2 flex gap-1.5">
+                      <Button
+                        size="xs"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => addCardToState(column.state)}
+                        disabled={quickAddTitle.trim().length === 0 || saving}
+                      >
+                        Add
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => {
+                          setQuickAddState(null);
+                          setQuickAddTitle("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+                <div className={cn("space-y-1.5", mode === "page" && "min-h-0 flex-1")}>
+                  {column.cards.map((card) => (
+                    <KanbanDraggableCard
+                      key={card.id}
+                      id={card.id}
+                      disabled={mode !== "page"}
+                      selected={selectedCardId === card.id}
+                      onClick={() => {
+                        setSelectedCardId(card.id);
+                        setIntentDraft(intentDraftFromCard(card));
+                      }}
+                      onDoubleClick={() => openCardDetails(card)}
+                    >
+                      <div className="flex min-w-0 items-start gap-2">
+                        {card.state === "Done" ? (
+                          <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                        ) : (
+                          <CircleDotIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/45" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-2 text-[13px] leading-4 text-foreground/90">
+                            {card.title}
+                          </p>
+                          <p className="mt-1 truncate text-[10px] text-muted-foreground/35">
+                            {card.id}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span
+                          className={cn(
+                            "rounded-md border px-1.5 py-0.5 text-[10px]",
+                            stateTone(card.state),
+                          )}
+                        >
+                          {card.state}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            className="size-6 text-muted-foreground/45 hover:text-foreground/80"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openCardDetails(card);
+                            }}
+                            aria-label={`Edit ${card.title}`}
+                          >
+                            <PencilIcon className="size-3.5" />
+                          </Button>
+                          {card.state === "Ready" ? (
+                            <Button
+                              size="xs"
+                              className="h-6 px-1.5 text-[10px]"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                claimReadyCard(card);
+                              }}
+                              disabled={saving}
+                            >
+                              <PlayIcon className="size-3" />
+                              Run
+                            </Button>
+                          ) : null}
+                          <Select
+                            value={card.state}
+                            onValueChange={(value) => moveCard(card.id, value as AgentBoardState)}
+                          >
+                            <SelectTrigger
+                              variant="ghost"
+                              size="xs"
+                              className="h-6 px-1.5 text-[10px]"
+                              aria-label={`Move ${card.title}`}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <SelectValue>Move</SelectValue>
+                            </SelectTrigger>
+                            <SelectPopup alignItemWithTrigger={false}>
+                              {MOVABLE_STATES.map((state) => (
+                                <SelectItem key={state} value={state} className="min-w-36">
+                                  {state}
+                                </SelectItem>
+                              ))}
+                            </SelectPopup>
+                          </Select>
+                        </div>
+                      </div>
+                    </KanbanDraggableCard>
+                  ))}
+                  {mode === "page" &&
+                  column.cards.length === 0 &&
+                  quickAddState !== column.state ? (
+                    <button
+                      type="button"
+                      className="flex h-28 w-full items-center justify-center rounded-md border border-dashed border-border/60 bg-background/25 text-[12px] text-muted-foreground/45 transition-colors hover:border-border hover:bg-background/45 hover:text-muted-foreground"
                       onClick={() => {
                         setQuickAddState(column.state);
                         setQuickAddTitle("");
                       }}
-                      disabled={!board || saving}
-                      aria-label={`Add card to ${column.label}`}
                     >
-                      <PlusIcon className="size-3.5" />
-                    </Button>
+                      Add a card
+                    </button>
                   ) : null}
                 </div>
-              </div>
-              {quickAddState === column.state ? (
-                <div className="rounded-md border border-border/70 bg-background/70 p-2">
-                  <Input
-                    autoFocus
-                    value={quickAddTitle}
-                    onChange={(event) => setQuickAddTitle(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        addCardToState(column.state);
-                      }
-                      if (event.key === "Escape") {
-                        setQuickAddState(null);
-                        setQuickAddTitle("");
-                      }
-                    }}
-                    placeholder={`Add ${column.label.toLowerCase()} card`}
-                    className="h-8 text-xs"
-                  />
-                  <div className="mt-2 flex gap-1.5">
-                    <Button
-                      size="xs"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => addCardToState(column.state)}
-                      disabled={quickAddTitle.trim().length === 0 || saving}
+              </KanbanDroppableColumn>
+            ))}
+            <DragOverlay dropAnimation={null}>
+              {draggingCard ? (
+                <div className="w-60 rotate-1 rounded-lg border border-emerald-400/50 bg-background/95 p-2.5 shadow-xl">
+                  <div className="flex min-w-0 items-start gap-2">
+                    {draggingCard.state === "Done" ? (
+                      <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                    ) : (
+                      <CircleDotIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/45" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-[13px] leading-4 text-foreground/90">
+                        {draggingCard.title}
+                      </p>
+                      <p className="mt-1 truncate text-[10px] text-muted-foreground/35">
+                        {draggingCard.id}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <span
+                      className={cn(
+                        "rounded-md border px-1.5 py-0.5 text-[10px]",
+                        stateTone(draggingCard.state),
+                      )}
                     >
-                      Add
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => {
-                        setQuickAddState(null);
-                        setQuickAddTitle("");
-                      }}
-                    >
-                      Cancel
-                    </Button>
+                      {draggingCard.state}
+                    </span>
                   </div>
                 </div>
               ) : null}
-              <div className={cn("space-y-1.5", mode === "page" && "min-h-0 flex-1")}>
-                {column.cards.map((card) => (
-                  <article
-                    key={card.id}
-                    draggable={mode === "page"}
-                    className={cn(
-                      "rounded-lg border bg-background/55 p-2.5 text-left transition-colors",
-                      mode === "page" && "cursor-grab active:cursor-grabbing",
-                      draggingCardId === card.id && "opacity-45 ring-1 ring-emerald-400/50",
-                      selectedCardId === card.id
-                        ? "border-emerald-500/40"
-                        : "border-border/55 hover:border-border",
-                    )}
-                    onDragStart={(event) => {
-                      setDraggingCardId(card.id);
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", card.id);
-                      try {
-                        event.dataTransfer.setDragImage(getHiddenDragImage(), 0, 0);
-                      } catch {
-                        // Engines without setDragImage keep their default ghost.
-                      }
-                    }}
-                    onDragEnd={() => {
-                      setDraggingCardId(null);
-                      setDragOverState(null);
-                    }}
-                    onClick={() => {
-                      setSelectedCardId(card.id);
-                      setIntentDraft(intentDraftFromCard(card));
-                    }}
-                    onDoubleClick={() => openCardDetails(card)}
-                  >
-                    <div className="flex min-w-0 items-start gap-2">
-                      {card.state === "Done" ? (
-                        <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
-                      ) : (
-                        <CircleDotIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/45" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-[13px] leading-4 text-foreground/90">
-                          {card.title}
-                        </p>
-                        <p className="mt-1 truncate text-[10px] text-muted-foreground/35">
-                          {card.id}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <span
-                        className={cn(
-                          "rounded-md border px-1.5 py-0.5 text-[10px]",
-                          stateTone(card.state),
-                        )}
-                      >
-                        {card.state}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="size-6 text-muted-foreground/45 hover:text-foreground/80"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openCardDetails(card);
-                          }}
-                          aria-label={`Edit ${card.title}`}
-                        >
-                          <PencilIcon className="size-3.5" />
-                        </Button>
-                        {card.state === "Ready" ? (
-                          <Button
-                            size="xs"
-                            className="h-6 px-1.5 text-[10px]"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              claimReadyCard(card);
-                            }}
-                            disabled={saving}
-                          >
-                            <PlayIcon className="size-3" />
-                            Run
-                          </Button>
-                        ) : null}
-                        <Select
-                          value={card.state}
-                          onValueChange={(value) => moveCard(card.id, value as AgentBoardState)}
-                        >
-                          <SelectTrigger
-                            variant="ghost"
-                            size="xs"
-                            className="h-6 px-1.5 text-[10px]"
-                            aria-label={`Move ${card.title}`}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <SelectValue>Move</SelectValue>
-                          </SelectTrigger>
-                          <SelectPopup alignItemWithTrigger={false}>
-                            {MOVABLE_STATES.map((state) => (
-                              <SelectItem key={state} value={state} className="min-w-36">
-                                {state}
-                              </SelectItem>
-                            ))}
-                          </SelectPopup>
-                        </Select>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-                {mode === "page" && column.cards.length === 0 && quickAddState !== column.state ? (
-                  <button
-                    type="button"
-                    className="flex h-28 w-full items-center justify-center rounded-md border border-dashed border-border/60 bg-background/25 text-[12px] text-muted-foreground/45 transition-colors hover:border-border hover:bg-background/45 hover:text-muted-foreground"
-                    onClick={() => {
-                      setQuickAddState(column.state);
-                      setQuickAddTitle("");
-                    }}
-                  >
-                    Add a card
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          ))}
+            </DragOverlay>
+          </DndContext>
         </div>
       </div>
 
