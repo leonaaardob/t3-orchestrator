@@ -570,6 +570,32 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const planningCommitTimersRef = useRef(new Map<string, number>());
   const detailCommitTimerRef = useRef<number | null>(null);
 
+  // While a card drag is active, keep the browser's default drag behavior
+  // (text-selection sweep, stray-drop navigation) out of the way and clear
+  // the column highlight whenever the pointer leaves the kanban columns.
+  useEffect(() => {
+    if (!draggingCardId) return;
+    const handleWindowDragOver = (event: globalThis.DragEvent) => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest("[data-kanban-column]")) {
+        setDragOverState(null);
+      }
+    };
+    const handleWindowDrop = (event: globalThis.DragEvent) => {
+      event.preventDefault();
+      setDraggingCardId(null);
+      setDragOverState(null);
+    };
+    window.addEventListener("dragover", handleWindowDragOver);
+    window.addEventListener("drop", handleWindowDrop);
+    return () => {
+      window.removeEventListener("dragover", handleWindowDragOver);
+      window.removeEventListener("drop", handleWindowDrop);
+    };
+  }, [draggingCardId]);
+
   useEffect(() => {
     const planningCommitTimers = planningCommitTimersRef.current;
     return () => {
@@ -1939,6 +1965,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         <div
           className={cn(
             mode === "page" ? "grid min-h-full grid-flow-col gap-3 p-3" : "space-y-3 p-3",
+            draggingCardId && "select-none",
           )}
           style={
             mode === "page"
@@ -1969,6 +1996,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           {columns.map((column) => (
             <section
               key={column.state}
+              data-kanban-column={column.state}
               onDragOver={(event) => handleColumnDragOver(event, column.state)}
               onDragLeave={() =>
                 setDragOverState((state) => (state === column.state ? null : state))
@@ -1981,7 +2009,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                 "space-y-2",
                 mode === "page" &&
                   "flex min-h-[520px] flex-col rounded-md border border-border/60 bg-muted/15 p-2",
-                dragOverState === column.state && "border-emerald-500/45 bg-emerald-500/5",
+                dragOverState === column.state && "border-emerald-500/50",
               )}
             >
               <div className="flex h-8 items-center justify-between">
@@ -2058,7 +2086,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                     className={cn(
                       "rounded-lg border bg-background/55 p-2.5 text-left transition-colors",
                       mode === "page" && "cursor-grab active:cursor-grabbing",
-                      draggingCardId === card.id && "opacity-45",
+                      draggingCardId === card.id && "opacity-45 ring-1 ring-emerald-400/50",
                       selectedCardId === card.id
                         ? "border-emerald-500/40"
                         : "border-border/55 hover:border-border",
