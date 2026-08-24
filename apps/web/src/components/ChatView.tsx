@@ -40,6 +40,8 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -172,6 +174,7 @@ import {
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { buildAgentBoardImplementationPrompt } from "~/agentBoardPrompt";
 import { buildAgentBoardImplementationThreadTitle } from "~/agentBoardPrompt";
+import { MISSING_WORKER_CONFIG_ERROR, resolveWorkerModelSelection } from "~/agentBoardRunner";
 import AgentBoardPanel from "./AgentBoardPanel";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -187,7 +190,11 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  NO_PROVIDER_MODEL_SELECTION,
+  getProviderInstanceEntry,
+  getProviderInstanceModels,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -5778,32 +5785,6 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeProject || !activeThread || !activeWorkspaceRoot || activeEnvironmentUnavailable) {
         throw new Error("An active project, thread, and workspace are required.");
       }
-      // The Planning view replaces the chat column, so the composer (and its
-      // send context) may be unmounted. Fall back to the active thread's or
-      // the project's default model selection instead of requiring the
-      // composer to be mounted.
-      const sendCtx = composerRef.current?.getSendContext();
-      const runModelSelection =
-        sendCtx?.selectedModelSelection ??
-        activeThread.modelSelection ??
-        activeProject.defaultModelSelection;
-      if (!runModelSelection) {
-        throw new Error("A provider and model selection are required to run a card.");
-      }
-
-      const createdAt = new Date().toISOString();
-      const nextThreadId = newThreadId();
-      const nextThreadTitle = truncate(buildAgentBoardImplementationThreadTitle(result.card));
-      const cardPromptText = buildAgentBoardImplementationPrompt(result.card);
-      const outgoingPrompt = sendCtx
-        ? formatOutgoingPrompt({
-            provider: sendCtx.selectedProvider,
-            model: sendCtx.selectedModel,
-            models: sendCtx.selectedProviderModels,
-            effort: sendCtx.selectedPromptEffort,
-            text: cardPromptText,
-          })
-        : cardPromptText;
 
       const saveBoardRuntime = (input: {
         readonly board: AgentBoardFile;
@@ -5841,6 +5822,60 @@ function ChatViewContent(props: ChatViewProps) {
             })(),
           },
         });
+
+      // Worker execution is centrally configured, never composer-first: the
+      // board's runner override wins, then the project default. The Planning
+      // view replaces the chat column, so the composer may not even be
+      // mounted and its live selection must not leak into board runs.
+      const runResolution = resolveWorkerModelSelection(
+        result.board,
+        activeProject.defaultModelSelection,
+      );
+      if (runResolution._tag === "missing-config") {
+        await saveBoardRuntime({
+          board: result.board,
+          state: "Blocked",
+          currentError: MISSING_WORKER_CONFIG_ERROR,
+        }).catch(() => undefined);
+        throw new Error(MISSING_WORKER_CONFIG_ERROR);
+      }
+      const runModelSelection = runResolution.selection;
+
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const nextThreadTitle = truncate(buildAgentBoardImplementationThreadTitle(result.card));
+      const cardPromptText = buildAgentBoardImplementationPrompt(result.card);
+      // Prompt metadata rides on the resolved selection when its provider
+      // instance is known; otherwise the plain prompt text is sent.
+      const runInstanceEntry = getProviderInstanceEntry(
+        providerStatuses,
+        runModelSelection.instanceId,
+      );
+      let outgoingPrompt = cardPromptText;
+      if (runInstanceEntry) {
+        const runInstanceModels = getProviderInstanceModels(
+          providerStatuses,
+          runModelSelection.instanceId,
+        );
+        const effortDescriptors = getProviderOptionDescriptors({
+          caps: getProviderModelCapabilities(
+            runInstanceModels,
+            runModelSelection.model,
+            runInstanceEntry.driverKind,
+          ),
+          selections: runModelSelection.options,
+        });
+        const primaryEffortValue = getProviderOptionCurrentValue(
+          effortDescriptors.find((descriptor) => descriptor.type === "select") ?? null,
+        );
+        outgoingPrompt = formatOutgoingPrompt({
+          provider: runInstanceEntry.driverKind,
+          model: runModelSelection.model,
+          models: runInstanceModels,
+          effort: typeof primaryEffortValue === "string" ? primaryEffortValue : null,
+          text: cardPromptText,
+        });
+      }
 
       const createResult = await createThread({
         environmentId,
@@ -5914,10 +5949,10 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeThreadBranch,
       activeWorkspaceRoot,
-      composerRef,
       createThread,
       deleteThread,
       environmentId,
+      providerStatuses,
       runtimeMode,
       saveAgentBoardRuntime,
       startThreadTurn,
@@ -6338,6 +6373,7 @@ function ChatViewContent(props: ChatViewProps) {
               mode="page"
               onClose={() => setProjectView("chat")}
               onRunClaimedCard={onRunClaimedAgentBoardCard}
+              projectDefaultModelSelection={activeProject?.defaultModelSelection ?? null}
             />
           </div>
         ) : (

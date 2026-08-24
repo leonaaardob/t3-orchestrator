@@ -19,6 +19,7 @@ import {
   type AgentBoardIntentBrief,
   type AgentBoardState,
   type EnvironmentId,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -39,9 +40,20 @@ import {
 import { Schema } from "effect";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAtomValue } from "@effect/atom-react";
+import { createModelSelection } from "@t3tools/shared/model";
+import { MISSING_WORKER_CONFIG_ERROR, resolveWorkerModelSelection } from "~/agentBoardRunner";
+import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { projectEnvironment } from "~/state/projects";
+import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "~/providerInstances";
+import { usePrimarySettings } from "~/hooks/useSettings";
 import {
   DndContext,
   DragOverlay,
@@ -69,6 +81,8 @@ import { Input } from "./ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { TraitsPicker } from "./chat/TraitsPicker";
 
 interface AgentBoardPanelProps {
   environmentId: EnvironmentId;
@@ -76,6 +90,8 @@ interface AgentBoardPanelProps {
   mode?: "page" | "sheet" | "sidebar";
   onClose: () => void;
   onRunClaimedCard?: (result: AgentBoardClaimResult) => Promise<AgentBoardFileType | void>;
+  /** The project's `defaultModelSelection`, used to show the effective worker source. */
+  projectDefaultModelSelection?: ModelSelection | null;
 }
 
 function KanbanDroppableColumn({
@@ -581,6 +597,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   mode = "sidebar",
   onClose,
   onRunClaimedCard,
+  projectDefaultModelSelection,
 }: AgentBoardPanelProps) {
   const [board, setBoard] = useState<AgentBoardFileType | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -1192,6 +1209,48 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         );
     },
     [environmentId, workspaceRoot],
+  );
+
+  // ----- worker execution config -----
+  const settings = usePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+      ),
+    [serverProviders, settings],
+  );
+  const modelOptionsByInstance = useMemo(
+    () => getCustomModelOptionsByInstance(settings, serverProviders),
+    [serverProviders, settings],
+  );
+  const workerResolution = useMemo(
+    () => (board ? resolveWorkerModelSelection(board, projectDefaultModelSelection) : null),
+    [board, projectDefaultModelSelection],
+  );
+  const workerSelection = workerResolution?._tag === "resolved" ? workerResolution.selection : null;
+  const workerEntry = workerSelection
+    ? (instanceEntries.find((entry) => entry.instanceId === workerSelection.instanceId) ?? null)
+    : null;
+  const workerSourceLabel =
+    workerResolution?._tag !== "resolved"
+      ? MISSING_WORKER_CONFIG_ERROR
+      : workerResolution.source === "board-runner"
+        ? "Board override — used for every card run"
+        : "Project default — pick a model to override";
+  const setWorkerModelOverride = useCallback(
+    (selection: ModelSelection | null) => {
+      if (!board) return;
+      const timestamp = new Date().toISOString();
+      const { workerModelSelection: _clearedOverride, ...runner } = board.runner;
+      saveBoard({
+        ...board,
+        runner: selection ? { ...runner, workerModelSelection: selection } : runner,
+        updatedAt: timestamp,
+      });
+    },
+    [board, saveBoard],
   );
 
   const addDraftCard = useCallback(() => {
@@ -1856,6 +1915,72 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
             </Button>
           ) : null}
         </div>
+      </div>
+
+      <div
+        data-agent-board-worker-config="true"
+        className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border/50 px-3 py-2"
+      >
+        <div className="min-w-0 flex-1 basis-40">
+          <p className="truncate text-[11px] font-medium text-foreground/80">Worker execution</p>
+          <p className="truncate text-[10px] text-muted-foreground/60">{workerSourceLabel}</p>
+        </div>
+        {instanceEntries.length === 0 ? (
+          <span className="text-xs text-muted-foreground">No providers available</span>
+        ) : workerSelection && workerEntry ? (
+          <div className="flex items-center gap-1.5">
+            <ProviderModelPicker
+              compact
+              activeInstanceId={workerSelection.instanceId}
+              model={workerSelection.model}
+              lockedProvider={null}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              triggerVariant="outline"
+              triggerClassName="h-7 min-w-0 max-w-none shrink-0 text-xs text-foreground/90 hover:text-foreground"
+              disabled={!board || saving}
+              onInstanceModelChange={(instanceId, model) => {
+                setWorkerModelOverride(createModelSelection(instanceId, model));
+              }}
+            />
+            <TraitsPicker
+              provider={workerEntry.driverKind}
+              models={workerEntry.models}
+              model={workerSelection.model}
+              prompt=""
+              onPromptChange={() => {}}
+              modelOptions={workerSelection.options ?? []}
+              allowPromptInjectedEffort={false}
+              triggerVariant="outline"
+              triggerClassName="h-7 min-w-0 max-w-none shrink-0 text-xs text-foreground/90 hover:text-foreground"
+              onModelOptionsChange={(nextOptions) => {
+                setWorkerModelOverride(
+                  createModelSelection(
+                    workerSelection.instanceId,
+                    workerSelection.model,
+                    nextOptions,
+                  ),
+                );
+              }}
+            />
+            {board?.runner.workerModelSelection ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                disabled={!board || saving}
+                onClick={() => setWorkerModelOverride(null)}
+                title="Clear the board override and use the project default model"
+              >
+                Use project default
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {workerEntry ? "Configured provider unavailable" : "Not configured"}
+          </span>
+        )}
       </div>
 
       <div className={cn("shrink-0 border-b border-border/50 p-3", mode === "page" && "hidden")}>

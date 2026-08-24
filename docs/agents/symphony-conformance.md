@@ -23,7 +23,9 @@ This fork mirrors these Symphony concepts:
 - Bounded concurrency.
 - Runtime state owned by one orchestrator.
 - Retry and reconciliation behavior for long-running agent sessions.
-- Codex App Server as the expected worker protocol.
+- T3's provider-neutral runtime as the expected worker protocol; the worker
+  provider, model, and effort are project-central configuration
+  (`runner.workerModelSelection` in `.t3/agent-board.json`), not a pinned CLI.
 - A single persistent workpad/proof ledger per work item.
 - Workflow-defined handoff state. Success does not have to mean automatic
   merge or final `Done`.
@@ -99,7 +101,7 @@ Implementation gaps to close before claiming full Symphony-style behavior:
 - No typed workflow loader validates `WORKFLOW.md` front matter yet.
 - No dynamic workflow reload yet.
 - No persisted orchestrator runtime state beyond board fields yet.
-- No formal Codex App Server worker loop for card execution yet.
+- No formal provider-neutral T3 runtime worker loop for card execution yet.
 - No hook execution layer yet.
 - No local equivalent of Linear comment editing for task-record update
   arbitration yet.

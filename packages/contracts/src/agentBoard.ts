@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RuntimeSessionId } from "./baseSchemas.ts";
+import { ModelSelection } from "./orchestration.ts";
 
 export const AgentBoardSchemaVersion = Schema.Literal(1);
 export type AgentBoardSchemaVersion = typeof AgentBoardSchemaVersion.Type;
@@ -155,6 +156,11 @@ export type AgentBoardCard = typeof AgentBoardCard.Type;
 export const AgentBoardRunnerSettings = Schema.Struct({
   maxConcurrentCards: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
   repairCycles: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(3))),
+  // Worker execution selection for board card runs (instanceId + model +
+  // options; reasoning effort rides as an option entry). Optional so boards
+  // saved before this field existed still decode; absent means "fall back to
+  // the project default, then error".
+  workerModelSelection: Schema.optionalKey(ModelSelection),
 });
 export type AgentBoardRunnerSettings = typeof AgentBoardRunnerSettings.Type;
 

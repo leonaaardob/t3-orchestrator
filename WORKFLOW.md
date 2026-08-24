@@ -20,14 +20,16 @@ agent:
   max_turns: 20
   max_retry_backoff_ms: 300000
   max_repair_cycles: 3
-  command: codex app-server
   review_agent: fresh
-codex:
-  command: codex app-server
-  approval_policy: implementation-defined
-  thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
+provider:
+  # Workers run through T3's provider-neutral runtime; no CLI or driver is
+  # pinned here. The machine-readable worker execution selection lives in the
+  # project board file under `runner.workerModelSelection` (`instanceId` +
+  # `model` + option entries such as reasoning effort), falling back to the
+  # project's `defaultModelSelection`. This front matter documents intent;
+  # .t3/agent-board.json is authoritative.
+  runtime: t3-provider-neutral
+  worker_model_selection_source: .t3/agent-board.json#runner.workerModelSelection
 ---
 
 # T3 Code Agent Board Workflow
@@ -44,9 +46,10 @@ This workflow intentionally follows the OpenAI Symphony shape:
 
 - `WORKFLOW.md` is the repository-owned policy and runtime contract.
 - Front matter uses the Symphony top-level sections where possible:
-  `tracker`, `polling`, `workspace`, `hooks`, `agent`, and `codex`.
+  `tracker`, `polling`, `workspace`, `hooks`, `agent`, and `provider`.
 - The board runner is the scheduler/orchestrator. It claims eligible work,
-  creates or reuses isolated workspaces, launches Codex, retries recoverable
+  creates or reuses isolated workspaces, launches the configured provider
+  worker through T3's runtime, retries recoverable
   failures, reconciles state, and exposes operator-visible status.
 - The prompt body below is the per-card task policy. Runtime behavior belongs
   in front matter; ticket/card handling rules belong in this Markdown body.

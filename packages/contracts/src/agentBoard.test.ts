@@ -4,6 +4,33 @@ import { describe, expect, it } from "vite-plus/test";
 import { AgentBoardFile } from "./agentBoard.ts";
 
 const decodeAgentBoardFile = Schema.decodeUnknownSync(AgentBoardFile);
+// The server persists boards as JSON strings, so encode/decode through the
+// same string codec shape (`Schema.fromJsonString`) for round-trip proofs.
+const decodeAgentBoardFileJsonString = Schema.decodeSync(Schema.fromJsonString(AgentBoardFile));
+const encodeAgentBoardFileJsonString = Schema.encodeSync(Schema.fromJsonString(AgentBoardFile));
+
+// Board shape exactly as written before `runner.workerModelSelection` existed.
+const PRE_CHANGE_BOARD_JSON = `{
+  "schemaVersion": 1,
+  "projectRoot": "/tmp/example-project",
+  "defaultView": "kanban",
+  "runner": {
+    "maxConcurrentCards": 1,
+    "repairCycles": 3
+  },
+  "cards": [
+    {
+      "id": "TASK-20260505-pre-change-card",
+      "title": "Card saved before worker model selection existed",
+      "state": "Backlog",
+      "createdAt": "2026-05-05T12:00:00.000Z",
+      "updatedAt": "2026-05-05T12:00:00.000Z"
+    }
+  ],
+  "graphLinks": [],
+  "createdAt": "2026-05-05T12:00:00.000Z",
+  "updatedAt": "2026-05-05T12:00:00.000Z"
+}`;
 
 describe("AgentBoardFile", () => {
   it("decodes a minimal project-local board with defaults", () => {
@@ -93,5 +120,47 @@ describe("AgentBoardFile", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  it("decodes a pre-change board JSON string without runner.workerModelSelection unchanged", () => {
+    const decoded = decodeAgentBoardFileJsonString(PRE_CHANGE_BOARD_JSON);
+
+    expect(decoded.runner).toEqual({
+      maxConcurrentCards: 1,
+      repairCycles: 3,
+    });
+    expect(decoded.runner.workerModelSelection).toBeUndefined();
+    expect(decoded.cards[0]?.id).toBe("TASK-20260505-pre-change-card");
+
+    const encoded = encodeAgentBoardFileJsonString(decoded);
+    expect(encoded).not.toContain("workerModelSelection");
+  });
+
+  it("round-trips a populated runner.workerModelSelection", () => {
+    const decoded = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+      runner: {
+        maxConcurrentCards: 2,
+        repairCycles: 3,
+        workerModelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.2",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+    });
+
+    expect(decoded.runner.workerModelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.2",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+
+    const encoded = encodeAgentBoardFileJsonString(decoded);
+    expect(encoded).toContain("workerModelSelection");
+    const roundTripped = decodeAgentBoardFileJsonString(encoded);
+    expect(roundTripped.runner.workerModelSelection).toEqual(decoded.runner.workerModelSelection);
   });
 });

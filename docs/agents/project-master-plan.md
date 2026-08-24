@@ -135,6 +135,12 @@ Proof:
 - 5C complete: a claimed board card now starts a fresh orchestration
   implementation thread and persists `runtime.implementationRunId`; launch
   failures mark the card `Blocked` with `runtime.currentError`.
+- 5D complete: worker execution is provider-neutral and centrally configured —
+  model selection resolves from `runner.workerModelSelection` in
+  `.t3/agent-board.json`, falls back to the project `defaultModelSelection`,
+  and blocks the card with a missing-config error when neither exists; the
+  Planning UI exposes a board-level worker-execution picker that persists
+  through the existing board save command.
 - Remaining: stream run status back into the board.
 
 ### Slice 6: Autonomous Review And Repair

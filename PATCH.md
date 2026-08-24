@@ -47,7 +47,10 @@ The current patch attaches to upstream T3 Code through these areas:
 
 - `src/agentBoard.ts`
   - Shared board schema, card states, runtime metadata, graph links, claim
-    contract types, and the `AgentBoardFileError` RPC error.
+    contract types, and the `AgentBoardFileError` RPC error. Runner settings
+    carry an optional `workerModelSelection` (`ModelSelection` imported from
+    `./orchestration.ts`) — the project-central worker execution config for
+    board card runs.
 - `src/agentBoard.test.ts`
   - Contract coverage for the board file shape (runner: `vite-plus/test`).
 - `src/rpc.ts`
@@ -90,11 +93,22 @@ The current patch attaches to upstream T3 Code through these areas:
     `wsRpcClient` surface deleted upstream).
 - `src/components/AgentBoardPanel.tsx`
   - Kanban, Planning table, card detail editor, Dependency tree UI; consumes
-    the atom commands above plus `projectEnvironment.writeFile`.
+    the atom commands above plus `projectEnvironment.writeFile`. A
+    worker-execution picker (upstream `ProviderModelPicker` + `TraitsPicker`
+    wired like `ProjectSettingsPanel`) persists
+    `runner.workerModelSelection` through the save atom command and shows
+    whether the effective value is the board override or the project default.
 - `src/components/ChatView.tsx`
   - Planning tab strip + persisted `Break` safety control +
     `onRunClaimedAgentBoardCard` (thread creation via upstream's
-    `createThread` / `startThreadTurn` atom commands).
+    `createThread` / `startThreadTurn` atom commands). Board runs resolve the
+    model selection centrally through `src/agentBoardRunner.ts`; the chat
+    composer's live selection is never consulted. Missing config marks the
+    card `Blocked` with a runtime error before any thread is created.
+- `src/agentBoardRunner.ts`
+  - Worker execution resolver (`resolveWorkerModelSelection`: board runner
+    override -> project default -> typed missing-config) plus the shared
+    missing-config error text; unit-tested in `src/agentBoardRunner.test.ts`.
 - `src/agentBoardPrompt.ts`
   - Board-card worker handoff prompt construction.
 
