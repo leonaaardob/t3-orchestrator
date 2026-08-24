@@ -67,6 +67,31 @@ interface AgentBoardPanelProps {
   onRunClaimedCard?: (result: AgentBoardClaimResult) => Promise<AgentBoardFileType | void>;
 }
 
+/**
+ * Invisible drag image: the browser's default ghost snapshots the whole
+ * viewport for these cards, which reads as the entire UI following the
+ * cursor. A 1px transparent image disables it; feedback comes from the
+ * dimmed source card and the column border instead.
+ */
+let hiddenDragImage: HTMLImageElement | null = null;
+function getHiddenDragImage(): HTMLImageElement {
+  if (!hiddenDragImage) {
+    hiddenDragImage = document.createElement("img");
+    hiddenDragImage.src =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    hiddenDragImage.alt = "";
+    hiddenDragImage.style.position = "fixed";
+    hiddenDragImage.style.top = "-100px";
+    hiddenDragImage.style.left = "-100px";
+    hiddenDragImage.style.width = "1px";
+    hiddenDragImage.style.height = "1px";
+    hiddenDragImage.style.opacity = "0";
+    hiddenDragImage.style.pointerEvents = "none";
+    document.body.appendChild(hiddenDragImage);
+  }
+  return hiddenDragImage;
+}
+
 const BOARD_COLUMNS: ReadonlyArray<{
   state: AgentBoardState;
   label: string;
@@ -2095,6 +2120,11 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       setDraggingCardId(card.id);
                       event.dataTransfer.effectAllowed = "move";
                       event.dataTransfer.setData("text/plain", card.id);
+                      try {
+                        event.dataTransfer.setDragImage(getHiddenDragImage(), 0, 0);
+                      } catch {
+                        // Engines without setDragImage keep their default ghost.
+                      }
                     }}
                     onDragEnd={() => {
                       setDraggingCardId(null);
