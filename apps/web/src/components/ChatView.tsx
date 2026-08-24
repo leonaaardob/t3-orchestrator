@@ -5778,21 +5778,32 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeProject || !activeThread || !activeWorkspaceRoot || activeEnvironmentUnavailable) {
         throw new Error("An active project, thread, and workspace are required.");
       }
+      // The Planning view replaces the chat column, so the composer (and its
+      // send context) may be unmounted. Fall back to the active thread's or
+      // the project's default model selection instead of requiring the
+      // composer to be mounted.
       const sendCtx = composerRef.current?.getSendContext();
-      if (!sendCtx?.providerAvailable) {
+      const runModelSelection =
+        sendCtx?.selectedModelSelection ??
+        activeThread.modelSelection ??
+        activeProject.defaultModelSelection;
+      if (!runModelSelection) {
         throw new Error("A provider and model selection are required to run a card.");
       }
 
       const createdAt = new Date().toISOString();
       const nextThreadId = newThreadId();
       const nextThreadTitle = truncate(buildAgentBoardImplementationThreadTitle(result.card));
-      const outgoingPrompt = formatOutgoingPrompt({
-        provider: sendCtx.selectedProvider,
-        model: sendCtx.selectedModel,
-        models: sendCtx.selectedProviderModels,
-        effort: sendCtx.selectedPromptEffort,
-        text: buildAgentBoardImplementationPrompt(result.card),
-      });
+      const cardPromptText = buildAgentBoardImplementationPrompt(result.card);
+      const outgoingPrompt = sendCtx
+        ? formatOutgoingPrompt({
+            provider: sendCtx.selectedProvider,
+            model: sendCtx.selectedModel,
+            models: sendCtx.selectedProviderModels,
+            effort: sendCtx.selectedPromptEffort,
+            text: cardPromptText,
+          })
+        : cardPromptText;
 
       const saveBoardRuntime = (input: {
         readonly board: AgentBoardFile;
@@ -5837,7 +5848,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadId: nextThreadId,
           projectId: activeProject.id,
           title: nextThreadTitle,
-          modelSelection: sendCtx.selectedModelSelection,
+          modelSelection: runModelSelection,
           runtimeMode,
           interactionMode: "default",
           branch: activeThreadBranch,
@@ -5865,7 +5876,7 @@ function ChatViewContent(props: ChatViewProps) {
             text: outgoingPrompt,
             attachments: [],
           },
-          modelSelection: sendCtx.selectedModelSelection,
+          modelSelection: runModelSelection,
           titleSeed: nextThreadTitle,
           runtimeMode,
           interactionMode: "default",
