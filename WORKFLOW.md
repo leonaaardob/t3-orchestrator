@@ -317,10 +317,19 @@ When a card enters `Ready`, the board runner should:
    relevant slice plan, and current attempt history.
 5. Run focused verification requested by the task record.
 6. Self-diagnose and repair routine failures.
-7. Spawn a fresh review agent with no implementation-thread context.
-8. Let the fresh review agent evaluate, repair, and integrate when safe.
-9. Update the board card and task record with proof.
-10. Move the card to `Done`, `Review`, or `Needs Decision`.
+7. Spawn a fresh review agent with no implementation-thread context
+   (new thread, same `.t3/workspaces/<card-id>` worktree, review prompt built
+   from task record + acceptance criteria + proof + diff via
+   `buildAgentBoardReviewPrompt`, model selection via `resolveWorkerModelSelection`).
+8. Let the fresh review agent evaluate: `REVIEW: PASS` → `Review`/`Done`,
+   `REVIEW: FAIL` routine → `Diagnosing` → repair turn on the implementation
+   thread (`buildAgentBoardRepairPrompt`) → next `Reviewing`; capped at
+   `agent.max_repair_cycles` (default 3) → `Needs Decision`; intent questions
+   (`NEEDS_DECISION:`) → `Needs Decision` immediately. Append review/repair
+   proof to the task record when it exists.
+9. Update the board card (`runtime.reviewRunId`, `currentError`,
+   `currentDecisionQuestion`, `lastHeartbeatAt`) and task record with proof.
+10. Move the card to `Review`, `Done`, or `Needs Decision`.
 11. Continue to the next eligible `Ready` card.
 
 The first implementation turn should receive the full rendered card prompt:
@@ -353,7 +362,7 @@ reconciles all project boards before claiming eligible `Ready` cards through
 the shared runner; the Planning UI does not need to be open.
 
 1. Load and validate `WORKFLOW.md`.
-2. Reconcile running cards before dispatch.
+2. Reconcile `Running`/`Reviewing`/`Diagnosing` cards before dispatch.
 3. Read `.t3/agent-board.json`.
 4. Select candidate cards from `tracker.active_states`.
 5. Skip cards already claimed, running, terminal, blocked by dependencies, or
@@ -367,28 +376,43 @@ the shared runner; the Planning UI does not need to be open.
 
 Retry behavior:
 
-- A completed implementation turn moves the card to `Review`; it never marks
-  the card `Done` automatically.
-- Failed or interrupted turns, dead sessions, stale heartbeats, and missing
-  implementation threads are retried as short continuation turns on the same
-  thread. Backoff is exponential, starts at a few seconds, and is capped by
-  `agent.max_retry_backoff_ms`.
-- `runtime.attemptCount` persists and caps retries at `runner.repairCycles`;
-  exhausted cards move to `Needs Decision` with the last failure summary.
+- A completed implementation turn moves the card to `Reviewing` with a fresh
+  review thread (same worktree, new thread, `runtime.reviewRunId` persisted);
+  it never moves directly to `Review` or `Done`. The review prompt is built
+  server-side from task intent, acceptance criteria, and workspace context via
+  the shared `agentBoardPrompt` resolver and `runner.workerModelSelection`.
+- Failed or interrupted implementation turns, dead sessions, stale heartbeats,
+  and missing implementation threads are retried as short continuation turns
+  on the same implementation thread. Backoff is exponential, starts at a few
+  seconds, and is capped by `agent.max_retry_backoff_ms`.
+- `Reviewing` cards are polled via `ProjectionSnapshotQuery.getThreadShellById(reviewRunId)`
+  and `getThreadDetailById(reviewRunId)`; the review result is parsed from
+  `REVIEW: PASS` / `REVIEW: FAIL - reason` / `NEEDS_DECISION: question` markers:
+  `PASS` → `Review` (human) with proof appended to the task record,
+  `FAIL` routine → `Diagnosing` → repair turn on the implementation thread
+  (same worktree/thread) → next `Reviewing` with a new review thread,
+  `NEEDS_DECISION` or intent question → `Needs Decision` immediately.
+- `Diagnosing` cards wait for the repair turn to complete, then launch a new
+  review thread and move to `Reviewing`.
+- `runtime.attemptCount` persists and caps full review/repair cycles at
+  `runner.repairCycles` (default 3); exhausted cards move to `Needs Decision`
+  with a summary of attempts, last failure, and (for intent) the exact
+  question for the user.
 - Backoff deadlines are intentionally in-memory scheduler state. Restarting
   may discard a pending delay, but durable attempt metadata still prevents an
   unbounded retry loop.
 
 Reconciliation behavior:
 
-- If a running card is moved to `Done`, `Canceled`, `Blocked`, or
-  `Needs Decision`, stop the active worker safely.
+- If a running/reviewing/diagnosing card is moved to `Done`, `Canceled`,
+  `Blocked`, or `Needs Decision`, stop its active worker(s) safely
+  (implementation and review threads).
 - If a running card loses eligibility, release the claim and preserve the
   workspace unless cleanup is explicitly safe.
 - If the runner restarts, recover from `.t3/agent-board.json` and existing
   workspaces. Exact in-memory scheduler state does not need to survive restart.
-- If a user moves a running card out of `Running`, interrupt its active turn
-  and do not relaunch it.
+- If a user moves a card out of `Running`/`Reviewing`/`Diagnosing`, interrupt
+  its active turn(s) and do not relaunch them.
 - Invalid workflow reloads must not crash an active session. Keep using the
   last known good workflow and surface the validation error.
 

@@ -27,12 +27,18 @@ export interface AgentBoardSchedulerShape {
   /**
    * Start the always-on board scheduler loop within the provided scope.
    *
-   * The loop ticks on a fixed interval: it reconciles `Running` cards against
-   * the orchestration projection (success -> `Review`, routine failure ->
-   * bounded retry with in-memory exponential backoff, exhausted attempts ->
-   * `Needs Decision`), aborts active turns for cards moved out of `Running`,
-   * then claims eligible `Ready` cards through the shared
-   * `AgentBoardRunner` service up to the board's concurrency cap.
+   * The loop ticks on a fixed interval: it reconciles `Running` (success →
+   * `Reviewing` with a fresh review thread, routine failure → bounded retry
+   * with in-memory exponential backoff, exhausted → `Needs Decision`),
+   * `Reviewing` (polls the review thread: `REVIEW: PASS` → `Review`,
+   * `REVIEW: FAIL` routine → `Diagnosing` → repair turn on the implementation
+   * thread → next `Reviewing`, capped → `Needs Decision`, `NEEDS_DECISION:`
+   * intent → `Needs Decision` immediately), and `Diagnosing` (waits for the
+   * repair turn to complete → next `Reviewing`) against the orchestration
+   * projection, aborts active turns for cards moved out of
+   * `Running`/`Reviewing`/`Diagnosing`, then claims eligible `Ready` cards
+   * through the shared `AgentBoardRunner` service up to the board's
+   * concurrency cap.
    */
   readonly start: () => Effect.Effect<void, never, Scope.Scope | AgentBoardSchedulerRequirements>;
 }

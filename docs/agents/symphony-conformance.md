@@ -96,16 +96,21 @@ These differences are intentional and should not be treated as drift:
 
 Implementation gaps to close before claiming full Symphony-style behavior:
 
-- The active daemon runner reconciles and claims project boards every 15
-  seconds, using the server-side runner and durable projection as its source of
-  truth. Retry deadlines are intentionally in-memory; board attempt metadata
-  remains durable across restarts.
+- The active daemon runner reconciles `Running`/`Reviewing`/`Diagnosing` and
+  claims project boards every 15 seconds, using the server-side runner and
+  durable projection as its source of truth. Retry deadlines are
+  intentionally in-memory; board attempt metadata remains durable across
+  restarts.
 - No typed workflow loader validates `WORKFLOW.md` front matter yet.
 - No dynamic workflow reload yet.
 - No persisted orchestrator runtime state beyond board fields yet.
 - The provider-neutral worker loop is formalized: scheduler claim, shared
-  runner launch, projection reconciliation, bounded continuation retries, and
-  `Review` completion are server-side and UI-independent.
+  runner launch, projection reconciliation, bounded continuation retries,
+  fresh review-agent handoff (`Reviewing` with `reviewRunId`), `Diagnosing`
+  repair cycles, and `Review`/`Needs Decision` completion are server-side and
+  UI-independent. Review uses `buildAgentBoardReviewPrompt` /
+  `parseAgentBoardReviewResult` / `buildAgentBoardRepairPrompt` in
+  `packages/shared` with `resolveWorkerModelSelection`.
 - No hook execution layer yet.
 - No local equivalent of Linear comment editing for task-record update
   arbitration yet.

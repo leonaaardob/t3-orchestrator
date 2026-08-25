@@ -154,7 +154,7 @@ Proof:
 
 ### Slice 6: Autonomous Review And Repair
 
-Status: `not-started`
+Status: `tested`
 
 Purpose:
 
@@ -162,8 +162,18 @@ Purpose:
 
 Proof:
 
-- Routine failures are retried up to the configured repair-cycle limit, while
-  intent decisions stop at `Needs Decision`.
+- A `Running` completed turn moves to `Reviewing` with a fresh review thread
+  (`runtime.reviewRunId` persisted, same worktree, new thread, review prompt
+  via `buildAgentBoardReviewPrompt` + `resolveWorkerModelSelection`); `REVIEW:
+PASS` → `Review`/`Done`, `REVIEW: FAIL` routine → `Diagnosing` → repair
+  turn on the implementation thread → next `Reviewing`; capped at
+  `runner.repairCycles` (default 3) → `Needs Decision` with summary; intent
+  questions (`NEEDS_DECISION:`) → `Needs Decision` immediately. Routine
+  failures stay in the autonomous loop while intent decisions stop at `Needs
+Decision`. Task-record proof is appended best-effort. Focused tests cover
+  success → Reviewing → PASS → Review/Done, fail → Diagnosing → repair →
+  re-review, cap → Needs Decision, intent → Needs Decision, and fresh-thread
+  verification.
 
 ### Slice 7: Expanded Views
 

@@ -203,6 +203,7 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
       hasActionableProposedPlan: false,
     }) as unknown as import("@t3tools/contracts").OrchestrationThreadShell;
 
+  const fakeDetails = new Map<string, { text: string }>();
   const projectionSnapshotQueryLayer = Layer.mock(ProjectionSnapshotQuery)({
     getShellSnapshot: () =>
       Effect.succeed({
@@ -221,6 +222,20 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
         ],
         threads: [],
       } as unknown as import("@t3tools/contracts").OrchestrationShellSnapshot),
+    getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
+      Effect.succeed(
+        workspaceRoot === cwd
+          ? Option.some({
+              id: PROJECT_ID,
+              title: "Scheduler project",
+              workspaceRoot: cwd,
+              defaultModelSelection: MODEL_SELECTION,
+              scripts: [],
+              createdAt: T0,
+              updatedAt: T0,
+            } as unknown as import("@t3tools/contracts").OrchestrationProject)
+          : Option.none(),
+      ),
     getThreadShellById: (threadId: ThreadId) =>
       Effect.suspend(() => {
         const entry = fakeThreads.get(threadId);
@@ -228,11 +243,37 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
           entry === undefined ? Option.none() : Option.some(threadShell(threadId, entry)),
         );
       }),
-  });
+    getThreadDetailById: (threadId: ThreadId) =>
+      Effect.suspend(() => {
+        const detail = fakeDetails.get(threadId);
+        const entry = fakeThreads.get(threadId);
+        if (entry === undefined) return Effect.succeed(Option.none());
+        const text = detail?.text ?? "";
+        return Effect.succeed(
+          Option.some({
+            thread: {
+              id: threadId,
+              messages: text ? [{ role: "assistant", text }] : [],
+              activities: [],
+            },
+          } as unknown as import("@t3tools/contracts").OrchestrationThreadDetailSnapshot),
+        );
+      }),
+  } as unknown as ProjectionSnapshotQuery["Service"]);
 
   const orchestrationEngineLayer = Layer.mock(OrchestrationEngineService)({
     dispatch: (command: OrchestrationCommand) =>
       Effect.suspend(() => {
+        if (command.type === "thread.create") {
+          fakeThreads.set(command.threadId, {
+            latestTurnState: "running",
+            sessionStatus: "running",
+            lastError: null,
+            updatedAt: TFRESH,
+          });
+          dispatched.push(command);
+          return Effect.succeed({ sequence: dispatched.length });
+        }
         // Mirror decider.requireThread: continuations onto threads the
         // projection no longer knows are rejected before being recorded.
         if (command.type === "thread.turn.start" && !fakeThreads.has(command.threadId)) {
@@ -391,6 +432,12 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
       launchMode = mode;
     },
     schedulerSaves: () => schedulerSaveCount,
+    setReviewText: (threadId: string, text: string) => {
+      fakeDetails.set(threadId, { text });
+    },
+    setThread: (threadId: string, entry: FakeThreadEntry) => {
+      fakeThreads.set(threadId, entry);
+    },
   };
 });
 
@@ -460,36 +507,56 @@ describe("AgentBoardSchedulerLive", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("moves completed runs to Review and clears the current error", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      harness.threads.set("t1", {
-        latestTurnState: "completed",
-        sessionStatus: "ready",
-        lastError: null,
-        updatedAt: TFRESH,
-      });
-      yield* harness.seedBoard([
-        makeCard({
-          id: "c1",
-          state: "Running",
-          runtime: {
-            attemptCount: 1,
-            implementationRunId: RuntimeSessionId.make("t1"),
-            lastHeartbeatAt: T0,
-            currentError: "stale error from earlier",
-          },
-        }),
-      ]);
-      yield* harness.start();
+  it.live(
+    "moves completed runs to Reviewing with a fresh review thread and clears the current error",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        harness.threads.set("t1", {
+          latestTurnState: "completed",
+          sessionStatus: "ready",
+          lastError: null,
+          updatedAt: TFRESH,
+        });
+        yield* harness.seedBoard([
+          makeCard({
+            id: "c1",
+            state: "Running",
+            runtime: {
+              attemptCount: 1,
+              implementationRunId: RuntimeSessionId.make("t1"),
+              lastHeartbeatAt: T0,
+              currentError: "stale error from earlier",
+              workspacePath: ".t3/workspaces/c1",
+              branchName: "board/c1",
+            },
+          }),
+        ]);
+        yield* harness.start();
 
-      yield* waitFor(() =>
-        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Review")),
-      );
-      const card = (yield* harness.readBoard()).cards[0];
-      expect(card?.runtime.currentError).toBeUndefined();
-      expect(card?.runtime.attemptCount).toBe(1);
-    }).pipe(Effect.provide(NodeServices.layer)),
+        yield* waitFor(() =>
+          harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
+        );
+        const card = (yield* harness.readBoard()).cards[0];
+        expect(card?.runtime.currentError).toBeUndefined();
+        expect(card?.runtime.attemptCount).toBe(1);
+        expect(card?.runtime.reviewRunId).toBeDefined();
+        expect(card?.runtime.reviewRunId).not.toBe(card?.runtime.implementationRunId);
+        const creates = harness.dispatchedCommands().filter((c) => c.type === "thread.create");
+        expect(creates.length).toBe(1);
+        if (creates[0]?.type === "thread.create") {
+          expect(creates[0].worktreePath).toBe(".t3/workspaces/c1");
+          expect(creates[0].branch).toBe("board/c1");
+        }
+        const reviewStarts = harness
+          .dispatchedCommands()
+          .filter(
+            (c) =>
+              c.type === "thread.turn.start" &&
+              (c as { threadId: string }).threadId === card?.runtime.reviewRunId,
+          );
+        expect(reviewStarts.length).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("retries failed runs with backoff, then moves to Needs Decision at the cap", () =>
@@ -728,6 +795,259 @@ describe("AgentBoardSchedulerLive", () => {
 
       yield* waitFor(() => Effect.sync(() => harness.runCalls().length === 1));
       expect(harness.runCalls()[0]?.cardId).toBe("a-high");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("review PASS moves Reviewing to Review on fresh thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* harness.seedBoard([
+        makeCard({
+          id: "c1",
+          state: "Running",
+          runtime: {
+            attemptCount: 1,
+            implementationRunId: RuntimeSessionId.make("t1"),
+            lastHeartbeatAt: T0,
+            workspacePath: ".t3/workspaces/c1",
+            branchName: "board/c1",
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
+      );
+      const reviewingCard = (yield* harness.readBoard()).cards[0];
+      const reviewId = reviewingCard?.runtime.reviewRunId as unknown as string;
+      expect(reviewId).toBeDefined();
+      harness.setReviewText(
+        reviewId,
+        "All acceptance criteria verified.\nREVIEW: PASS - proof complete",
+      );
+      harness.threads.set(reviewId, {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Review")),
+      );
+      const doneCard = (yield* harness.readBoard()).cards[0];
+      expect(doneCard?.runtime.reviewRunId).toBe(reviewId);
+      expect(doneCard?.runtime.currentError).toBeUndefined();
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("review FAIL moves to Diagnosing then repair and re-review", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ repairCycles: 3 });
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* harness.seedBoard([
+        makeCard({
+          id: "c1",
+          state: "Running",
+          runtime: {
+            attemptCount: 1,
+            implementationRunId: RuntimeSessionId.make("t1"),
+            lastHeartbeatAt: T0,
+            workspacePath: ".t3/workspaces/c1",
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
+      );
+      const reviewingCard = (yield* harness.readBoard()).cards[0];
+      const reviewId = reviewingCard?.runtime.reviewRunId as unknown as string;
+      harness.setReviewText(reviewId, "Missing tests.\nREVIEW: FAIL - tests failing");
+      harness.threads.set(reviewId, {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* waitFor(() =>
+        Effect.sync(() =>
+          harness
+            .dispatchedCommands()
+            .some(
+              (c) =>
+                c.type === "thread.turn.start" && (c as { threadId: string }).threadId === "t1",
+            ),
+        ),
+      );
+      let card = (yield* harness.readBoard()).cards[0];
+      expect(card?.runtime.attemptCount).toBe(2);
+      expect(card?.runtime.currentError).toContain("tests failing");
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* waitFor(() =>
+        Effect.sync(
+          () => harness.dispatchedCommands().filter((c) => c.type === "thread.create").length === 2,
+        ),
+      );
+      // Now second review has been launched; complete it
+      for (const [tid, entry] of Array.from(harness.threads.entries())) {
+        if (entry.latestTurnState === "running") {
+          harness.setReviewText(tid, "REVIEW: PASS");
+          harness.threads.set(tid, {
+            latestTurnState: "completed",
+            sessionStatus: "ready",
+            lastError: null,
+            updatedAt: TFRESH,
+          });
+        }
+      }
+      yield* Effect.logInfo("test set second review to PASS", {
+        threads: Array.from(harness.threads.entries()).map(([k, v]) => [k, v.latestTurnState]),
+      });
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Review")),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cap repairCycles moves to Needs Decision with summary", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ repairCycles: 2 });
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* harness.seedBoard([
+        makeCard({
+          id: "c1",
+          state: "Running",
+          runtime: {
+            attemptCount: 1,
+            implementationRunId: RuntimeSessionId.make("t1"),
+            lastHeartbeatAt: T0,
+            workspacePath: ".t3/workspaces/c1",
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
+      );
+      const r1 = (yield* harness.readBoard()).cards[0]?.runtime.reviewRunId as unknown as string;
+      harness.setReviewText(r1, "REVIEW: FAIL - still broken");
+      harness.threads.set(r1, {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* waitFor(() =>
+        Effect.sync(() =>
+          harness
+            .dispatchedCommands()
+            .some(
+              (c) =>
+                c.type === "thread.turn.start" && (c as { threadId: string }).threadId === "t1",
+            ),
+        ),
+      );
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* Effect.logInfo("test set t1 completed, waiting for second create", {
+        dispatched: harness.dispatchedCommands().filter((c) => c.type === "thread.create").length,
+      });
+      yield* waitFor(() =>
+        Effect.sync(
+          () => harness.dispatchedCommands().filter((c) => c.type === "thread.create").length === 2,
+        ),
+      );
+      yield* Effect.logInfo("test second create arrived", {
+        dispatched: harness.dispatchedCommands().filter((c) => c.type === "thread.create").length,
+      });
+      for (const [tid, entry] of Array.from(harness.threads.entries())) {
+        if (entry.latestTurnState === "running") {
+          harness.setReviewText(tid, "REVIEW: FAIL - still broken again");
+          harness.threads.set(tid, {
+            latestTurnState: "completed",
+            sessionStatus: "ready",
+            lastError: null,
+            updatedAt: TFRESH,
+          });
+        }
+      }
+      yield* Effect.logInfo("test set second review to FAIL", {
+        threads: Array.from(harness.threads.entries()).map(([k, v]) => [k, v.latestTurnState]),
+      });
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Needs Decision")),
+      );
+      const card = (yield* harness.readBoard()).cards[0];
+      expect(card?.runtime.currentError).toContain("exhausted");
+      expect(card?.runtime.currentError).toContain("still broken");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("intent question goes directly to Needs Decision", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* harness.seedBoard([
+        makeCard({
+          id: "c1",
+          state: "Running",
+          runtime: {
+            attemptCount: 1,
+            implementationRunId: RuntimeSessionId.make("t1"),
+            lastHeartbeatAt: T0,
+            workspacePath: ".t3/workspaces/c1",
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
+      );
+      const reviewId = (yield* harness.readBoard()).cards[0]?.runtime
+        .reviewRunId as unknown as string;
+      harness.setReviewText(reviewId, "NEEDS_DECISION: Do we need OAuth for this?");
+      harness.threads.set(reviewId, {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Needs Decision")),
+      );
+      const card = (yield* harness.readBoard()).cards[0];
+      expect(card?.runtime.currentDecisionQuestion).toContain("OAuth");
+      expect(card?.runtime.currentError).toContain("OAuth");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

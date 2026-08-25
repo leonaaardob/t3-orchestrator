@@ -3,8 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 
 import {
@@ -16,6 +18,16 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  buildAgentBoardRepairPrompt,
+  buildAgentBoardReviewPrompt,
+  buildAgentBoardReviewThreadTitle,
+  parseAgentBoardReviewResult,
+} from "@t3tools/shared/agentBoardPrompt";
+import {
+  MISSING_WORKER_CONFIG_ERROR,
+  resolveWorkerModelSelection,
+} from "@t3tools/shared/agentBoardRunner";
 
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -113,6 +125,47 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
     const interruptedRuns = new Set<string>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+    const appendTaskRecord = Effect.fn("AgentBoardScheduler.appendTaskRecord")(function* (input: {
+      readonly cwd: string;
+      readonly card: AgentBoardCard;
+      readonly lines: ReadonlyArray<string>;
+    }) {
+      const recordPath = input.card.taskRecordPath;
+      if (!recordPath) return;
+      const pathOption = yield* Effect.serviceOption(Path.Path);
+      const fsOption = yield* Effect.serviceOption(FileSystem.FileSystem);
+      if (Option.isNone(pathOption) || Option.isNone(fsOption)) return;
+      const path = pathOption.value;
+      const fs = fsOption.value;
+      const absolute = path.isAbsolute(recordPath) ? recordPath : path.join(input.cwd, recordPath);
+      const header = `\n\n---\n\n### Scheduler ${yield* nowIso} — ${input.card.id} ${input.card.state}→\n`;
+      const body = input.lines.join("\n");
+      const content = `${header}${body}\n`;
+      const existing = yield* fs
+        .readFileString(absolute)
+        .pipe(Effect.catch(() => Effect.succeed(null as string | null)));
+      if (existing === null) return;
+      yield* fs.writeFileString(absolute, `${existing}${content}`).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("agentBoard.scheduler.task-record-append-failed", {
+            cardId: input.card.id,
+            recordPath: absolute,
+            cause: String(cause),
+          }),
+        ),
+      );
+    });
+
+    const collectReviewText = (detail: {
+      thread: { messages: ReadonlyArray<{ text: string; role: string }> };
+    }): string => {
+      const assistant = detail.thread.messages
+        .filter((m) => m.role === "assistant")
+        .map((m) => m.text);
+      if (assistant.length > 0) return assistant.join("\n");
+      return detail.thread.messages.map((m) => m.text).join("\n");
+    };
 
     /** Short continuation message for a retry turn — never the full prompt. */
     const continuationMessage = (card: AgentBoardCard, lastError: string): string =>
@@ -223,6 +276,149 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
       },
     );
 
+    const launchReviewThread = Effect.fn("AgentBoardScheduler.launchReviewThread")(
+      function* (input: {
+        readonly collaborators: TickCollaborators;
+        readonly cwd: string;
+        readonly board: AgentBoardFile;
+        readonly card: AgentBoardCard;
+      }) {
+        const projectOption = yield* input.collaborators.projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(input.cwd)
+          .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+        const resolution = resolveWorkerModelSelection(
+          input.board,
+          Option.isSome(projectOption)
+            ? (projectOption.value.defaultModelSelection as unknown as
+                | import("@t3tools/contracts").ModelSelection
+                | null)
+            : null,
+        );
+        if (resolution._tag === "missing-config") {
+          return {
+            _tag: "error" as const,
+            error: MISSING_WORKER_CONFIG_ERROR,
+            needsDecision: true as const,
+            question: MISSING_WORKER_CONFIG_ERROR,
+          };
+        }
+        if (Option.isNone(projectOption)) {
+          const msg = `No active project matches the board workspace root: ${input.cwd}`;
+          return {
+            _tag: "error" as const,
+            error: msg,
+            needsDecision: true as const,
+            question: msg,
+          };
+        }
+        const project = projectOption.value;
+        const worktreePath = input.card.runtime.workspacePath ?? `.t3/workspaces/${input.card.id}`;
+        const branchName = input.card.runtime.branchName ?? `board/${input.card.id}`;
+        const reviewThreadId = ThreadId.make(yield* nextUuid);
+        const threadTitle = buildAgentBoardReviewThreadTitle(input.card);
+        const reviewPrompt = buildAgentBoardReviewPrompt(input.card);
+        const createdAt = yield* nowIso;
+        const createOutcome = yield* outcome(
+          input.collaborators.orchestrationEngine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(yield* nextUuid),
+            threadId: reviewThreadId,
+            projectId: project.id,
+            title: threadTitle,
+            modelSelection: resolution.selection,
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: branchName,
+            worktreePath,
+            createdAt,
+          }),
+        );
+        if (createOutcome._tag === "error") {
+          const detail =
+            (createOutcome.error as { message?: string }).message ?? String(createOutcome.error);
+          return {
+            _tag: "error" as const,
+            error: `review thread.create failed: ${detail}`,
+            needsDecision: false as const,
+          };
+        }
+        const turnOutcome = yield* outcome(
+          input.collaborators.orchestrationEngine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(yield* nextUuid),
+            threadId: reviewThreadId,
+            message: {
+              messageId: MessageId.make(yield* nextUuid),
+              role: "user",
+              text: reviewPrompt,
+              attachments: [],
+            },
+            modelSelection: resolution.selection,
+            titleSeed: threadTitle,
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt,
+          }),
+        );
+        if (turnOutcome._tag === "error") {
+          const detail =
+            (turnOutcome.error as { message?: string }).message ?? String(turnOutcome.error);
+          yield* input.collaborators.orchestrationEngine
+            .dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make(yield* nextUuid),
+              threadId: reviewThreadId,
+            })
+            .pipe(Effect.ignore);
+          return {
+            _tag: "error" as const,
+            error: `review thread.turn.start failed: ${detail}`,
+            needsDecision: false as const,
+          };
+        }
+        yield* Effect.logInfo("agentBoard.scheduler.review-launched", {
+          cwd: input.cwd,
+          cardId: input.card.id,
+          reviewThreadId,
+          worktreePath,
+        });
+        return { _tag: "ok" as const, reviewThreadId: reviewThreadId as unknown as string };
+      },
+    );
+
+    const dispatchRepairTurn = Effect.fn("AgentBoardScheduler.dispatchRepairTurn")(
+      function* (input: {
+        readonly orchestrationEngine: OrchestrationEngineService["Service"];
+        readonly cwd: string;
+        readonly card: AgentBoardCard;
+        readonly reviewReason: string;
+      }) {
+        const runId = input.card.runtime.implementationRunId;
+        if (runId === undefined) return null;
+        yield* input.orchestrationEngine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(yield* nextUuid),
+          threadId: ThreadId.make(runId),
+          message: {
+            messageId: MessageId.make(yield* nextUuid),
+            role: "user",
+            text: buildAgentBoardRepairPrompt(input.card, input.reviewReason),
+            attachments: [],
+          },
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: yield* nowIso,
+        });
+        yield* Effect.logInfo("agentBoard.scheduler.repair-dispatched", {
+          cwd: input.cwd,
+          cardId: input.card.id,
+          threadId: runId,
+          reason: truncate(input.reviewReason, 300),
+        });
+        return runId;
+      },
+    );
+
     const processProject = Effect.fn("AgentBoardScheduler.processProject")(function* (input: {
       readonly collaborators: TickCollaborators;
       readonly cwd: string;
@@ -254,11 +450,6 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         board = { ...board, cards: nextCards };
         dirty = true;
       };
-      const withoutCurrentError = (runtime: AgentBoardCard["runtime"]) => {
-        const { currentError: _clearedError, ...rest } = runtime;
-        return rest;
-      };
-
       // --- Reconcile `Running` cards before claiming anything. ---
       for (const card of board.cards.filter((candidate) => candidate.state === "Running")) {
         const key = `${cwd}${CARD_KEY_SEPARATOR}${card.id}`;
@@ -326,19 +517,74 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           sessionStatus === "interrupted";
 
         if (latestTurn?.state === "completed") {
-          const timestamp = yield* nowIso;
-          yield* Effect.logInfo("agentBoard.scheduler.run-completed", {
+          const launch = yield* launchReviewThread({
+            collaborators: input.collaborators,
             cwd,
-            cardId: card.id,
-            threadId: card.runtime.implementationRunId,
+            board,
+            card,
           });
-          applyPatch(card.id, (current) =>
-            Object.assign({}, current, {
-              state: "Review" as const,
-              runtime: withoutCurrentError(current.runtime),
-              updatedAt: timestamp,
-            }),
-          );
+          if (launch._tag === "ok") {
+            const timestamp = yield* nowIso;
+            yield* Effect.logInfo("agentBoard.scheduler.run-completed", {
+              cwd,
+              cardId: card.id,
+              threadId: card.runtime.implementationRunId,
+            });
+            yield* appendTaskRecord({
+              cwd,
+              card,
+              lines: [
+                `Implementation completed (thread ${runId}); launching review thread ${launch.reviewThreadId}.`,
+              ],
+            }).pipe(Effect.catch(() => Effect.void));
+            applyPatch(card.id, (current) => {
+              const {
+                currentError: _e,
+                currentDecisionQuestion: _q,
+                ...rest
+              } = current.runtime as Record<string, unknown>;
+              return Object.assign({}, current, {
+                state: "Reviewing" as const,
+                runtime: {
+                  ...(rest as AgentBoardCard["runtime"]),
+                  implementationRunId: current.runtime.implementationRunId,
+                  reviewRunId:
+                    launch.reviewThreadId as unknown as typeof current.runtime.reviewRunId,
+                  lastHeartbeatAt: timestamp,
+                },
+                updatedAt: timestamp,
+              });
+            });
+          } else if ((launch as { needsDecision: boolean }).needsDecision) {
+            const timestamp = yield* nowIso;
+            const err = (launch as unknown as { error: string }).error;
+            const q = (launch as unknown as { question?: string }).question ?? err;
+            yield* Effect.logWarning("agentBoard.scheduler.review-launch-needs-decision", {
+              cwd,
+              cardId: card.id,
+              detail: err,
+            });
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(err, 2000),
+                  currentDecisionQuestion: truncate(q, 2000),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else {
+            const mutator = yield* recordFailedAttempt({
+              cwd,
+              board,
+              card,
+              detail: (launch as unknown as { error: string }).error,
+            });
+            applyPatch(card.id, mutator);
+          }
           continue;
         }
 
@@ -403,6 +649,544 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         }
       }
 
+      // --- Reconcile `Reviewing` cards: observe fresh review thread ---
+      for (const card of board.cards.filter((candidate) => candidate.state === "Reviewing")) {
+        const reviewRunId = card.runtime.reviewRunId;
+        if (reviewRunId === undefined) {
+          const timestamp = yield* nowIso;
+          applyPatch(card.id, (current) =>
+            Object.assign({}, current, {
+              state: "Needs Decision" as const,
+              runtime: {
+                ...current.runtime,
+                lastHeartbeatAt: timestamp,
+                currentError: "Reviewing card has no reviewRunId",
+                currentDecisionQuestion:
+                  "Reviewing card has no reviewRunId — re-queue or inspect workspace.",
+              },
+              updatedAt: timestamp,
+            }),
+          );
+          continue;
+        }
+        const shellOption = yield* input.collaborators.projectionSnapshotQuery.getThreadShellById(
+          ThreadId.make(reviewRunId),
+        );
+        if (Option.isNone(shellOption)) {
+          const attempts = Math.max(1, card.runtime.attemptCount);
+          const timestamp = yield* nowIso;
+          if (attempts >= board.runner.repairCycles) {
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  attemptCount: attempts,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(
+                    `Autonomous review retries exhausted after ${attempts} attempt(s). Last failure: review thread ${reviewRunId} is no longer resolvable`,
+                    2000,
+                  ),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else {
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Diagnosing" as const,
+                runtime: {
+                  ...current.runtime,
+                  attemptCount: attempts + 1,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(
+                    `review thread ${reviewRunId} is no longer resolvable`,
+                    2000,
+                  ),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          }
+          continue;
+        }
+        const shell = shellOption.value;
+        const latestTurn = shell.latestTurn;
+        const sessionStatus = shell.session?.status ?? null;
+        if (latestTurn?.state === "completed") {
+          const detailOption = yield* input.collaborators.projectionSnapshotQuery
+            .getThreadDetailById(ThreadId.make(reviewRunId))
+            .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+          let reviewText = "";
+          if (Option.isSome(detailOption)) {
+            reviewText = collectReviewText(
+              detailOption.value as unknown as {
+                thread: { messages: ReadonlyArray<{ text: string; role: string }> };
+              },
+            );
+          }
+          if (!reviewText) {
+            reviewText =
+              (shell as unknown as { activities?: ReadonlyArray<{ summary?: string }> }).activities
+                ?.map((a) => a.summary ?? "")
+                .join("\n") ?? "";
+          }
+          const parsed = parseAgentBoardReviewResult(reviewText);
+          const timestamp = yield* nowIso;
+          if (parsed === null) {
+            const reason = truncate(
+              reviewText.slice(0, 500) || "review completed without REVIEW marker",
+              2000,
+            );
+            const attempts = Math.max(1, card.runtime.attemptCount);
+            if (attempts >= board.runner.repairCycles) {
+              yield* appendTaskRecord({
+                cwd,
+                card,
+                lines: [
+                  `Review thread ${reviewRunId} completed without marker → Needs Decision (cap ${attempts}).`,
+                  `Review output: ${reason}`,
+                ],
+              }).pipe(Effect.catch(() => Effect.void));
+              applyPatch(card.id, (current) =>
+                Object.assign({}, current, {
+                  state: "Needs Decision" as const,
+                  runtime: {
+                    ...current.runtime,
+                    attemptCount: attempts,
+                    lastHeartbeatAt: timestamp,
+                    currentError: truncate(
+                      `Autonomous review retries exhausted after ${attempts} attempt(s). Last failure: review completed without REVIEW marker: ${reason}`,
+                      2000,
+                    ),
+                  },
+                  updatedAt: timestamp,
+                }),
+              );
+            } else {
+              yield* appendTaskRecord({
+                cwd,
+                card,
+                lines: [
+                  `Review thread ${reviewRunId} missing marker → Diagnosing`,
+                  `Review output: ${reason}`,
+                ],
+              }).pipe(Effect.catch(() => Effect.void));
+              const repairDispatched = yield* outcome(
+                dispatchRepairTurn({
+                  orchestrationEngine: input.collaborators.orchestrationEngine,
+                  cwd,
+                  card,
+                  reviewReason: reason,
+                }),
+              );
+              if (repairDispatched._tag === "error") {
+                const mut = yield* recordFailedAttempt({
+                  cwd,
+                  board,
+                  card,
+                  detail: `repair dispatch failed: ${repairDispatched.error.message}`,
+                });
+                applyPatch(card.id, mut);
+              } else {
+                applyPatch(card.id, (current) =>
+                  Object.assign({}, current, {
+                    state: "Diagnosing" as const,
+                    runtime: {
+                      ...current.runtime,
+                      attemptCount: attempts + 1,
+                      lastHeartbeatAt: timestamp,
+                      currentError: truncate(`Review failed: ${reason}`, 2000),
+                    },
+                    updatedAt: timestamp,
+                  }),
+                );
+              }
+            }
+            continue;
+          }
+          if (parsed._tag === "needsDecision") {
+            yield* appendTaskRecord({
+              cwd,
+              card,
+              lines: [
+                `Review thread ${reviewRunId} → NEEDS_DECISION: ${parsed.question}`,
+                `Reason: ${parsed.reason}`,
+              ],
+            }).pipe(Effect.catch(() => Effect.void));
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(parsed.reason, 2000),
+                  currentDecisionQuestion: truncate(parsed.question, 2000),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+            continue;
+          }
+          if (parsed._tag === "pass") {
+            yield* Effect.logInfo("agentBoard.scheduler.review-pass", {
+              cwd,
+              cardId: card.id,
+              reviewRunId,
+            });
+            yield* appendTaskRecord({
+              cwd,
+              card,
+              lines: [
+                `Review thread ${reviewRunId} → PASS`,
+                parsed.summary ? `Summary: ${parsed.summary}` : "",
+              ],
+            }).pipe(Effect.catch(() => Effect.void));
+            applyPatch(card.id, (current) => {
+              const {
+                currentError: _e,
+                currentDecisionQuestion: _q,
+                ...rest
+              } = current.runtime as Record<string, unknown>;
+              return Object.assign({}, current, {
+                state: "Review" as const,
+                runtime: rest as AgentBoardCard["runtime"],
+                updatedAt: timestamp,
+              });
+            });
+            continue;
+          }
+          if (parsed._tag === "fail") {
+            const attempts = Math.max(1, card.runtime.attemptCount);
+            if (attempts >= board.runner.repairCycles) {
+              yield* appendTaskRecord({
+                cwd,
+                card,
+                lines: [
+                  `Review thread ${reviewRunId} → FAIL (cap exhausted ${attempts})`,
+                  `Reason: ${parsed.reason}`,
+                ],
+              }).pipe(Effect.catch(() => Effect.void));
+              applyPatch(card.id, (current) =>
+                Object.assign({}, current, {
+                  state: "Needs Decision" as const,
+                  runtime: {
+                    ...current.runtime,
+                    attemptCount: attempts,
+                    lastHeartbeatAt: timestamp,
+                    currentError: truncate(
+                      `Autonomous review retries exhausted after ${attempts} attempt(s). Last failure: ${parsed.reason}`,
+                      2000,
+                    ),
+                  },
+                  updatedAt: timestamp,
+                }),
+              );
+            } else {
+              yield* appendTaskRecord({
+                cwd,
+                card,
+                lines: [
+                  `Review thread ${reviewRunId} → FAIL: ${parsed.reason}`,
+                  `Dispatching repair on ${card.runtime.implementationRunId}`,
+                ],
+              }).pipe(Effect.catch(() => Effect.void));
+              const repairDispatched = yield* outcome(
+                dispatchRepairTurn({
+                  orchestrationEngine: input.collaborators.orchestrationEngine,
+                  cwd,
+                  card,
+                  reviewReason: parsed.reason,
+                }),
+              );
+              if (repairDispatched._tag === "error") {
+                const mut = yield* recordFailedAttempt({
+                  cwd,
+                  board,
+                  card,
+                  detail: `repair dispatch failed: ${repairDispatched.error.message}`,
+                });
+                applyPatch(card.id, mut);
+              } else {
+                applyPatch(card.id, (current) =>
+                  Object.assign({}, current, {
+                    state: "Diagnosing" as const,
+                    runtime: {
+                      ...current.runtime,
+                      attemptCount: attempts + 1,
+                      lastHeartbeatAt: timestamp,
+                      currentError: truncate(`Review failed: ${parsed.reason}`, 2000),
+                    },
+                    updatedAt: timestamp,
+                  }),
+                );
+              }
+            }
+            continue;
+          }
+        }
+        if (latestTurn?.state === "error" || latestTurn?.state === "interrupted") {
+          const attempts = Math.max(1, card.runtime.attemptCount);
+          const detail = shell.session?.lastError
+            ? `review turn ${latestTurn.state}: ${shell.session.lastError}`
+            : `review turn ${latestTurn.state}`;
+          const timestamp = yield* nowIso;
+          if (attempts >= board.runner.repairCycles) {
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  attemptCount: attempts,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(
+                    `Autonomous review retries exhausted after ${attempts} attempt(s). Last failure: ${detail}`,
+                    2000,
+                  ),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else {
+            const repairDispatched = yield* outcome(
+              dispatchRepairTurn({
+                orchestrationEngine: input.collaborators.orchestrationEngine,
+                cwd,
+                card,
+                reviewReason: detail,
+              }),
+            );
+            if (repairDispatched._tag === "error") {
+              const mut = yield* recordFailedAttempt({
+                cwd,
+                board,
+                card,
+                detail: `repair dispatch failed: ${repairDispatched.error.message}`,
+              });
+              applyPatch(card.id, mut);
+            } else {
+              applyPatch(card.id, (current) =>
+                Object.assign({}, current, {
+                  state: "Diagnosing" as const,
+                  runtime: {
+                    ...current.runtime,
+                    attemptCount: attempts + 1,
+                    lastHeartbeatAt: timestamp,
+                    currentError: truncate(detail, 2000),
+                  },
+                  updatedAt: timestamp,
+                }),
+              );
+            }
+          }
+          continue;
+        }
+        if (
+          sessionStatus === "stopped" ||
+          sessionStatus === "error" ||
+          sessionStatus === "interrupted"
+        ) {
+          const attempts = Math.max(1, card.runtime.attemptCount);
+          const detail = `review session is ${sessionStatus}`;
+          const timestamp = yield* nowIso;
+          if (attempts >= board.runner.repairCycles) {
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  attemptCount: attempts,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(
+                    `Autonomous review retries exhausted after ${attempts} attempt(s). Last failure: ${detail}`,
+                    2000,
+                  ),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else {
+            const repairDispatched = yield* outcome(
+              dispatchRepairTurn({
+                orchestrationEngine: input.collaborators.orchestrationEngine,
+                cwd,
+                card,
+                reviewReason: detail,
+              }),
+            );
+            if (repairDispatched._tag === "error") {
+              const mut = yield* recordFailedAttempt({
+                cwd,
+                board,
+                card,
+                detail: `repair dispatch failed: ${repairDispatched.error.message}`,
+              });
+              applyPatch(card.id, mut);
+            } else {
+              applyPatch(card.id, (current) =>
+                Object.assign({}, current, {
+                  state: "Diagnosing" as const,
+                  runtime: {
+                    ...current.runtime,
+                    attemptCount: attempts + 1,
+                    lastHeartbeatAt: timestamp,
+                    currentError: truncate(detail, 2000),
+                  },
+                  updatedAt: timestamp,
+                }),
+              );
+            }
+          }
+          continue;
+        }
+        const heartbeatMs = parseTimeMs(card.runtime.lastHeartbeatAt);
+        const shellProgressMs = parseTimeMs(shell.updatedAt);
+        if (
+          Number.isNaN(heartbeatMs) ||
+          (!Number.isNaN(shellProgressMs) && shellProgressMs > heartbeatMs)
+        ) {
+          const timestamp = yield* nowIso;
+          applyPatch(card.id, (current) =>
+            Object.assign({}, current, {
+              runtime: { ...current.runtime, lastHeartbeatAt: timestamp },
+            }),
+          );
+        }
+      }
+
+      // --- Reconcile `Diagnosing` cards: wait for repair turn to complete then re-review ---
+      for (const card of board.cards.filter((candidate) => candidate.state === "Diagnosing")) {
+        const implRunId = card.runtime.implementationRunId;
+        if (implRunId === undefined) {
+          const timestamp = yield* nowIso;
+          applyPatch(card.id, (current) =>
+            Object.assign({}, current, {
+              state: "Needs Decision" as const,
+              runtime: {
+                ...current.runtime,
+                lastHeartbeatAt: timestamp,
+                currentError: "Diagnosing card has no implementationRunId to repair",
+                currentDecisionQuestion:
+                  "Diagnosing card has no implementationRunId — re-queue or inspect workspace.",
+              },
+              updatedAt: timestamp,
+            }),
+          );
+          continue;
+        }
+        const threadOption = yield* input.collaborators.projectionSnapshotQuery.getThreadShellById(
+          ThreadId.make(implRunId),
+        );
+        if (Option.isNone(threadOption)) {
+          const mutator = yield* recordFailedAttempt({
+            cwd,
+            board,
+            card,
+            detail: `repair run thread ${implRunId} is no longer resolvable`,
+          });
+          applyPatch(card.id, mutator);
+          continue;
+        }
+        const thread = threadOption.value;
+        const latestTurn = thread.latestTurn;
+        const sessionStatus = thread.session?.status ?? null;
+        const sessionDead =
+          sessionStatus === null ||
+          sessionStatus === "stopped" ||
+          sessionStatus === "error" ||
+          sessionStatus === "interrupted";
+        if (latestTurn?.state === "completed") {
+          const launch = yield* launchReviewThread({
+            collaborators: input.collaborators,
+            cwd,
+            board,
+            card,
+          });
+          if (launch._tag === "ok") {
+            const timestamp = yield* nowIso;
+            yield* appendTaskRecord({
+              cwd,
+              card,
+              lines: [
+                `Repair completed (thread ${implRunId}); re-launching review ${launch.reviewThreadId}.`,
+              ],
+            }).pipe(Effect.catch(() => Effect.void));
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Reviewing" as const,
+                runtime: {
+                  ...current.runtime,
+                  reviewRunId:
+                    launch.reviewThreadId as unknown as typeof current.runtime.reviewRunId,
+                  lastHeartbeatAt: timestamp,
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else if ((launch as { needsDecision: boolean }).needsDecision) {
+            const timestamp = yield* nowIso;
+            const err2 = (launch as unknown as { error: string }).error;
+            const q2 = (launch as unknown as { question?: string }).question ?? err2;
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  lastHeartbeatAt: timestamp,
+                  currentError: truncate(err2, 2000),
+                  currentDecisionQuestion: truncate(q2, 2000),
+                },
+                updatedAt: timestamp,
+              }),
+            );
+          } else {
+            const mutator = yield* recordFailedAttempt({
+              cwd,
+              board,
+              card,
+              detail: (launch as unknown as { error: string }).error,
+            });
+            applyPatch(card.id, mutator);
+          }
+          continue;
+        }
+        if (latestTurn?.state === "error" || latestTurn?.state === "interrupted") {
+          const mutator = yield* recordFailedAttempt({
+            cwd,
+            board,
+            card,
+            detail: thread.session?.lastError
+              ? `repair turn ${latestTurn.state}: ${thread.session.lastError}`
+              : `repair turn ${latestTurn.state}`,
+          });
+          applyPatch(card.id, mutator);
+          continue;
+        }
+        if (sessionDead) {
+          const mutator = yield* recordFailedAttempt({
+            cwd,
+            board,
+            card,
+            detail: `repair session is ${sessionStatus} while the turn never settled`,
+          });
+          applyPatch(card.id, mutator);
+          continue;
+        }
+        const heartbeatMs = parseTimeMs(card.runtime.lastHeartbeatAt);
+        const threadProgressMs = parseTimeMs(thread.updatedAt);
+        if (
+          Number.isNaN(heartbeatMs) ||
+          (!Number.isNaN(threadProgressMs) && threadProgressMs > heartbeatMs)
+        ) {
+          const timestamp = yield* nowIso;
+          applyPatch(card.id, (current) =>
+            Object.assign({}, current, {
+              runtime: { ...current.runtime, lastHeartbeatAt: timestamp },
+            }),
+          );
+        }
+      }
+
       if (dirty) {
         const timestamp = yield* nowIso;
         const saved = yield* boardFiles.save({
@@ -413,10 +1197,12 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         dirty = false;
       }
 
-      // --- Abort active turns for cards the user moved out of `Running`. ---
+      // --- Abort active turns for cards the user moved out of `Running`/`Diagnosing`. ---
       for (const card of board.cards.filter(
         (candidate) =>
-          candidate.state !== "Running" && candidate.runtime.implementationRunId !== undefined,
+          candidate.state !== "Running" &&
+          candidate.state !== "Diagnosing" &&
+          candidate.runtime.implementationRunId !== undefined,
       )) {
         const runId = card.runtime.implementationRunId!;
         const runKey = `${cwd}${CARD_KEY_SEPARATOR}${card.id}${CARD_KEY_SEPARATOR}${runId}`;
@@ -448,10 +1234,45 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           });
         }
       }
+      for (const card of board.cards.filter(
+        (candidate) =>
+          candidate.state !== "Reviewing" && candidate.runtime.reviewRunId !== undefined,
+      )) {
+        const reviewId = card.runtime.reviewRunId!;
+        const runKey = `${cwd}${CARD_KEY_SEPARATOR}${card.id}${CARD_KEY_SEPARATOR}${reviewId}-review`;
+        if (interruptedRuns.has(runKey)) continue;
+        const threadOption = yield* input.collaborators.projectionSnapshotQuery.getThreadShellById(
+          ThreadId.make(reviewId),
+        );
+        if (Option.isNone(threadOption)) continue;
+        if (threadOption.value.latestTurn?.state !== "running") continue;
+        const interruptOutcome = yield* outcome(
+          input.collaborators.orchestrationEngine.dispatch({
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make(yield* nextUuid),
+            threadId: ThreadId.make(reviewId),
+            createdAt: yield* nowIso,
+          }),
+        );
+        if (interruptOutcome._tag === "ok") {
+          interruptedRuns.add(runKey);
+          yield* Effect.logInfo("agentBoard.scheduler.abandoned-review-aborted", {
+            cwd,
+            cardId: card.id,
+            state: card.state,
+            threadId: reviewId,
+          });
+        }
+      }
 
       // --- Claim eligible `Ready` cards up to the concurrency cap. ---
-      const runningCount = board.cards.filter((candidate) => candidate.state === "Running").length;
-      const capacity = board.runner.maxConcurrentCards - runningCount;
+      const activeCount = board.cards.filter(
+        (candidate) =>
+          candidate.state === "Running" ||
+          candidate.state === "Reviewing" ||
+          candidate.state === "Diagnosing",
+      ).length;
+      const capacity = board.runner.maxConcurrentCards - activeCount;
       if (capacity <= 0) return;
 
       const doneIds = new Set(

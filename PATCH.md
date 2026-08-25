@@ -100,10 +100,26 @@ The current patch attaches to upstream T3 Code through these areas:
 - `src/agentBoard/Services/AgentBoardScheduler.ts` +
   `src/agentBoard/Layers/AgentBoardScheduler.ts`
   - Always-on 15-second reconciler: reads project shells from the durable
-    projection, reconciles Running cards before claiming Ready work, uses the
-    shared runner, persists `Review` / retry / `Needs Decision` runtime state,
-    and interrupts cards moved out of Running. In-memory retry deadlines are
+    projection, reconciles `Running`/`Reviewing`/`Diagnosing` before claiming
+    Ready work, uses the shared runner, persists `Reviewing`/`Review`/
+    `Diagnosing`/`Needs Decision` runtime state (`reviewRunId`,
+    `currentError`/`currentDecisionQuestion`, `lastHeartbeatAt`), appends
+    review/repair proof to the task record (best-effort `FileSystem` write),
+    and interrupts cards moved out of `Running`/`Reviewing`/`Diagnosing`.
+    Review handoff is `Running` completed → `Reviewing` with a fresh review
+    thread (same worktree, new thread via `buildAgentBoardReviewPrompt` +
+    `resolveWorkerModelSelection`); `Reviewing` polls `getThreadShellById` +
+    `getThreadDetailById` and parses `REVIEW: PASS`/`REVIEW: FAIL`/
+    `NEEDS_DECISION:` via `parseAgentBoardReviewResult`; `FAIL` routine →
+    `Diagnosing` → repair turn on the implementation thread
+    (`buildAgentBoardRepairPrompt`) → next `Reviewing`; capped at
+    `runner.repairCycles` (default 3) → `Needs Decision` with summary; intent
+    questions → `Needs Decision` immediately. In-memory retry deadlines are
     deliberate; persisted attempt counts preserve the repair cap after restart.
+    Tested in `Layers/AgentBoardScheduler.test.ts` (15 tests including
+    `Reviewing` → `PASS` → `Review`, `FAIL` → `Diagnosing` → repair →
+    re-review, cap → `Needs Decision`, intent → `Needs Decision`, fresh-thread
+    verification).
 - `src/server.ts`
   - `AgentBoardFileSystemLayerLive`, `AgentBoardRunnerLayerLive`, and
     `AgentBoardSchedulerLive` merged into `WorkspaceLayerLive`.
@@ -154,7 +170,12 @@ The current patch attaches to upstream T3 Code through these areas:
   `@t3tools/shared/agentBoardPrompt`)
   - Board-card worker handoff prompt construction
     (`buildAgentBoardImplementationPrompt`,
-    `buildAgentBoardImplementationThreadTitle`).
+    `buildAgentBoardImplementationThreadTitle`) plus Slice 6 review/repair
+    prompt builders (`buildAgentBoardReviewPrompt`,
+    `buildAgentBoardReviewThreadTitle`, `parseAgentBoardReviewResult`,
+    `buildAgentBoardRepairPrompt`) which enforce the `REVIEW: PASS` /
+    `REVIEW: FAIL` / `NEEDS_DECISION:` protocol and are consumed by the
+    scheduler's review loop.
 
 ### Theme customization addon (fork-local addon)
 
