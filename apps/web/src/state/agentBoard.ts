@@ -21,4 +21,8 @@ export const agentBoardEnvironment = {
     label: "environment-data:agent-board:claim-card",
     tag: WS_METHODS.projectsClaimAgentBoardCard,
   }),
+  runCard: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:agent-board:run-card",
+    tag: WS_METHODS.projectsRunAgentBoardCard,
+  }),
 };

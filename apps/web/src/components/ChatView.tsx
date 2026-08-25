@@ -40,8 +40,6 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
-  getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -166,15 +164,6 @@ import {
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
-import {
-  type AgentBoardClaimResult,
-  type AgentBoardFile,
-  RuntimeSessionId,
-} from "@t3tools/contracts";
-import { agentBoardEnvironment } from "~/state/agentBoard";
-import { buildAgentBoardImplementationPrompt } from "~/agentBoardPrompt";
-import { buildAgentBoardImplementationThreadTitle } from "~/agentBoardPrompt";
-import { MISSING_WORKER_CONFIG_ERROR, resolveWorkerModelSelection } from "~/agentBoardRunner";
 import AgentBoardPanel from "./AgentBoardPanel";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -190,11 +179,7 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import {
-  NO_PROVIDER_MODEL_SELECTION,
-  getProviderInstanceEntry,
-  getProviderInstanceModels,
-} from "../providerInstances";
+import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -5776,189 +5761,6 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
   ]);
 
-  const saveAgentBoardRuntime = useAtomCommand(agentBoardEnvironment.save, {
-    reportFailure: false,
-  });
-
-  const onRunClaimedAgentBoardCard = useCallback(
-    async (result: AgentBoardClaimResult): Promise<AgentBoardFile> => {
-      if (!activeProject || !activeThread || !activeWorkspaceRoot || activeEnvironmentUnavailable) {
-        throw new Error("An active project, thread, and workspace are required.");
-      }
-
-      const saveBoardRuntime = (input: {
-        readonly board: AgentBoardFile;
-        readonly state: "Running" | "Blocked";
-        readonly implementationRunId?: RuntimeSessionId;
-        readonly currentError?: string;
-      }) =>
-        saveAgentBoardRuntime({
-          environmentId,
-          input: {
-            cwd: activeWorkspaceRoot,
-            board: (() => {
-              const timestamp = new Date().toISOString();
-              return {
-                ...input.board,
-                cards: input.board.cards.map((card) => {
-                  if (card.id !== result.card.id) return card;
-                  const runtime = Object.assign(
-                    {},
-                    card.runtime,
-                    { lastHeartbeatAt: timestamp },
-                    input.implementationRunId
-                      ? { implementationRunId: input.implementationRunId }
-                      : {},
-                    input.currentError ? { currentError: input.currentError } : {},
-                  );
-                  return Object.assign({}, card, {
-                    state: input.state,
-                    runtime,
-                    updatedAt: timestamp,
-                  });
-                }),
-                updatedAt: timestamp,
-              };
-            })(),
-          },
-        });
-
-      // Worker execution is centrally configured, never composer-first: the
-      // board's runner override wins, then the project default. The Planning
-      // view replaces the chat column, so the composer may not even be
-      // mounted and its live selection must not leak into board runs.
-      const runResolution = resolveWorkerModelSelection(
-        result.board,
-        activeProject.defaultModelSelection,
-      );
-      if (runResolution._tag === "missing-config") {
-        await saveBoardRuntime({
-          board: result.board,
-          state: "Blocked",
-          currentError: MISSING_WORKER_CONFIG_ERROR,
-        }).catch(() => undefined);
-        throw new Error(MISSING_WORKER_CONFIG_ERROR);
-      }
-      const runModelSelection = runResolution.selection;
-
-      const createdAt = new Date().toISOString();
-      const nextThreadId = newThreadId();
-      const nextThreadTitle = truncate(buildAgentBoardImplementationThreadTitle(result.card));
-      const cardPromptText = buildAgentBoardImplementationPrompt(result.card);
-      // Prompt metadata rides on the resolved selection when its provider
-      // instance is known; otherwise the plain prompt text is sent.
-      const runInstanceEntry = getProviderInstanceEntry(
-        providerStatuses,
-        runModelSelection.instanceId,
-      );
-      let outgoingPrompt = cardPromptText;
-      if (runInstanceEntry) {
-        const runInstanceModels = getProviderInstanceModels(
-          providerStatuses,
-          runModelSelection.instanceId,
-        );
-        const effortDescriptors = getProviderOptionDescriptors({
-          caps: getProviderModelCapabilities(
-            runInstanceModels,
-            runModelSelection.model,
-            runInstanceEntry.driverKind,
-          ),
-          selections: runModelSelection.options,
-        });
-        const primaryEffortValue = getProviderOptionCurrentValue(
-          effortDescriptors.find((descriptor) => descriptor.type === "select") ?? null,
-        );
-        outgoingPrompt = formatOutgoingPrompt({
-          provider: runInstanceEntry.driverKind,
-          model: runModelSelection.model,
-          models: runInstanceModels,
-          effort: typeof primaryEffortValue === "string" ? primaryEffortValue : null,
-          text: cardPromptText,
-        });
-      }
-
-      const createResult = await createThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-          projectId: activeProject.id,
-          title: nextThreadTitle,
-          modelSelection: runModelSelection,
-          runtimeMode,
-          interactionMode: "default",
-          branch: activeThreadBranch,
-          worktreePath: activeThread.worktreePath,
-          createdAt,
-        },
-      });
-      if (createResult._tag === "Failure") {
-        const saved = await saveBoardRuntime({
-          board: result.board,
-          state: "Blocked",
-          currentError: "Could not create the implementation thread.",
-        }).catch(() => undefined);
-        void saved;
-        throw squashAtomCommandFailure(createResult);
-      }
-
-      const startResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingPrompt,
-            attachments: [],
-          },
-          modelSelection: runModelSelection,
-          titleSeed: nextThreadTitle,
-          runtimeMode,
-          interactionMode: "default",
-          createdAt,
-        },
-      });
-
-      if (startResult._tag === "Failure") {
-        const startError = squashAtomCommandFailure(startResult);
-        await deleteThread({ environmentId, input: { threadId: nextThreadId } }).catch(
-          () => undefined,
-        );
-        await saveBoardRuntime({
-          board: result.board,
-          state: "Blocked",
-          currentError:
-            startError instanceof Error ? startError.message : "Could not start agent board run.",
-        }).catch(() => undefined);
-        throw startError;
-      }
-
-      const savedOutcome = await saveBoardRuntime({
-        board: result.board,
-        state: "Running",
-        implementationRunId: RuntimeSessionId.make(nextThreadId),
-      });
-      if (savedOutcome._tag !== "Success") {
-        throw squashAtomCommandFailure(savedOutcome);
-      }
-      return savedOutcome.value.board;
-    },
-    [
-      activeEnvironmentUnavailable,
-      activeProject,
-      activeThread,
-      activeThreadBranch,
-      activeWorkspaceRoot,
-      createThread,
-      deleteThread,
-      environmentId,
-      providerStatuses,
-      runtimeMode,
-      saveAgentBoardRuntime,
-      startThreadTurn,
-    ],
-  );
-
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
       if (!activeThread) {
@@ -6372,7 +6174,6 @@ function ChatViewContent(props: ChatViewProps) {
               workspaceRoot={activeWorkspaceRoot}
               mode="page"
               onClose={() => setProjectView("chat")}
-              onRunClaimedCard={onRunClaimedAgentBoardCard}
               projectDefaultModelSelection={activeProject?.defaultModelSelection ?? null}
             />
           </div>

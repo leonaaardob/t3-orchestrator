@@ -226,6 +226,23 @@ export const AgentBoardClaimResult = Schema.Struct({
 });
 export type AgentBoardClaimResult = typeof AgentBoardClaimResult.Type;
 
+export const AgentBoardRunInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  cardId: AgentBoardCardId,
+});
+export type AgentBoardRunInput = typeof AgentBoardRunInput.Type;
+
+// `threadId` is absent when the launch failed after the claim but before a
+// thread existed long enough to keep (the runner deletes failed threads and
+// marks the card Blocked instead).
+export const AgentBoardRunResult = Schema.Struct({
+  board: AgentBoardFile,
+  card: AgentBoardCard,
+  threadId: Schema.optional(RuntimeSessionId),
+  workspacePath: TrimmedNonEmptyString,
+});
+export type AgentBoardRunResult = typeof AgentBoardRunResult.Type;
+
 export class AgentBoardFileError extends Schema.TaggedErrorClass<AgentBoardFileError>()(
   "AgentBoardFileError",
   {

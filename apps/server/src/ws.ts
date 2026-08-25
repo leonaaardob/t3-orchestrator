@@ -81,6 +81,7 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { AgentBoardFileSystem } from "./agentBoard/Services/AgentBoardFileSystem.ts";
+import { AgentBoardRunner } from "./agentBoard/Services/AgentBoardRunner.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -379,6 +380,7 @@ const makeWsRpcLayer = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const agentBoardFileSystem = yield* AgentBoardFileSystem;
+      const agentBoardRunner = yield* AgentBoardRunner;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -1779,6 +1781,20 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new AgentBoardFileError({
                     message: `Failed to claim agent board card: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "agent-board" },
+          ),
+        [WS_METHODS.projectsRunAgentBoardCard]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsRunAgentBoardCard,
+            agentBoardRunner.run(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AgentBoardFileError({
+                    message: `Failed to run agent board card: ${cause.message}`,
                     cause,
                   }),
               ),

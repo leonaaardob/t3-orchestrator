@@ -18,7 +18,12 @@ import type {
   VcsStatusInput,
   VcsStatusResult,
 } from "./git.ts";
-import type { AgentBoardLoadInput, AgentBoardLoadResult } from "./agentBoard.ts";
+import type {
+  AgentBoardLoadInput,
+  AgentBoardLoadResult,
+  AgentBoardRunInput,
+  AgentBoardRunResult,
+} from "./agentBoard.ts";
 import type {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
@@ -1210,6 +1215,7 @@ export interface EnvironmentApi {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
     loadAgentBoard: (input: AgentBoardLoadInput) => Promise<AgentBoardLoadResult>;
+    runAgentBoardCard: (input: AgentBoardRunInput) => Promise<AgentBoardRunResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

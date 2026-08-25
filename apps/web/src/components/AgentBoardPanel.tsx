@@ -13,7 +13,6 @@ import {
 import {
   AgentBoardFile,
   type AgentBoardCard,
-  type AgentBoardClaimResult,
   type AgentBoardCardId,
   type AgentBoardFile as AgentBoardFileType,
   type AgentBoardIntentBrief,
@@ -42,7 +41,10 @@ import { Schema } from "effect";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { createModelSelection } from "@t3tools/shared/model";
-import { MISSING_WORKER_CONFIG_ERROR, resolveWorkerModelSelection } from "~/agentBoardRunner";
+import {
+  MISSING_WORKER_CONFIG_ERROR,
+  resolveWorkerModelSelection,
+} from "@t3tools/shared/agentBoardRunner";
 import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { projectEnvironment } from "~/state/projects";
@@ -89,7 +91,6 @@ interface AgentBoardPanelProps {
   workspaceRoot: string | undefined;
   mode?: "page" | "sheet" | "sidebar";
   onClose: () => void;
-  onRunClaimedCard?: (result: AgentBoardClaimResult) => Promise<AgentBoardFileType | void>;
   /** The project's `defaultModelSelection`, used to show the effective worker source. */
   projectDefaultModelSelection?: ModelSelection | null;
 }
@@ -596,7 +597,6 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   workspaceRoot,
   mode = "sidebar",
   onClose,
-  onRunClaimedCard,
   projectDefaultModelSelection,
 }: AgentBoardPanelProps) {
   const [board, setBoard] = useState<AgentBoardFileType | null>(null);
@@ -1749,43 +1749,37 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     setDraggingCardId(null);
   }, []);
 
-  const claimAgentBoardCard = useAtomCommand(agentBoardEnvironment.claimCard);
+  const runAgentBoardCard = useAtomCommand(agentBoardEnvironment.runCard);
 
-  const claimReadyCard = useCallback(
+  const runReadyCard = useCallback(
     (card: AgentBoardCard) => {
       if (!workspaceRoot || card.state !== "Ready") return;
       setSaving(true);
       setError(null);
-      void claimAgentBoardCard({
+      void runAgentBoardCard({
         environmentId,
         input: { cwd: workspaceRoot, cardId: card.id },
       })
-        .then(async (outcome) => {
+        .then((outcome) => {
           if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
           const result = outcome.value;
-          const launchedBoard = await onRunClaimedCard?.(result);
-          const nextBoard = launchedBoard ?? result.board;
-          const nextCard =
-            nextBoard.cards.find((candidate) => candidate.id === result.card.id) ?? result.card;
-          setBoard(nextBoard);
+          setBoard(result.board);
           setSelectedCardId(result.card.id);
-          setIntentDraft(intentDraftFromCard(nextCard));
+          setIntentDraft(intentDraftFromCard(result.card));
           toastManager.add({
             type: "success",
-            title: onRunClaimedCard ? "Agent run started" : "Workspace claimed",
-            description: onRunClaimedCard
-              ? `${result.card.title} is running.`
-              : result.workspacePath,
+            title: "Agent run started",
+            description: `${result.card.title} is running in ${result.workspacePath}.`,
           });
         })
-        .catch((claimError) => {
+        .catch((runError) => {
           const description =
-            claimError instanceof Error ? claimError.message : "Could not claim board card.";
+            runError instanceof Error ? runError.message : "Could not run board card.";
           setError(description);
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Claim failed",
+              title: "Run failed",
               description,
             }),
           );
@@ -1796,7 +1790,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           () => setSaving(false),
         );
     },
-    [claimAgentBoardCard, environmentId, loadBoard, onRunClaimedCard, workspaceRoot],
+    [environmentId, loadBoard, runAgentBoardCard, workspaceRoot],
   );
 
   return (
@@ -2307,7 +2301,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                               className="h-6 px-1.5 text-[10px]"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                claimReadyCard(card);
+                                runReadyCard(card);
                               }}
                               disabled={saving}
                             >
@@ -2640,7 +2634,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                                 <Button
                                   size="xs"
                                   className="h-6 px-1.5 text-[10px]"
-                                  onClick={() => claimReadyCard(card)}
+                                  onClick={() => runReadyCard(card)}
                                   disabled={saving}
                                 >
                                   <PlayIcon className="size-3" />

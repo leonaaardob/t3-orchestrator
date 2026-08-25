@@ -19,6 +19,14 @@
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
     },
+    "./agentBoardPrompt": {
+      "types": "./src/agentBoardPrompt.ts",
+      "import": "./src/agentBoardPrompt.ts"
+    },
+    "./agentBoardRunner": {
+      "types": "./src/agentBoardRunner.ts",
+      "import": "./src/agentBoardRunner.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

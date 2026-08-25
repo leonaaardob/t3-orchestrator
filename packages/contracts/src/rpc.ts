@@ -9,6 +9,8 @@ import {
   AgentBoardFileError,
   AgentBoardLoadInput,
   AgentBoardLoadResult,
+  AgentBoardRunInput,
+  AgentBoardRunResult,
   AgentBoardSaveInput,
   AgentBoardSaveResult,
 } from "./agentBoard.ts";
@@ -188,6 +190,7 @@ export const WS_METHODS = {
   projectsLoadAgentBoard: "projects.loadAgentBoard",
   projectsSaveAgentBoard: "projects.saveAgentBoard",
   projectsClaimAgentBoardCard: "projects.claimAgentBoardCard",
+  projectsRunAgentBoardCard: "projects.runAgentBoardCard",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -505,6 +508,12 @@ export const WsProjectsSaveAgentBoardRpc = Rpc.make(WS_METHODS.projectsSaveAgent
 export const WsProjectsClaimAgentBoardCardRpc = Rpc.make(WS_METHODS.projectsClaimAgentBoardCard, {
   payload: AgentBoardClaimInput,
   success: AgentBoardClaimResult,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsRunAgentBoardCardRpc = Rpc.make(WS_METHODS.projectsRunAgentBoardCard, {
+  payload: AgentBoardRunInput,
+  success: AgentBoardRunResult,
   error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
 });
 
@@ -875,6 +884,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsLoadAgentBoardRpc,
   WsProjectsSaveAgentBoardRpc,
   WsProjectsClaimAgentBoardCardRpc,
+  WsProjectsRunAgentBoardCardRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

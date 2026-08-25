@@ -96,12 +96,16 @@ These differences are intentional and should not be treated as drift:
 
 Implementation gaps to close before claiming full Symphony-style behavior:
 
-- No active daemon runner yet watches `.t3/agent-board.json` and launches cards
-  automatically.
+- The active daemon runner reconciles and claims project boards every 15
+  seconds, using the server-side runner and durable projection as its source of
+  truth. Retry deadlines are intentionally in-memory; board attempt metadata
+  remains durable across restarts.
 - No typed workflow loader validates `WORKFLOW.md` front matter yet.
 - No dynamic workflow reload yet.
 - No persisted orchestrator runtime state beyond board fields yet.
-- No formal provider-neutral T3 runtime worker loop for card execution yet.
+- The provider-neutral worker loop is formalized: scheduler claim, shared
+  runner launch, projection reconciliation, bounded continuation retries, and
+  `Review` completion are server-side and UI-independent.
 - No hook execution layer yet.
 - No local equivalent of Linear comment editing for task-record update
   arbitration yet.

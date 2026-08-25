@@ -1,9 +1,11 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AgentBoardFile } from "./agentBoard.ts";
+import { AgentBoardFile, AgentBoardRunInput, AgentBoardRunResult } from "./agentBoard.ts";
 
 const decodeAgentBoardFile = Schema.decodeUnknownSync(AgentBoardFile);
+const decodeAgentBoardRunInput = Schema.decodeUnknownSync(AgentBoardRunInput);
+const decodeAgentBoardRunResult = Schema.decodeUnknownSync(AgentBoardRunResult);
 // The server persists boards as JSON strings, so encode/decode through the
 // same string codec shape (`Schema.fromJsonString`) for round-trip proofs.
 const decodeAgentBoardFileJsonString = Schema.decodeSync(Schema.fromJsonString(AgentBoardFile));
@@ -162,5 +164,66 @@ describe("AgentBoardFile", () => {
     expect(encoded).toContain("workerModelSelection");
     const roundTripped = decodeAgentBoardFileJsonString(encoded);
     expect(roundTripped.runner.workerModelSelection).toEqual(decoded.runner.workerModelSelection);
+  });
+});
+
+describe("AgentBoardRunInput / AgentBoardRunResult", () => {
+  it("decodes a run request scoped to a project cwd and card id", () => {
+    const decoded = decodeAgentBoardRunInput({
+      cwd: "/tmp/example-project",
+      cardId: "TASK-20260824-runner-card",
+    });
+
+    expect(decoded.cwd).toBe("/tmp/example-project");
+    expect(decoded.cardId).toBe("TASK-20260824-runner-card");
+  });
+
+  it("round-trips a run result with the launched thread id", () => {
+    const board = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+    });
+    const decoded = decodeAgentBoardRunResult({
+      board,
+      card: {
+        id: "TASK-20260824-runner-card",
+        title: "Runner card",
+        state: "Running",
+        runtime: {
+          attemptCount: 1,
+          implementationRunId: "thr_01J00000000000000000000000",
+        },
+        createdAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:01.000Z",
+      },
+      threadId: "thr_01J00000000000000000000000",
+      workspacePath: "/tmp/example-project/.t3/workspaces/TASK-20260824-runner-card",
+    });
+
+    expect(decoded.threadId).toBe("thr_01J00000000000000000000000");
+    expect(decoded.card.state).toBe("Running");
+    expect(decoded.workspacePath.endsWith(".t3/workspaces/TASK-20260824-runner-card")).toBe(true);
+  });
+
+  it("allows a run result without a thread id when the launch was blocked", () => {
+    const board = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+    });
+    const decoded = decodeAgentBoardRunResult({
+      board,
+      card: {
+        id: "TASK-20260824-blocked-card",
+        title: "Blocked card",
+        state: "Blocked",
+        createdAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:01.000Z",
+      },
+      workspacePath: "/tmp/example-project/.t3/workspaces/TASK-20260824-blocked-card",
+    });
+
+    expect(decoded.threadId).toBeUndefined();
   });
 });

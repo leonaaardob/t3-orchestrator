@@ -66,6 +66,8 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import { AgentBoardFileSystemLive } from "./agentBoard/Layers/AgentBoardFileSystem.ts";
+import { AgentBoardRunnerLive } from "./agentBoard/Layers/AgentBoardRunner.ts";
+import { AgentBoardSchedulerLive } from "./agentBoard/Layers/AgentBoardScheduler.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -338,11 +340,17 @@ const AgentBoardFileSystemLayerLive = AgentBoardFileSystemLive.pipe(
   Layer.provide(WorkspacePaths.layer),
 );
 
+const AgentBoardRunnerLayerLive = AgentBoardRunnerLive.pipe(Layer.provide(WorkspacePaths.layer));
+
+// The scheduler Live layer carries no build-time domain deps; its tick fiber
+// resolves board/runner/engine/projection services from the runtime env.
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
   AgentBoardFileSystemLayerLive,
+  AgentBoardRunnerLayerLive,
+  AgentBoardSchedulerLive,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(

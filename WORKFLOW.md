@@ -348,7 +348,9 @@ the user.
 
 ## Polling, Claiming, Retry, And Reconciliation
 
-The board runner should behave like a Symphony orchestrator:
+The server starts the board scheduler automatically. Every 15 seconds it
+reconciles all project boards before claiming eligible `Ready` cards through
+the shared runner; the Planning UI does not need to be open.
 
 1. Load and validate `WORKFLOW.md`.
 2. Reconcile running cards before dispatch.
@@ -365,14 +367,17 @@ The board runner should behave like a Symphony orchestrator:
 
 Retry behavior:
 
-- Clean worker exits should schedule a short continuation check so the runner
-  can confirm whether the card is actually terminal or still needs another
-  turn.
-- Failure retries should use exponential backoff capped by
+- A completed implementation turn moves the card to `Review`; it never marks
+  the card `Done` automatically.
+- Failed or interrupted turns, dead sessions, stale heartbeats, and missing
+  implementation threads are retried as short continuation turns on the same
+  thread. Backoff is exponential, starts at a few seconds, and is capped by
   `agent.max_retry_backoff_ms`.
-- Routine repair attempts are capped by `agent.max_repair_cycles`.
-- Retry state is orchestrator-owned runtime state and should be reflected in
-  board fields such as attempt count, heartbeat, and current error.
+- `runtime.attemptCount` persists and caps retries at `runner.repairCycles`;
+  exhausted cards move to `Needs Decision` with the last failure summary.
+- Backoff deadlines are intentionally in-memory scheduler state. Restarting
+  may discard a pending delay, but durable attempt metadata still prevents an
+  unbounded retry loop.
 
 Reconciliation behavior:
 
@@ -382,6 +387,8 @@ Reconciliation behavior:
   workspace unless cleanup is explicitly safe.
 - If the runner restarts, recover from `.t3/agent-board.json` and existing
   workspaces. Exact in-memory scheduler state does not need to survive restart.
+- If a user moves a running card out of `Running`, interrupt its active turn
+  and do not relaunch it.
 - Invalid workflow reloads must not crash an active session. Keep using the
   last known good workflow and surface the validation error.
 

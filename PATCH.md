@@ -47,19 +47,25 @@ The current patch attaches to upstream T3 Code through these areas:
 
 - `src/agentBoard.ts`
   - Shared board schema, card states, runtime metadata, graph links, claim
-    contract types, and the `AgentBoardFileError` RPC error. Runner settings
-    carry an optional `workerModelSelection` (`ModelSelection` imported from
-    `./orchestration.ts`) — the project-central worker execution config for
-    board card runs.
+    contract types, the `AgentBoardRunInput`/`AgentBoardRunResult` launch
+    contract (run result carries `board`, `card`, optional `threadId`, and the
+    absolute card `workspacePath`), and the `AgentBoardFileError` RPC error.
+    Runner settings carry an optional `workerModelSelection`
+    (`ModelSelection` imported from `./orchestration.ts`) — the
+    project-central worker execution config for board card runs.
 - `src/agentBoard.test.ts`
-  - Contract coverage for the board file shape (runner: `vite-plus/test`).
+  - Contract coverage for the board file shape plus the run input/result
+    schemas (runner: `vite-plus/test`).
 - `src/rpc.ts`
-  - Three `WS_METHODS` entries, three `Rpc.make` definitions, and their
+  - Four `WS_METHODS` entries, four `Rpc.make` definitions
+    (`projectsLoadAgentBoard`, `projectsSaveAgentBoard`,
+    `projectsClaimAgentBoardCard`, `projectsRunAgentBoardCard`), and their
     registration in `WsRpcGroup`. Their `error:` must be
     `Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError])` —
     the auth-wrapped handler adds the authorization error at runtime.
 - `src/ipc.ts`
-  - Three methods on the `EnvironmentApi.projects` interface.
+  - Board methods on the `EnvironmentApi.projects` interface
+    (`loadAgentBoard`, `runAgentBoardCard`).
 - `src/index.ts`
   - Barrel re-export of `./agentBoard.ts`.
 
@@ -71,24 +77,53 @@ The current patch attaches to upstream T3 Code through these areas:
 - `src/agentBoard/Layers/AgentBoardFileSystem.ts`
   - Load/save/claim over `.t3/agent-board.json`, workspace-isolated claim
     directories, Effect beta.103 idioms (`DateTime.now`,
-    `fromJsonStringPretty`, hoisted schema codecs).
+    `fromJsonStringPretty`, hoisted schema codecs). Also exports
+    `safeWorkspaceSegment` (the WORKFLOW.md workspace-key rule) for the
+    runner.
 - `src/agentBoard/Layers/AgentBoardFileSystem.test.ts`
   - Service tests (temp dirs via NodeServices + WorkspacePaths.layer).
+- `src/agentBoard/Services/AgentBoardRunner.ts` +
+  `src/agentBoard/Layers/AgentBoardRunner.ts`
+  - The single server-side launch path for board card runs (manual Run RPC
+    and the future scheduler both call it): claim ->
+    `GitWorkflowService.createWorktree` at `<projectRoot>/.t3/workspaces/<safe
+-card-id>` on branch `board/<card-id>` from project HEAD (reused when the
+    directory already contains a `.git` marker) -> `OrchestrationEngineService
+.dispatch(thread.create)` with the resolved model selection and
+    `runtimeMode: "full-access"` -> `dispatch(thread.turn.start)` with the
+    shared prompt -> persist `runtime.implementationRunId` + heartbeat.
+    Model selection resolves through `@t3tools/shared/agentBoardRunner`
+    (board override -> project default) BEFORE any thread is created; every
+    failure path marks the card `Blocked` with `runtime.currentError`, and a
+    failed turn start deletes the created thread. Tested headless with fake
+    engine/git layers in `Layers/AgentBoardRunner.test.ts`.
+- `src/agentBoard/Services/AgentBoardScheduler.ts` +
+  `src/agentBoard/Layers/AgentBoardScheduler.ts`
+  - Always-on 15-second reconciler: reads project shells from the durable
+    projection, reconciles Running cards before claiming Ready work, uses the
+    shared runner, persists `Review` / retry / `Needs Decision` runtime state,
+    and interrupts cards moved out of Running. In-memory retry deadlines are
+    deliberate; persisted attempt counts preserve the repair cap after restart.
 - `src/server.ts`
-  - `AgentBoardFileSystemLayerLive` merged into `WorkspaceLayerLive`.
+  - `AgentBoardFileSystemLayerLive`, `AgentBoardRunnerLayerLive`, and
+    `AgentBoardSchedulerLive` merged into `WorkspaceLayerLive`.
+- `src/serverRuntimeStartup.ts`
+  - Starts the scheduler in `reactors.start` beside the orchestration reactor
+    and provider-session reaper.
 - `src/ws.ts`
-  - `agentBoardFileSystem` yield in the RPC handler generator and three
-    `observeRpcEffect(...)` handler entries.
+  - `agentBoardFileSystem` / `agentBoardRunner` yields in the RPC handler
+    generator and four `observeRpcEffect(...)` handler entries.
 - `src/auth/RpcAuthorization.ts`
-  - Scope entries for the three methods (`RPC_REQUIRED_SCOPES` is exhaustive
-    by type — adding an RPC without a scope entry is a compile error).
+  - Scope entries for the four board methods (`RPC_REQUIRED_SCOPES` is
+    exhaustive by type — adding an RPC without a scope entry is a compile
+    error).
 - `src/server.test.ts`
-  - Agent board layer added to the test app wiring.
+  - Agent board layers added to the test app wiring.
 
 ### Web (`apps/web`)
 
 - `src/state/agentBoard.ts`
-  - Atom commands for load/save/claimCard over the client-runtime
+  - Atom commands for load/save/claimCard/runCard over the client-runtime
     environment RPC runtime (replaces the pre-0.0.23 `environmentApi` /
     `wsRpcClient` surface deleted upstream).
 - `src/components/AgentBoardPanel.tsx`
@@ -98,19 +133,28 @@ The current patch attaches to upstream T3 Code through these areas:
     wired like `ProjectSettingsPanel`) persists
     `runner.workerModelSelection` through the save atom command and shows
     whether the effective value is the board override or the project default.
+    The Run button calls the `runCard` atom command (`projects.runAgentBoardCard`)
+    — claim + worktree + thread launch happen server-side in one call, and the
+    returned board is rendered directly.
 - `src/components/ChatView.tsx`
-  - Planning tab strip + persisted `Break` safety control +
-    `onRunClaimedAgentBoardCard` (thread creation via upstream's
-    `createThread` / `startThreadTurn` atom commands). Board runs resolve the
-    model selection centrally through `src/agentBoardRunner.ts`; the chat
-    composer's live selection is never consulted. Missing config marks the
-    card `Blocked` with a runtime error before any thread is created.
-- `src/agentBoardRunner.ts`
+  - Planning tab strip + persisted `Break` safety control. Board runs no
+    longer launch from the client: the previous
+    `onRunClaimedAgentBoardCard` callback and its provider-metadata prompt
+    block were deleted when launching moved into the server-side runner
+    service.
+
+### Shared (`packages/shared`) — planning-fork modules
+
+- `src/agentBoardRunner.ts` (subpath export `@t3tools/shared/agentBoardRunner`)
   - Worker execution resolver (`resolveWorkerModelSelection`: board runner
     override -> project default -> typed missing-config) plus the shared
     missing-config error text; unit-tested in `src/agentBoardRunner.test.ts`.
-- `src/agentBoardPrompt.ts`
-  - Board-card worker handoff prompt construction.
+    Consumed by both the server runner service and the web Planning UI picker.
+- `src/agentBoardPrompt.ts` (subpath export
+  `@t3tools/shared/agentBoardPrompt`)
+  - Board-card worker handoff prompt construction
+    (`buildAgentBoardImplementationPrompt`,
+    `buildAgentBoardImplementationThreadTitle`).
 
 ### Theme customization addon (fork-local addon)
 
@@ -280,7 +324,8 @@ browser pass over the Planning tab remain manual follow-ups.
 - Contract package schema conventions may change.
 - Project root/environment selection may change how `.t3/agent-board.json` is
   located.
-- Provider orchestration changes may affect Run/claim handoff behavior.
+- Provider orchestration or projection-query changes may affect the runner,
+  scheduler reconciliation, continuation retries, and Run/claim handoff.
 - CSS/component library changes may affect `AgentBoardPanel` layout.
 - GitHub Actions workflow files are intentionally omitted from this public
   fork's initial push unless the publishing token has GitHub `workflow` scope.

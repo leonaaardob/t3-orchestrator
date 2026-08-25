@@ -115,7 +115,7 @@ Proof:
 
 ### Slice 5: Board Runner MVP
 
-Status: `in-progress`
+Status: `tested`
 
 Purpose:
 
@@ -141,7 +141,16 @@ Proof:
   and blocks the card with a missing-config error when neither exists; the
   Planning UI exposes a board-level worker-execution picker that persists
   through the existing board save command.
-- Remaining: stream run status back into the board.
+- 5E complete: server-side runner service + run RPC (`projects.runAgentBoardCard`);
+  manual Run and scheduler share one launch path — claim, real git worktree at
+  `.t3/workspaces/<safe-card-id>` on branch `board/<card-id>` (reused across
+  attempts), orchestration thread create + turn start, and runtime persistence
+  all happen server-side with no web client required. The old client-side
+  launch path in `ChatView` was deleted.
+- 5F complete: an always-on 15-second scheduler reconciles durable thread
+  state, updates completed cards to `Review`, interrupts user-moved work,
+  retries routine failures with bounded in-memory exponential backoff, and
+  claims dependency-eligible cards up to the board concurrency cap.
 
 ### Slice 6: Autonomous Review And Repair
 

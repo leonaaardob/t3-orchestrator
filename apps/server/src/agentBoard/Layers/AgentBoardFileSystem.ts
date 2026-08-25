@@ -25,7 +25,12 @@ const decodeAgentBoardFile = Schema.decodeUnknownEffect(AgentBoardFile);
 const decodeAgentBoardFileJsonString = Schema.decodeUnknownEffect(AgentBoardFileJsonString);
 const encodeAgentBoardFile = Schema.encodeEffect(AgentBoardFileJsonString);
 
-function safeWorkspaceSegment(value: string): string {
+/**
+ * Deterministic filesystem segment for a board card id (WORKFLOW.md workspace
+ * key rule). Exported so the runner service derives identical card workspace
+ * paths when upgrading them into real git worktrees.
+ */
+export function safeWorkspaceSegment(value: string): string {
   const segment = value
     .replaceAll(/[^a-zA-Z0-9._-]+/g, "-")
     .replaceAll(/^-+|-+$/g, "")
