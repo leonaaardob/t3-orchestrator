@@ -2338,10 +2338,8 @@ html:not([data-theme-background-effect="default"]):not([data-theme-background-ef
   background-size: 256px 256px;
 }
 
-html:not([data-theme-background-effect="default"]):not([data-theme-background-effect="none"])
-  body,
-html:not([data-theme-background-effect="default"]):not([data-theme-background-effect="none"])
-  #root,
+html:not([data-theme-background-effect="default"]):not([data-theme-background-effect="none"]) body,
+html:not([data-theme-background-effect="default"]):not([data-theme-background-effect="none"]) #root,
 html:not([data-theme-background-effect="default"]):not([data-theme-background-effect="none"])
   [data-slot="sidebar-wrapper"] {
   background-color: var(--background);
