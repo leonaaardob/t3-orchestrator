@@ -2048,6 +2048,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
               provider={workerEntry.driverKind}
               models={workerEntry.models}
               model={workerSelection.model}
+              planModeEnabled={settings.planModeEnabled}
               prompt=""
               onPromptChange={() => {}}
               modelOptions={workerSelection.options ?? []}

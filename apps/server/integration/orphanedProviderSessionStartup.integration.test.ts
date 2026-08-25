@@ -40,6 +40,10 @@ import * as ServerLifecycleEvents from "../src/serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "../src/serverRuntimeStartup.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as AnalyticsService from "../src/telemetry/AnalyticsService.ts";
+import * as AgentBoardFileSystem from "../src/agentBoard/Services/AgentBoardFileSystem.ts";
+import * as AgentBoardRunner from "../src/agentBoard/Services/AgentBoardRunner.ts";
+import * as AgentBoardScheduler from "../src/agentBoard/Services/AgentBoardScheduler.ts";
+import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 
 const providerInstanceId = ProviderInstanceId.make("codex");
 const projectId = ProjectId.make("project-startup-orphan");
@@ -74,6 +78,24 @@ const startupDependencies = Layer.mergeAll(
   }),
   Layer.succeed(ProviderSessionReaper.ProviderSessionReaper, {
     start: () => Effect.void,
+  }),
+  Layer.mock(AgentBoardScheduler.AgentBoardScheduler)({
+    start: () => Effect.void,
+  }),
+  Layer.mock(AgentBoardRunner.AgentBoardRunner)({
+    run: () => Effect.die("unused"),
+  }),
+  Layer.mock(AgentBoardFileSystem.AgentBoardFileSystem)({
+    load: () => Effect.die("unused"),
+    save: () => Effect.die("unused"),
+    claim: () => Effect.die("unused"),
+  }),
+  Layer.mock(GitWorkflowService)({
+    renameBranch: (input: {
+      readonly cwd: string;
+      readonly oldBranch: string;
+      readonly newBranch: string;
+    }) => Effect.succeed({ branch: input.newBranch }),
   }),
   ServerLifecycleEvents.layer,
   Layer.succeed(ServerEnvironment.ServerEnvironment, {

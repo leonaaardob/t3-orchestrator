@@ -1,4 +1,14 @@
 import { ArchiveIcon, ArchiveX, ChevronRightIcon, LoaderIcon, SettingsIcon } from "lucide-react";
+import {
+  DEFAULT_THEME_CUSTOMIZATION,
+  THEME_ACCENT_OPTIONS,
+  THEME_BACKGROUND_EFFECT_OPTIONS,
+  THEME_FONT_OPTIONS,
+  type ThemeAccent,
+  type ThemeBackgroundEffect,
+  type ThemeFont,
+  useThemeCustomization,
+} from "../../localAddons/theme-customization/themeCustomization";
 import { Link } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -463,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     clearThemeHalves,
     themeHalves,
   } = useTheme();
+  const { customization, resetThemeCustomization } = useThemeCustomization();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
@@ -477,6 +488,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
+      ...(customization.accent !== DEFAULT_THEME_CUSTOMIZATION.accent ||
+      customization.font !== DEFAULT_THEME_CUSTOMIZATION.font ||
+      customization.backgroundEffect !== DEFAULT_THEME_CUSTOMIZATION.backgroundEffect
+        ? ["Theme customization"]
+        : []),
       ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
         ? ["Contrast"]
         : []),
@@ -582,6 +598,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       followSystem,
       theme,
       themeHalves,
+      customization.accent,
+      customization.font,
+      customization.backgroundEffect,
     ],
   );
 
@@ -647,6 +666,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notifyThemeRestoreFailure();
       return;
     }
+    resetThemeCustomization();
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -694,6 +714,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     changedSettingLabels,
     clearThemeHalves,
     onRestored,
+    resetThemeCustomization,
     setFollowSystem,
     setTheme,
     setThemeHalf,
@@ -989,6 +1010,7 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const { customization, resetThemeCustomization, setThemeCustomization } = useThemeCustomization();
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
