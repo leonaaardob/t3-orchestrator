@@ -143,7 +143,7 @@ The current patch attaches to upstream T3 Code through these areas:
     environment RPC runtime (replaces the pre-0.0.23 `environmentApi` /
     `wsRpcClient` surface deleted upstream).
 - `src/components/AgentBoardPanel.tsx`
-  - Kanban, Planning table, card detail editor, Dependency tree UI; consumes
+  - Kanban, Planning table, card detail editor, Dependency tree + interactive Execution-path canvas, and expanded-Kanban variant over the same `board.cards` data; consumes
     the atom commands above plus `projectEnvironment.writeFile`. A
     worker-execution picker (upstream `ProviderModelPicker` + `TraitsPicker`
     wired like `ProjectSettingsPanel`) persists
@@ -152,6 +152,7 @@ The current patch attaches to upstream T3 Code through these areas:
     The Run button calls the `runCard` atom command (`projects.runAgentBoardCard`)
     — claim + worktree + thread launch happen server-side in one call, and the
     returned board is rendered directly.
+  - Slice 7 (2026-08-25): `AgentBoardLocalView` `graph` → `execution-path` (contract `AgentBoardView: kanban|table|execution-path`, `AgentBoardFile.defaultView`) with back-compat mapping for legacy `?view=graph`; view state ↔ `board.defaultView` persistence via existing `agentBoardEnvironment.save` (persisted as `kanban` for the `expanded` presentation variant) plus `?view=kanban|table|execution-path|expanded` URL sync (`history.replaceState` + `popstate`); dead canvas guard `graphModel.width < 0` removed so the pan/zoom/grid canvas (`L625-656`, `L1005-1085`, `L948`, `0.5–1.8`) is the interactive Execution-path view alongside the dependency tree; expanded mode is a Kanban-only `?view=expanded` CSS variant (`260px → 320px`, full-bleed) toggled by an Expand/Exit button — no new component, no new RPC, monolith kept under 500 lines/view.
 - `src/components/ChatView.tsx`
   - Planning tab strip + persisted `Break` safety control. Board runs no
     longer launch from the client: the previous

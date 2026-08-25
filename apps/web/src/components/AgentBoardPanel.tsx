@@ -17,6 +17,7 @@ import {
   type AgentBoardFile as AgentBoardFileType,
   type AgentBoardIntentBrief,
   type AgentBoardState,
+  type AgentBoardView,
   type EnvironmentId,
   type ModelSelection,
 } from "@t3tools/contracts";
@@ -35,6 +36,8 @@ import {
   Table2Icon,
   KanbanSquareIcon,
   GitBranchIcon,
+  Maximize2Icon,
+  Minimize2Icon,
 } from "lucide-react";
 import { Schema } from "effect";
 
@@ -179,6 +182,7 @@ const MOVABLE_STATES: readonly AgentBoardState[] = [
 
 const DEFAULT_SLICE_PLAN_PATH = "docs/agents/slices/authoritative-agent-board.md";
 const BOARD_COLUMN_MIN_WIDTH = 260;
+const BOARD_COLUMN_MIN_WIDTH_EXPANDED = 320;
 const BOARD_COLUMN_GAP = 12;
 const BOARD_HORIZONTAL_PADDING = 24;
 const PLANNING_EDIT_COMMIT_DELAY_MS = 850;
@@ -197,7 +201,50 @@ const GRAPH_MIN_ZOOM = 0.5;
 const GRAPH_MAX_ZOOM = 1.8;
 const GRAPH_ZOOM_STEP = 0.0015;
 const GRAPH_GRID_SIZE = 22;
-type AgentBoardLocalView = "kanban" | "table" | "graph";
+type AgentBoardLocalView = AgentBoardView | "expanded";
+const BOARD_VIEW_URL_PARAM = "view";
+const VALID_BOARD_VIEW_VALUES: readonly AgentBoardLocalView[] = [
+  "kanban",
+  "table",
+  "execution-path",
+  "expanded",
+] as const;
+
+function parseBoardViewParam(value: string | null): AgentBoardLocalView | null {
+  if (!value) return null;
+  // Back-compat: old UI used `graph` for the execution-path view.
+  if (value === "graph") return "execution-path";
+  return (VALID_BOARD_VIEW_VALUES as readonly string[]).includes(value)
+    ? (value as AgentBoardLocalView)
+    : null;
+}
+
+function readBoardViewFromUrl(): AgentBoardLocalView | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return parseBoardViewParam(
+      new URLSearchParams(window.location.search).get(BOARD_VIEW_URL_PARAM),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writeBoardViewToUrl(nextView: AgentBoardLocalView): void {
+  if (typeof window === "undefined") return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set(BOARD_VIEW_URL_PARAM, nextView);
+    window.history.replaceState(null, "", url.toString());
+  } catch {
+    // ignore URL write failures (e.g. non-http context)
+  }
+}
+
+function boardViewToPersistedView(view: AgentBoardLocalView): AgentBoardView {
+  // `expanded` is a kanban presentation variant — persist as `kanban`.
+  return view === "expanded" ? "kanban" : view;
+}
 type PlanningTableColumn =
   | "area"
   | "slice"
@@ -601,7 +648,9 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
 }: AgentBoardPanelProps) {
   const [board, setBoard] = useState<AgentBoardFileType | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
-  const [boardView, setBoardView] = useState<AgentBoardLocalView>("kanban");
+  const [boardView, setBoardView] = useState<AgentBoardLocalView>(
+    () => readBoardViewFromUrl() ?? "kanban",
+  );
   const [planningTableColumnWidths, setPlanningTableColumnWidths] = useState(
     DEFAULT_PLANNING_TABLE_COLUMN_WIDTHS,
   );
@@ -689,12 +738,17 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     () => board?.cards.find((card) => card.id === detailCardId) ?? null,
     [board?.cards, detailCardId],
   );
+  const isExpandedView = boardView === "expanded";
+  const isKanbanView = boardView === "kanban" || isExpandedView;
+  const effectiveColumnMinWidth = isExpandedView
+    ? BOARD_COLUMN_MIN_WIDTH_EXPANDED
+    : BOARD_COLUMN_MIN_WIDTH;
   const boardMinWidth = useMemo(
     () =>
-      columns.length * BOARD_COLUMN_MIN_WIDTH +
+      columns.length * effectiveColumnMinWidth +
       Math.max(columns.length - 1, 0) * BOARD_COLUMN_GAP +
       BOARD_HORIZONTAL_PADDING,
-    [columns.length],
+    [columns.length, effectiveColumnMinWidth],
   );
   const tableCards = useMemo(() => {
     return (board?.cards ?? []).toSorted((first, second) => {
@@ -1151,6 +1205,15 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         }
         const result = outcome.value;
         setBoard(result.board);
+        // Sync view state: URL wins (shareable), otherwise board.defaultView.
+        const urlView = readBoardViewFromUrl();
+        if (urlView) {
+          setBoardView(urlView);
+        } else {
+          const persistedView = (result.board.defaultView ?? "kanban") as AgentBoardLocalView;
+          setBoardView(persistedView);
+          writeBoardViewToUrl(persistedView);
+        }
         setSelectedCardId((existing) => {
           const selected =
             result.board.cards.find((card) => card.id === existing) ??
@@ -1210,6 +1273,28 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     },
     [environmentId, workspaceRoot],
   );
+
+  const setBoardViewAndPersist = useCallback(
+    (nextView: AgentBoardLocalView) => {
+      setBoardView(nextView);
+      writeBoardViewToUrl(nextView);
+      if (!board) return;
+      const persisted = boardViewToPersistedView(nextView);
+      if (board.defaultView === persisted) return;
+      const timestamp = new Date().toISOString();
+      saveBoard({ ...board, defaultView: persisted, updatedAt: timestamp });
+    },
+    [board, saveBoard],
+  );
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const next = readBoardViewFromUrl();
+      if (next) setBoardView(next);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // ----- worker execution config -----
   const settings = usePrimarySettings();
@@ -1822,11 +1907,11 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
               <button
                 type="button"
                 role="tab"
-                aria-selected={boardView === "kanban"}
-                onClick={() => setBoardView("kanban")}
+                aria-selected={isKanbanView}
+                onClick={() => setBoardViewAndPersist("kanban")}
                 className={cn(
                   "flex h-6 items-center gap-1 rounded-[5px] px-2 text-[11px] font-medium transition-colors",
-                  boardView === "kanban"
+                  isKanbanView
                     ? "bg-card text-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-card/50 hover:text-foreground",
                 )}
@@ -1838,7 +1923,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                 type="button"
                 role="tab"
                 aria-selected={boardView === "table"}
-                onClick={() => setBoardView("table")}
+                onClick={() => setBoardViewAndPersist("table")}
                 className={cn(
                   "flex h-6 items-center gap-1 rounded-[5px] px-2 text-[11px] font-medium transition-colors",
                   boardView === "table"
@@ -1852,22 +1937,44 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
               <button
                 type="button"
                 role="tab"
-                aria-selected={boardView === "graph"}
-                onClick={() => setBoardView("graph")}
+                aria-selected={boardView === "execution-path"}
+                onClick={() => setBoardViewAndPersist("execution-path")}
                 className={cn(
                   "flex h-6 items-center gap-1 rounded-[5px] px-2 text-[11px] font-medium transition-colors",
-                  boardView === "graph"
+                  boardView === "execution-path"
                     ? "bg-card text-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-card/50 hover:text-foreground",
                 )}
               >
                 <GitBranchIcon className="size-3.5" />
-                Dependency graph
+                Execution path
               </button>
             </div>
           ) : null}
         </div>
         <div className="flex items-center gap-1">
+          {mode === "page" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              onClick={() => setBoardViewAndPersist(isExpandedView ? "kanban" : "expanded")}
+              aria-label={isExpandedView ? "Exit expanded view" : "Expand Kanban"}
+              aria-pressed={isExpandedView}
+              title={
+                isExpandedView
+                  ? "Exit expanded (320px → 260px)"
+                  : "Expand Kanban to fullscreen (260px → 320px)"
+              }
+            >
+              {isExpandedView ? (
+                <Minimize2Icon className="size-3.5" />
+              ) : (
+                <Maximize2Icon className="size-3.5" />
+              )}
+              {isExpandedView ? "Exit expanded" : "Expand"}
+            </Button>
+          ) : null}
           {mode === "page" ? (
             <Button
               size="sm"
@@ -2107,7 +2214,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         ) : null}
       </div>
 
-      {mode === "page" && boardView === "kanban" ? (
+      {mode === "page" && isKanbanView ? (
         <div className="border-b border-border/45 px-3 py-1.5">
           <div
             ref={topScrollRef}
@@ -2122,18 +2229,20 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
 
       <div
         ref={mode === "page" ? boardScrollRef : undefined}
-        onScroll={mode === "page" && boardView === "kanban" ? handleBoardScroll : undefined}
-        onWheel={mode === "page" && boardView === "kanban" ? handleBoardWheel : undefined}
+        onScroll={mode === "page" && isKanbanView ? handleBoardScroll : undefined}
+        onWheel={mode === "page" && isKanbanView ? handleBoardWheel : undefined}
         className={cn(
           "min-h-0 flex-1 overflow-y-auto overscroll-contain",
           mode === "page" &&
             "overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-          mode === "page" && boardView !== "kanban" && "hidden",
+          mode === "page" && !isKanbanView && "hidden",
+          isExpandedView && "bg-background",
         )}
       >
         <div
           className={cn(
             mode === "page" ? "grid min-h-full grid-flow-col gap-3 p-3" : "space-y-3 p-3",
+            isExpandedView && "gap-4 p-4",
             draggingCardId && "select-none",
           )}
           style={
@@ -2141,7 +2250,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
               ? {
                   boxSizing: "border-box",
                   minWidth: boardMinWidth,
-                  gridTemplateColumns: `repeat(${columns.length}, minmax(${BOARD_COLUMN_MIN_WIDTH}px, 1fr))`,
+                  gridTemplateColumns: `repeat(${columns.length}, minmax(${effectiveColumnMinWidth}px, 1fr))`,
                 }
               : undefined
           }
@@ -2653,12 +2762,12 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         </div>
       ) : null}
 
-      {mode === "page" && boardView === "graph" ? (
+      {mode === "page" && boardView === "execution-path" ? (
         <div className="min-h-0 flex-1 overflow-auto bg-background p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold tracking-widest text-emerald-400 uppercase">
-                Dependency tree
+                Execution path — Dependency tree
               </p>
               <p className="text-[12px] text-muted-foreground/60">
                 Read-only family tree. Edit cards, slices, and dependencies in Kanban or Planning
@@ -2921,8 +3030,8 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         </div>
       ) : null}
 
-      {mode === "page" && boardView === "graph" && graphModel.width < 0 ? (
-        <div className="relative min-h-0 flex-1 overflow-hidden">
+      {mode === "page" && boardView === "execution-path" ? (
+        <div className="relative min-h-0 flex-1 overflow-hidden border-t border-border/50">
           <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-md border border-border/60 bg-background/90 px-2 py-1 shadow-sm">
             <span className="text-[11px] text-muted-foreground/65">
               {graphModel.areas.length} areas · {board?.cards.length ?? 0} cards ·{" "}

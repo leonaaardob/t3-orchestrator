@@ -177,12 +177,17 @@ Decision`. Task-record proof is appended best-effort. Focused tests cover
 
 ### Slice 7: Expanded Views
 
-Status: `not-started`
+Status: `done` (implementation 2026-08-25, verified: view switch + persistence + expanded + canvas)
 
 Purpose:
 
 - Add full-board, table, and execution path views over the same card data.
+- Finish without creating a second planning system.
 
 Proof:
 
-- Users can switch views without creating a second planning system.
+- Users can switch between Kanban (`kanban`), Planning table (`table`), and Execution-path (`execution-path`) via tabs in `AgentBoardPanel` (mode=page). `graph` → `execution-path` naming fixed with back-compat mapping.
+- View state persists: init reads `board.defaultView` (`AgentBoardFile.defaultView`), tab switch writes back via existing `agentBoardEnvironment.save` RPC (`defaultView: AgentBoardView`), reload keeps view. URL param `?view=kanban|table|execution-path|expanded` is shareable and synced via `history.replaceState` + `popstate`.
+- Canvas reactivated: guard `graphModel.width < 0` removed; Execution-path now shows the interactive pan/zoom/grid canvas (handlers `L625-656`, grid `L948`, zoom limits `0.5–1.8`) plus the dependency tree, both under the single `execution-path` view.
+- Expanded mode: Kanban-only fullscreen variant via `?view=expanded` (persisted as `kanban`), toggled by Expand/Exit button in the tab bar, switches column min-width `260px → 320px` and full-bleed padding — no new component, CSS only.
+- Verification: `vp lint` clean, `vp run --filter @t3tools/web typecheck` / `@t3tools/contracts typecheck` clean, manual switch 3 views, reload checks `defaultView` in `.t3/agent-board.json` and URL, toggle expanded, pan/zoom on canvas.
