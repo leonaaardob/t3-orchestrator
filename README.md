@@ -114,6 +114,20 @@ Do not use `bun test` in this repo. Use `vp run -r test` or package-local Vitest
 
 This repository intentionally omits GitHub Actions workflow files from the initial public push because the publishing token used here did not have GitHub `workflow` scope.
 
+Stable:
+
+```bash
+yay -S t3code-bin
+```
+
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
+
+The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+
 The upstream/internal `.docs/`, `.plans/`, `.cursor/`, and `.vscode/` folders were also removed from the public branch to keep the fork easier to inspect. Planning-fork documentation lives in `PATCH.md`, `WORKFLOW.md`, `PROJECT.md`, `CONTEXT.md`, and `docs/agents/`.
 
 ## Upstream
@@ -136,4 +150,34 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
-Need support? Join the upstream [Discord](https://discord.gg/jn4EGJjrvv).
+## If you REALLY want to contribute still.... read this first
+
+### Install `vp`
+
+T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+
+#### macOS / Linux
+
+```bash
+curl -fsSL https://vite.plus | bash
+```
+
+#### Windows
+
+```bash
+irm https://vite.plus/ps1 | iex
+```
+
+Checkout their getting started guide for more information: https://viteplus.dev/guide/
+
+### Install dependencies
+
+```bash
+vp i
+```
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+
+Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+
+Need support? Join the upstream [Discord](https://discord.gg/jn4EGJjrvv) or the [Discord](https://discord.gg/jn4EGJjrvv).

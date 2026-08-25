@@ -30,10 +30,12 @@ squashfs-root/
 .plans/
 .vscode/
 .gstack/
+.plans/
 dist-electron/
 .electron-runtime/
 .showcase/
 apps/mobile/.showcase/
 artifacts/app-store/screenshots/
+.github/pr-assets/
 native/**/target/
 .alchemy/
