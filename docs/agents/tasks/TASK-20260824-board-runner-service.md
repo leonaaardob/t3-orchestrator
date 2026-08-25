@@ -1,6 +1,6 @@
 # TASK-20260824-board-runner-service
 
-Status: `Review`
+Status: `Done`
 Agent eligible: no
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 Brief: `docs/briefs/02-finish-scheduler-reconciler.md` (part 1 of 2)

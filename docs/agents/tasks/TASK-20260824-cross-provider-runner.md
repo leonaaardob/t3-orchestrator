@@ -1,6 +1,6 @@
 # TASK-20260824-cross-provider-runner
 
-Status: `Review`
+Status: `Done`
 Agent eligible: no
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 Brief: `docs/briefs/01-generalize-runner-cross-provider.md`

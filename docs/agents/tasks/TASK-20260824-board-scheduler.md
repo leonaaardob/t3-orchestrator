@@ -1,6 +1,6 @@
 # TASK-20260824-board-scheduler
 
-Status: `Review`
+Status: `Done`
 Agent eligible: no
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 Brief: `docs/briefs/02-finish-scheduler-reconciler.md` (part 2 of 2)
