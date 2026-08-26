@@ -32,6 +32,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -788,7 +789,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const terminalProcessCount = runningTerminalIds.length;
 
-  const gitCwd = thread.worktreePath ?? props.projectCwd;
+  const gitCwd =
+    props.projectCwd === null
+      ? thread.worktreePath
+      : projectScriptCwd({
+          project: { cwd: props.projectCwd },
+          worktreePath: thread.worktreePath,
+        });
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
@@ -1630,7 +1637,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const { thread } = props;
   // Same details tooltip as the regular rows: a search hit is still a thread,
   // and the hover card is how you disambiguate identically-titled results.
-  const gitCwd = thread.worktreePath ?? props.projectCwd;
+  const gitCwd =
+    props.projectCwd === null
+      ? thread.worktreePath
+      : projectScriptCwd({
+          project: { cwd: props.projectCwd },
+          worktreePath: thread.worktreePath,
+        });
   const gitStatus = useEnvironmentQuery(
     (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
       ? vcsEnvironment.status({

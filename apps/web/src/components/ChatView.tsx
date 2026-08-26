@@ -2783,7 +2783,7 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusCwd = gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -6973,7 +6973,9 @@ function ChatViewContent(props: ChatViewProps) {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <AgentBoardPanel
               environmentId={environmentId}
-              workspaceRoot={activeWorkspaceRoot}
+              // Planning is project-scoped: always load `.t3/agent-board.json` from
+              // the project root, never from an active thread's card worktree.
+              workspaceRoot={activeProjectCwd ?? undefined}
               mode="page"
               onClose={() => setProjectView("chat")}
               projectDefaultModelSelection={activeProject?.defaultModelSelection ?? null}

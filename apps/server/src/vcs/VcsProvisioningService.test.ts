@@ -95,3 +95,76 @@ it.effect("defaults repository initialization to Git until callers choose a VCS 
     assert.deepStrictEqual(calls, ["default:/repo"]);
   }).pipe(Effect.provide(testLayer));
 });
+
+it.effect(
+  "initializes git and creates an empty commit when ensureGitRepositoryReady runs on a bare folder",
+  () => {
+    const calls: string[] = [];
+    let hasRepository = false;
+    let hasHeadCommit = false;
+    const driver: VcsDriver.VcsDriver["Service"] = {
+      ...makeDriver(calls),
+      detectRepository: () =>
+        Effect.succeed(
+          hasRepository
+            ? {
+                rootPath: "/repo",
+                metadataPath: null,
+                freshness: {
+                  source: "live-local",
+                  observedAt: TEST_EPOCH,
+                  expiresAt: Option.none(),
+                },
+              }
+            : null,
+        ),
+      initRepository: (input) =>
+        Effect.sync(() => {
+          hasRepository = true;
+          calls.push(`init:${input.cwd}`);
+        }),
+      execute: (input) =>
+        Effect.succeed({
+          exitCode: ChildProcessSpawner.ExitCode(
+            input.args[0] === "rev-parse" ? (hasHeadCommit ? 0 : 1) : 0,
+          ),
+          stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
+    };
+    const testLayer = VcsProvisioningService.layer.pipe(
+      Layer.provide(
+        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+          get: (kind) => (kind === "git" ? Effect.succeed(driver) : Effect.die("unexpected kind")),
+          detect: () =>
+            Effect.succeed(
+              hasRepository
+                ? {
+                    kind: "git" as const,
+                    repository: {
+                      rootPath: "/repo",
+                      metadataPath: null,
+                      freshness: {
+                        source: "live-local" as const,
+                        observedAt: TEST_EPOCH,
+                        expiresAt: Option.none(),
+                      },
+                    },
+                    driver,
+                  }
+                : null,
+            ),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const provisioning = yield* VcsProvisioningService.VcsProvisioningService;
+      yield* provisioning.ensureGitRepositoryReady({ cwd: "/repo" });
+
+      assert.deepStrictEqual(calls, ["init:/repo"]);
+    }).pipe(Effect.provide(testLayer));
+  },
+);

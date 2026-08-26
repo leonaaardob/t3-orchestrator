@@ -62,6 +62,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -2116,7 +2117,13 @@ const makeWsRpcLayer = (
               }
               return yield* issueAssetUrl({
                 resource: input.resource,
-                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoot:
+                  thread.value.worktreePath === null
+                    ? project.value.workspaceRoot
+                    : projectScriptCwd({
+                        project: { cwd: project.value.workspaceRoot },
+                        worktreePath: thread.value.worktreePath,
+                      }),
               });
             }),
             { "rpc.aggregate": "workspace" },

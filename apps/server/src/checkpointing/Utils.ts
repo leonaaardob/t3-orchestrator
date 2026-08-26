@@ -1,5 +1,6 @@
 import * as Encoding from "effect/Encoding";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 
 export const CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 
@@ -19,10 +20,17 @@ export function resolveThreadWorkspaceCwd(input: {
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {
-  const worktreeCwd = input.thread.worktreePath ?? undefined;
-  if (worktreeCwd) {
-    return worktreeCwd;
+  const projectRoot = input.projects.find(
+    (project) => project.id === input.thread.projectId,
+  )?.workspaceRoot;
+  if (input.thread.worktreePath) {
+    return projectRoot
+      ? projectScriptCwd({
+          project: { cwd: projectRoot },
+          worktreePath: input.thread.worktreePath,
+        })
+      : input.thread.worktreePath;
   }
 
-  return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
+  return projectRoot;
 }

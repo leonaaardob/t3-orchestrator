@@ -19,6 +19,7 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import * as VcsProvisioningService from "../vcs/VcsProvisioningService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const canonicalizeClientCommandTimestamps = (
@@ -109,12 +110,24 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (canonicalCommand.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        canonicalCommand.workspaceRoot,
+        canonicalCommand.createWorkspaceRootIfMissing,
+      );
+      if (canonicalCommand.createWorkspaceRootIfMissing === true) {
+        const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
+        yield* vcsProvisioning.ensureGitRepositoryReady({ cwd: workspaceRoot }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationDispatchCommandError({
+                message: cause.message,
+              }),
+          ),
+        );
+      }
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          canonicalCommand.workspaceRoot,
-          canonicalCommand.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
         createWorkspaceRootIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
       } satisfies OrchestrationCommand;
     }

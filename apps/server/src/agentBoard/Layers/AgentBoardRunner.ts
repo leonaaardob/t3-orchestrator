@@ -31,6 +31,7 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationDispatchError } from "../../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as VcsProvisioningService from "../../vcs/VcsProvisioningService.ts";
 
 /** The card branch checked out inside the card worktree. */
 const boardBranchForCard = (cardId: string): string => `board/${cardId}`;
@@ -101,6 +102,7 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
       // or the part-2 scheduler) carries them.
       const boardFiles = yield* AgentBoardFileSystem;
       const gitWorkflow = yield* GitWorkflowService;
+      const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const orchestrationEngine = yield* OrchestrationEngineService;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
@@ -176,6 +178,10 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         })
         .pipe(Effect.mapError((cause) => toError("workspace.resolve", cause)));
       const branchName = boardBranchForCard(input.cardId);
+
+      yield* vcsProvisioning
+        .ensureGitRepositoryReady({ cwd: projectRoot })
+        .pipe(Effect.mapError((cause) => toError("git.ensureRepository", cause)));
 
       const hasGitMarker = yield* fileSystem
         .exists(path.join(resolvedWorktreePath.absolutePath, ".git"))

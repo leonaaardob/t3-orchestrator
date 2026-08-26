@@ -28,6 +28,7 @@ import {
   MISSING_WORKER_CONFIG_ERROR,
   resolveWorkerModelSelection,
 } from "@t3tools/shared/agentBoardRunner";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -158,13 +159,11 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
     });
 
     const collectReviewText = (detail: {
-      thread: { messages: ReadonlyArray<{ text: string; role: string }> };
+      messages: ReadonlyArray<{ text: string; role: string }>;
     }): string => {
-      const assistant = detail.thread.messages
-        .filter((m) => m.role === "assistant")
-        .map((m) => m.text);
+      const assistant = detail.messages.filter((m) => m.role === "assistant").map((m) => m.text);
       if (assistant.length > 0) return assistant.join("\n");
-      return detail.thread.messages.map((m) => m.text).join("\n");
+      return detail.messages.map((m) => m.text).join("\n");
     };
 
     /** Short continuation message for a retry turn — never the full prompt. */
@@ -312,7 +311,10 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           };
         }
         const project = projectOption.value;
-        const worktreePath = input.card.runtime.workspacePath ?? `.t3/workspaces/${input.card.id}`;
+        const worktreePath = projectScriptCwd({
+          project: { cwd: input.cwd },
+          worktreePath: input.card.runtime.workspacePath ?? `.t3/workspaces/${input.card.id}`,
+        });
         const branchName = input.card.runtime.branchName ?? `board/${input.card.id}`;
         const reviewThreadId = ThreadId.make(yield* nextUuid);
         const threadTitle = buildAgentBoardReviewThreadTitle(input.card);
@@ -719,11 +721,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             .pipe(Effect.catch(() => Effect.succeed(Option.none())));
           let reviewText = "";
           if (Option.isSome(detailOption)) {
-            reviewText = collectReviewText(
-              detailOption.value as unknown as {
-                thread: { messages: ReadonlyArray<{ text: string; role: string }> };
-              },
-            );
+            reviewText = collectReviewText(detailOption.value);
           }
           if (!reviewText) {
             reviewText =
@@ -1306,16 +1304,34 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             yield* input.collaborators.projectionSnapshotQuery.getThreadShellById(
               ThreadId.make(previousRunId),
             );
-          if (
-            Option.isSome(previousThread) &&
-            previousThread.value.latestTurn?.state === "running"
-          ) {
-            yield* Effect.logInfo("agentBoard.scheduler.claim-deferred-active-run", {
-              cwd,
-              cardId: candidate.id,
-              threadId: previousRunId,
-            });
-            continue;
+          if (Option.isSome(previousThread)) {
+            const turnState = previousThread.value.latestTurn?.state;
+            if (turnState === "running") {
+              yield* Effect.logInfo("agentBoard.scheduler.claim-deferred-active-run", {
+                cwd,
+                cardId: candidate.id,
+                threadId: previousRunId,
+              });
+              continue;
+            }
+            // A Ready card whose implementation already finished but was moved
+            // back to Ready (stale UI save) must re-enter reconciliation, not
+            // spawn a second concurrent run.
+            if (turnState === "completed") {
+              const timestamp = yield* nowIso;
+              applyPatch(candidate.id, (current) =>
+                Object.assign({}, current, {
+                  state: "Running" as const,
+                  updatedAt: timestamp,
+                }),
+              );
+              yield* Effect.logInfo("agentBoard.scheduler.claim-deferred-completed-run", {
+                cwd,
+                cardId: candidate.id,
+                threadId: previousRunId,
+              });
+              continue;
+            }
           }
         }
         const launchOutcome = yield* outcome(
@@ -1339,6 +1355,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           threadId: launchOutcome.value.threadId,
           workspacePath: launchOutcome.value.workspacePath,
         });
+      }
+
+      if (dirty) {
+        const timestamp = yield* nowIso;
+        const saved = yield* boardFiles.save({
+          cwd,
+          board: { ...board, updatedAt: timestamp },
+        });
+        board = saved.board;
+        dirty = false;
       }
     });
 

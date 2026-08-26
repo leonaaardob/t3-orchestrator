@@ -27,6 +27,7 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
+import * as VcsProvisioningService from "../../vcs/VcsProvisioningService.ts";
 
 const CARD_ID = "TASK-20260824-runner-card";
 
@@ -84,6 +85,11 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
       }),
   });
 
+  const vcsProvisioningLayer = Layer.mock(VcsProvisioningService.VcsProvisioningService)({
+    initRepository: () => Effect.void,
+    ensureGitRepositoryReady: () => Effect.void,
+  });
+
   const orchestrationEngineLayer = Layer.mock(OrchestrationEngineService)({
     dispatch: (command) =>
       Effect.suspend(() => {
@@ -138,6 +144,7 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePathsModule.layer))),
     Layer.provideMerge(gitWorkflowLayer),
+    Layer.provideMerge(vcsProvisioningLayer),
     Layer.provideMerge(orchestrationEngineLayer),
     Layer.provideMerge(projectionSnapshotQueryLayer),
   );

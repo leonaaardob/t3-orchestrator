@@ -125,6 +125,12 @@ describe("projectScripts helpers", () => {
     expect(
       projectScriptCwd({
         project: { cwd: "/repo" },
+        worktreePath: ".t3/workspaces/card-1",
+      }),
+    ).toBe("/repo/.t3/workspaces/card-1");
+    expect(
+      projectScriptCwd({
+        project: { cwd: "/repo" },
         worktreePath: null,
       }),
     ).toBe("/repo");

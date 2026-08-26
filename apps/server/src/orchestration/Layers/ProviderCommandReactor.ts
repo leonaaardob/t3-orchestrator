@@ -446,30 +446,39 @@ const make = Effect.gen(function* () {
     if (!worktreePath || !branch) {
       return;
     }
-    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    if (exists) {
-      return;
-    }
     const project = yield* resolveProject(thread.projectId);
     if (!project) {
+      return;
+    }
+    const resolvedWorktreePath =
+      resolveThreadWorkspaceCwd({
+        thread: { projectId: thread.projectId, worktreePath },
+        projects: [project],
+      }) ?? worktreePath;
+    const exists = yield* fileSystem
+      .exists(resolvedWorktreePath)
+      .pipe(Effect.orElseSucceed(() => true));
+    if (exists) {
       return;
     }
     const cwd = project.workspaceRoot;
     yield* Effect.logWarning("provider command reactor recreating missing worktree", {
       threadId: thread.id,
-      worktreePath,
+      worktreePath: resolvedWorktreePath,
       branch,
     });
     // A directory deleted without `git worktree remove` leaves an admin entry
     // that makes `git worktree add` refuse the path; prune clears it.
     yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
+      Effect.andThen(
+        gitWorkflow.createWorktree({ cwd, refName: branch, path: resolvedWorktreePath }),
+      ),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
           : Effect.logWarning("provider command reactor failed to recreate worktree", {
               threadId: thread.id,
-              worktreePath,
+              worktreePath: resolvedWorktreePath,
               cause: Cause.pretty(cause),
             }),
       ),

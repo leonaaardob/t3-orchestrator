@@ -357,6 +357,9 @@ export function createDevRunnerEnv({
       // apps/web/vite.config.ts. Over a shared origin that is invisible: the
       // page loads and only HMR quietly dials the wrong machine.
       delete output.HOST;
+      if (host !== undefined && isProxiableBindHost(host)) {
+        output.HOST = host;
+      }
       if (mode === "dev" || mode === "dev:web") {
         // Browser dev is single-origin: everything (including /ws) is proxied
         // through Vite, so the client must resolve its backend from

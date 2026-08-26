@@ -91,6 +91,7 @@ import { TraitsPicker } from "./chat/TraitsPicker";
 
 interface AgentBoardPanelProps {
   environmentId: EnvironmentId;
+  /** Project workspace root (not a thread worktree). */
   workspaceRoot: string | undefined;
   mode?: "page" | "sheet" | "sidebar";
   onClose: () => void;
@@ -163,6 +164,8 @@ const BOARD_COLUMNS: ReadonlyArray<{
   { state: "Draft", label: "Draft" },
   { state: "Ready", label: "Ready" },
   { state: "Running", label: "Running" },
+  { state: "Reviewing", label: "Reviewing" },
+  { state: "Diagnosing", label: "Diagnosing" },
   { state: "Review", label: "Review" },
   { state: "Done", label: "Done" },
   { state: "Needs Decision", label: "Needs Decision" },
@@ -180,6 +183,7 @@ const MOVABLE_STATES: readonly AgentBoardState[] = [
   "Canceled",
 ];
 
+const BOARD_REFRESH_INTERVAL_MS = 10_000;
 const DEFAULT_SLICE_PLAN_PATH = "docs/agents/slices/authoritative-agent-board.md";
 const BOARD_COLUMN_MIN_WIDTH = 260;
 const BOARD_COLUMN_MIN_WIDTH_EXPANDED = 320;
@@ -684,6 +688,16 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reportPlanningError = useCallback((message: string) => {
+    setError(message);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Planning",
+        description: message,
+      }),
+    );
+  }, []);
   const topScrollRef = useRef<HTMLDivElement | null>(null);
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const graphCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -1189,52 +1203,73 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
 
   const loadAgentBoard = useAtomCommand(agentBoardEnvironment.load);
 
-  const loadBoard = useCallback(() => {
-    if (!workspaceRoot) return;
-    setLoading(true);
-    setError(null);
-    void loadAgentBoard({
-      environmentId,
-      input: { cwd: workspaceRoot, createIfMissing: true },
-    })
-      .then((outcome) => {
-        if (outcome._tag !== "Success") {
-          const loadError = squashAtomCommandFailure(outcome);
-          setError(loadError instanceof Error ? loadError.message : "Could not load board.");
-          return;
-        }
-        const result = outcome.value;
-        setBoard(result.board);
-        // Sync view state: URL wins (shareable), otherwise board.defaultView.
-        const urlView = readBoardViewFromUrl();
-        if (urlView) {
-          setBoardView(urlView);
-        } else {
-          const persistedView = (result.board.defaultView ?? "kanban") as AgentBoardLocalView;
-          setBoardView(persistedView);
-          writeBoardViewToUrl(persistedView);
-        }
-        setSelectedCardId((existing) => {
-          const selected =
-            result.board.cards.find((card) => card.id === existing) ??
-            result.board.cards[0] ??
-            null;
-          setIntentDraft(selected ? intentDraftFromCard(selected) : emptyIntentDraft());
-          return selected?.id ?? null;
-        });
+  const loadBoard = useCallback(
+    (options?: { readonly silent?: boolean }) => {
+      if (!workspaceRoot) return;
+      if (!options?.silent) {
+        setLoading(true);
+        setError(null);
+      }
+      void loadAgentBoard({
+        environmentId,
+        input: { cwd: workspaceRoot, createIfMissing: true },
       })
-      .catch((loadError) => {
-        setError(loadError instanceof Error ? loadError.message : "Could not load board.");
-      })
-      .then(
-        () => setLoading(false),
-        () => setLoading(false),
-      );
-  }, [environmentId, loadAgentBoard, workspaceRoot]);
+        .then((outcome) => {
+          if (outcome._tag !== "Success") {
+            const loadError = squashAtomCommandFailure(outcome);
+            if (!options?.silent) {
+              setError(loadError instanceof Error ? loadError.message : "Could not load board.");
+            }
+            return;
+          }
+          const result = outcome.value;
+          setBoard(result.board);
+          if (!options?.silent) {
+            // Sync view state: URL wins (shareable), otherwise board.defaultView.
+            const urlView = readBoardViewFromUrl();
+            if (urlView) {
+              setBoardView(urlView);
+            } else {
+              const persistedView = (result.board.defaultView ?? "kanban") as AgentBoardLocalView;
+              setBoardView(persistedView);
+              writeBoardViewToUrl(persistedView);
+            }
+            setSelectedCardId((existing) => {
+              const selected =
+                result.board.cards.find((card) => card.id === existing) ??
+                result.board.cards[0] ??
+                null;
+              setIntentDraft(selected ? intentDraftFromCard(selected) : emptyIntentDraft());
+              return selected?.id ?? null;
+            });
+          }
+        })
+        .catch((loadError) => {
+          if (!options?.silent) {
+            setError(loadError instanceof Error ? loadError.message : "Could not load board.");
+          }
+        })
+        .then(
+          () => {
+            if (!options?.silent) setLoading(false);
+          },
+          () => {
+            if (!options?.silent) setLoading(false);
+          },
+        );
+    },
+    [environmentId, loadAgentBoard, workspaceRoot],
+  );
 
   useEffect(() => {
     loadBoard();
   }, [loadBoard]);
+
+  useEffect(() => {
+    if (!workspaceRoot) return;
+    const timer = window.setInterval(() => loadBoard({ silent: true }), BOARD_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadBoard, workspaceRoot]);
 
   const saveAgentBoardCommand = useAtomCommand(agentBoardEnvironment.save);
 
@@ -1648,6 +1683,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     setDetailCardId(card.id);
     setDetailDraft(detailDraftFromCard(card));
     setIntentDraft(intentDraftFromCard(card));
+    setError(null);
   }, []);
 
   const updateDetailCard = useCallback(
@@ -1713,37 +1749,48 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const saveIntentBrief = useCallback(() => {
     const intentBrief = intentBriefFromDraft(intentDraft);
     if (!intentBrief) {
-      setError("Intent is required before saving a brief.");
+      reportPlanningError("Intent is required before saving a brief.");
       return;
     }
     updateSelectedCard((card) => ({ ...card, intentBrief }) as AgentBoardCard);
-  }, [intentDraft, updateSelectedCard]);
+  }, [intentDraft, reportPlanningError, updateSelectedCard]);
 
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile);
 
   const createTaskRecord = useCallback(() => {
     const intentBrief = intentBriefFromDraft(intentDraft);
-    if (!workspaceRoot || !board || !selectedCard || !intentBrief) {
-      setError("Intent is required before creating a task record.");
+    const card = detailCard ?? selectedCard;
+    if (!intentBrief) {
+      reportPlanningError("Intent is required before creating a task record.");
+      return;
+    }
+    if (!workspaceRoot) {
+      reportPlanningError("Open a project workspace before marking a card Ready.");
+      return;
+    }
+    if (!board || !card) {
+      reportPlanningError("Select a card before marking it Ready.");
       return;
     }
     const taskRecordPath =
-      selectedCard.taskRecordPath ??
-      `docs/agents/tasks/${selectedCard.id}-${slugifyTitle(selectedCard.title)}.md`;
+      card.taskRecordPath ?? `docs/agents/tasks/${card.id}-${slugifyTitle(card.title)}.md`;
     const timestamp = new Date().toISOString();
     const nextCard = {
-      ...selectedCard,
+      ...card,
       state: "Ready" as const,
       taskRecordPath,
-      slicePlanPath: selectedCard.slicePlanPath ?? DEFAULT_SLICE_PLAN_PATH,
+      slicePlanPath: card.slicePlanPath ?? DEFAULT_SLICE_PLAN_PATH,
       intentBrief,
       updatedAt: timestamp,
     } as AgentBoardCard;
     const nextBoard = {
       ...board,
-      cards: board.cards.map((card) => (card.id === selectedCard.id ? nextCard : card)),
+      cards: board.cards.map((entry) => (entry.id === card.id ? nextCard : entry)),
       updatedAt: timestamp,
     };
+    setBoard(nextBoard);
+    setSelectedCardId(nextCard.id);
+    setIntentDraft(intentDraftFromCard(nextCard));
     setSaving(true);
     setError(null);
     void writeProjectFile({
@@ -1788,8 +1835,10 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
       );
   }, [
     board,
+    detailCard,
     environmentId,
     intentDraft,
+    reportPlanningError,
     saveAgentBoardCommand,
     selectedCard,
     workspaceRoot,
@@ -3615,13 +3664,14 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                   </label>
                 </div>
               </DialogPanel>
+              {error ? <p className="px-4 text-[11px] leading-4 text-rose-300">{error}</p> : null}
               <DialogFooter>
                 <Button
                   variant="secondary"
                   onClick={() => {
                     const intentBrief = intentBriefFromDraft(intentDraft);
                     if (!intentBrief) {
-                      setError("Intent is required before saving a brief.");
+                      reportPlanningError("Intent is required before saving a brief.");
                       return;
                     }
                     updateDetailCard((card) => ({ ...card, intentBrief }) as AgentBoardCard);
