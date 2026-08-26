@@ -1,6 +1,6 @@
 # TASK-20260826-supervisor-thread-badge
 
-Status: `Ready`
+Status: `Tested`
 Agent eligible: yes
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 
@@ -42,6 +42,11 @@ Do not create supervisor execution backend, do not store supervisor state in boa
 - `vp test run` on touched tests
 - Typecheck/lint scoped
 - Manual: thread list shows supervisor badge, pin persists, survives reload
+
+## Completion
+
+- Normal threads can be made Supervisor through existing title and pin commands.
+- Sidebar/search/header presentation exposes the Supervisor label without a new runtime or RPC.
 
 ## Parallelism Plan
 

@@ -86,7 +86,7 @@ export function isReviewIndependent(
  * Returns null when no config exists at any level.
  */
 export function resolveEffectiveAgentExecutionPresets(params: {
-  readonly globalPresets?: AgentExecutionPresets | null;
+  readonly globalPresets?: AgentExecutionPresets | null | undefined;
   readonly projectPresets?: AgentExecutionPresets | null | undefined;
   readonly projectDefault?: ModelSelection | null | undefined;
   readonly boardSelection?: ModelSelection | null | undefined;
@@ -161,7 +161,7 @@ export type ExecutionPresetResolution =
  * instead of silently self-reviewing.
  */
 export function resolveExecutionPresetForOperation(params: {
-  readonly globalPresets?: AgentExecutionPresets | null;
+  readonly globalPresets?: AgentExecutionPresets | null | undefined;
   readonly projectPresets?: AgentExecutionPresets | null | undefined;
   readonly projectDefault?: ModelSelection | null | undefined;
   readonly boardSelection?: ModelSelection | null | undefined;

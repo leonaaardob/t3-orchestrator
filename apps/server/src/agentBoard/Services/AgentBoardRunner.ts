@@ -5,6 +5,7 @@ import type { AgentBoardRunInput, AgentBoardRunResult } from "@t3tools/contracts
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { VcsProvisioningService } from "../../vcs/VcsProvisioningService.ts";
 import type { AgentBoardFileSystem } from "./AgentBoardFileSystem.ts";
 
 export class AgentBoardRunnerError extends Schema.TaggedErrorClass<AgentBoardRunnerError>()(
@@ -40,7 +41,11 @@ export interface AgentBoardRunnerShape {
   ) => Effect.Effect<
     AgentBoardRunResult,
     AgentBoardRunnerError,
-    AgentBoardFileSystem | GitWorkflowService | OrchestrationEngineService | ProjectionSnapshotQuery
+    | AgentBoardFileSystem
+    | GitWorkflowService
+    | OrchestrationEngineService
+    | ProjectionSnapshotQuery
+    | VcsProvisioningService
   >;
 }
 

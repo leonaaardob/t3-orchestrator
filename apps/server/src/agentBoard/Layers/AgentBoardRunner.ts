@@ -20,7 +20,6 @@ import {
   resolveExecutionPresetForOperation,
   resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
-import { DEFAULT_AGENT_EXECUTION_PRESETS } from "@t3tools/contracts/settings";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
@@ -163,11 +162,11 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
       // thread exists.
       const settingsOption = yield* Effect.serviceOption(ServerSettingsService);
       const globalPresets = yield* Option.match(settingsOption, {
-        onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+        onNone: () => Effect.succeed(undefined),
         onSome: (svc) =>
           svc.getSettings.pipe(
             Effect.map((s) => s.agentExecutionPresets),
-            Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+            Effect.catch(() => Effect.succeed(undefined)),
           ),
       });
       const boardSelection = claimed.board.runner.workerModelSelection ?? null;

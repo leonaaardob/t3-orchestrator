@@ -58,7 +58,10 @@ Do not introduce per-card provider/model, per-column config, dynamic routing, AI
 - Presets persist through the project event and SQL projection path; `null` remains inheritance.
 - Focused resolver, runner, scheduler, and migration coverage passes.
 - **Regression fix (2026-08-26):** `getActiveProjectByWorkspaceRoot` now maps `agentExecutionPresets` from the SQL row (was selected but dropped on decode, causing Codex fallback via `defaultModelSelection`). Regression test: `ProjectionSnapshotQuery.test.ts` → `preserves agentExecutionPresets in getActiveProjectByWorkspaceRoot`.
-- **Live A/B proof (port 13991, LIVE-AB-CURSOR-008):** Advanced presets applied — implementation thread `807d4421…` → `cursor/composer-2.5`, review thread `71e757b2…` → `cursor/gemini-3.7-flash-high`; marker file created. Review retries exhausted on Cursor session error (environment), not preset routing.
+- **Live A/B proof (port 13991, LIVE-AB-CURSOR-008):** Advanced presets applied — implementation thread `807d4421…` → `cursor/composer-2.5`, review thread `71e757b2…` → `cursor/gemini-3.7-flash-high`; marker file created. Preset routing proven; review failure was not Codex fallback.
+- **Cursor ACP composite slug bug (upstream T3, commit `9c9796c37`):** composite slugs like `gemini-3.7-flash-high` must map to `model=gemini-3.7-flash` + `reasoning=high`. Pre-fix: `session/set_config_option` failed → `review session is error`. Post-fix: session starts; see Gemini repro below.
+- **Gemini provider repro (external to planning):** `apps/server/scripts/cursor-acp-model-mismatch-probe.ts` with `gemini-3.7-flash-high` or `gemini-3.7-flash` + `CURSOR_REASONING=high` returns `NonRetriableError: Provider Error We're having trouble connecting to the model provider` even when ACP config succeeds. `composer-2.5` and `grok-4.6` respond normally in the same environment.
+- **Full-flow green proof:** rerun Advanced A/B with two working Cursor models (`composer-2.5` impl + `grok-4.6` review) and verify `REVIEW: PASS/FAIL` reconciliation.
 - **Fixture trap:** agent-board card `priority` must be `>= 1` (`PositiveInt`); `priority: 0` yields `board-unreadable`.
 
 ## Parallelism Plan

@@ -88,6 +88,15 @@ The current patch attaches to upstream T3 Code through these areas:
 
 ### Server (`apps/server`)
 
+- `src/orchestration/{decider,projector}.ts`,
+  `src/orchestration/Layers/{ProjectionPipeline,ProjectionSnapshotQuery}.ts`, and
+  `src/persistence/{Services,Layers}/ProjectionProjects.ts`
+  - Carry `agentExecutionPresets` through project events and the durable
+    projection so project overrides survive reconnects and restarts.
+- `src/persistence/Migrations/043_ProjectionProjectAgentExecutionPresets.ts`
+  - Adds the nullable `projection_projects.agent_execution_presets_json`
+    column; old projects remain global-inheriting.
+
 - `src/agentBoard/Services/AgentBoardFileSystem.ts`
   - Service tag + shape; error union must include every
     `WorkspacePaths*Error` variant (including `WorkspaceRootStatFailedError`).

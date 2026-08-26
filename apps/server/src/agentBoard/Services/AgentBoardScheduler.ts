@@ -5,6 +5,7 @@ import type * as Scope from "effect/Scope";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { VcsProvisioningService } from "../../vcs/VcsProvisioningService.ts";
 import type { AgentBoardFileSystem } from "./AgentBoardFileSystem.ts";
 import type { AgentBoardRunner } from "./AgentBoardRunner.ts";
 
@@ -21,7 +22,8 @@ export type AgentBoardSchedulerRequirements =
   | AgentBoardRunner
   | GitWorkflowService
   | OrchestrationEngineService
-  | ProjectionSnapshotQuery;
+  | ProjectionSnapshotQuery
+  | VcsProvisioningService;
 
 export interface AgentBoardSchedulerShape {
   /**

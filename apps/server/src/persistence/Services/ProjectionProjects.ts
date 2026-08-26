@@ -8,6 +8,7 @@
  */
 import {
   IsoDateTime,
+  AgentExecutionPresets,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -25,6 +26,7 @@ export const ProjectionProject = Schema.Struct({
   title: Schema.String,
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  agentExecutionPresets: Schema.NullOr(AgentExecutionPresets),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
   scripts: Schema.Array(ProjectScript),

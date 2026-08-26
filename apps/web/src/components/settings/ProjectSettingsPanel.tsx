@@ -7,19 +7,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-// AsyncResult moved between effect versions; provide a runtime fallback while keeping type compat
-// @ts-ignore
-import { AsyncResult as ReactivityAsyncResult } from "effect/unstable/reactivity";
-const AsyncResult: {
-  success<T>(value: T): unknown;
-  failure<E>(error: E): unknown;
-} =
-  // @ts-ignore
-  (ReactivityAsyncResult as unknown) ??
-  ({
-    success: (value: unknown) => ({ _tag: "Success", value }),
-    failure: (error: unknown) => ({ _tag: "Failure", error }),
-  } as unknown as typeof ReactivityAsyncResult);
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveProjectGroupingOverrideKey,
   selectProjectGroupingSettings,

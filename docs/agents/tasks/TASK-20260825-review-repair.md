@@ -95,6 +95,9 @@ always-on behavior unchanged.
   with a trivial task, observe autonomous `Ready` → `Running` → `Reviewing`
   → `Review`/`Done` with no browser interaction; seed a failing card and
   observe bounded retries → `Needs Decision`.
+- Restart that isolated server with the reference command in
+  **Live Isolated Validation Environment** below. Never start it under the
+  official service's inherited `T3_SERVICE_LAUNCHER_CONTEXT`.
 
 ## Parallelism Plan
 
@@ -148,4 +151,33 @@ Implemented by a fresh worker agent; reviewed and verified by the supervisor
 
 - Review result parsing relies on marker scan; malformed reviews without markers are treated as FAIL → repair (bounded)
 - `appendTaskRecord` is best-effort and requires FileSystem/Path services
-- Live integrated proof not yet run for this slice (requires isolated env with real provider)
+- Live A/B Implementation → Review proof can resume on the recovered isolated
+  server (port `13991`). Do not use the official T3 service for that proof.
+
+## Live Isolated Validation Environment
+
+The Slice 6 live proof uses a disposable home, not systemd and not
+`ServiceLauncher`. Agents spawned under the official T3 service inherit
+`T3_SERVICE_LAUNCHER_CONTEXT` and `T3_BOOT_SERVICE_UNIT`. Leaving those set
+makes the fork server believe it is a managed child and fail IPC. Unset them.
+Do not invent a launcher, unit, or IPC channel. Do not touch port `13773` or
+`t3code.service`.
+
+Reference launch (repo root). Keep this command verbatim:
+
+```sh
+nohup env -u T3_SERVICE_LAUNCHER_CONTEXT -u T3_BOOT_SERVICE_UNIT \
+  node apps/server/src/bin.ts serve \
+  --base-dir /tmp/t3-live-slice6.uyeP80 \
+  --port 13991
+```
+
+Current recovered state (2026-08-26):
+
+- Isolated fork: unmanaged `bin.ts serve`, port `13991`,
+  `BASE=/tmp/t3-live-slice6.uyeP80`, no inherited launcher IPC
+- Official T3: port `13773`, `t3code.service` unchanged
+
+Logs/PID from the original live run: `/tmp/opencode/t3-live-slice6-server.log`,
+`/tmp/opencode/t3-live-slice6-server.pid`, `BASE` path in
+`/tmp/opencode/t3-live-slice6-base`.

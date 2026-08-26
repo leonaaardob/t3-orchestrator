@@ -32,7 +32,6 @@ import {
   resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
-import { DEFAULT_AGENT_EXECUTION_PRESETS } from "@t3tools/contracts/settings";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 import { forkParked } from "../../serverActivation.ts";
@@ -164,11 +163,15 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
     });
 
     const collectReviewText = (detail: {
-      messages: ReadonlyArray<{ text: string; role: string }>;
+      readonly thread?: {
+        readonly messages?: ReadonlyArray<{ readonly text: string; readonly role: string }>;
+      };
+      readonly messages?: ReadonlyArray<{ readonly text: string; readonly role: string }>;
     }): string => {
-      const assistant = detail.messages.filter((m) => m.role === "assistant").map((m) => m.text);
+      const messages = detail.thread?.messages ?? detail.messages ?? [];
+      const assistant = messages.filter((m) => m.role === "assistant").map((m) => m.text);
       if (assistant.length > 0) return assistant.join("\n");
-      return detail.messages.map((m) => m.text).join("\n");
+      return messages.map((m) => m.text).join("\n");
     };
 
     /** Short continuation message for a retry turn — never the full prompt. */
@@ -302,11 +305,11 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         const project = projectOption.value;
         const settingsOption = yield* Effect.serviceOption(ServerSettingsService);
         const globalPresets = yield* Option.match(settingsOption, {
-          onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+          onNone: () => Effect.succeed(undefined),
           onSome: (svc) =>
             svc.getSettings.pipe(
               Effect.map((s) => s.agentExecutionPresets),
-              Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+              Effect.catch(() => Effect.succeed(undefined)),
             ),
         });
         const boardSelection = input.board.runner.workerModelSelection ?? null;
@@ -438,11 +441,11 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           const projectForRepair = projectOptionForRepair.value;
           const settingsOptionForRepair = yield* Effect.serviceOption(ServerSettingsService);
           const globalForRepair = yield* Option.match(settingsOptionForRepair, {
-            onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+            onNone: () => Effect.succeed(undefined),
             onSome: (svc) =>
               svc.getSettings.pipe(
                 Effect.map((s) => s.agentExecutionPresets),
-                Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+                Effect.catch(() => Effect.succeed(undefined)),
               ),
           });
           const effectiveForRepair = resolveEffectiveAgentExecutionPresets({

@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import { AgentExecutionPresets, ModelSelection, ProjectScript } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -18,6 +18,7 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    agentExecutionPresets: Schema.NullOr(Schema.fromJsonString(AgentExecutionPresets)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -35,6 +36,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title,
           workspace_root,
           default_model_selection_json,
+          agent_execution_presets_json,
           default_thread_env_mode,
           favicon_path,
           scripts_json,
@@ -47,6 +49,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.title},
           ${row.workspaceRoot},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
+          ${row.agentExecutionPresets !== null ? JSON.stringify(row.agentExecutionPresets) : null},
           ${row.defaultThreadEnvMode},
           ${row.faviconPath ?? null},
           ${JSON.stringify(row.scripts)},
@@ -59,6 +62,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title = excluded.title,
           workspace_root = excluded.workspace_root,
           default_model_selection_json = excluded.default_model_selection_json,
+          agent_execution_presets_json = excluded.agent_execution_presets_json,
           default_thread_env_mode = excluded.default_thread_env_mode,
           favicon_path = excluded.favicon_path,
           scripts_json = excluded.scripts_json,
@@ -78,6 +82,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title,
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
+          agent_execution_presets_json AS "agentExecutionPresets",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
@@ -99,6 +104,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           title,
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
+          agent_execution_presets_json AS "agentExecutionPresets",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
           scripts_json AS "scripts",
