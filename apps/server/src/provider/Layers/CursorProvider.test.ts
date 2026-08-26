@@ -21,6 +21,7 @@ import {
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
+  parseCursorAcpModelEffortSuffix,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
@@ -632,6 +633,25 @@ describe("resolveCursorAcpBaseModelId", () => {
     );
     expect(resolveCursorAcpBaseModelId("composer-2")).toBe("composer-2");
     expect(resolveCursorAcpBaseModelId("auto")).toBe("auto");
+  });
+});
+
+describe("parseCursorAcpModelEffortSuffix", () => {
+  it("splits composite effort suffixes from base Cursor model ids", () => {
+    expect(parseCursorAcpModelEffortSuffix("gemini-3.7-flash-high")).toEqual({
+      baseModel: "gemini-3.7-flash",
+      reasoning: "high",
+    });
+    expect(parseCursorAcpModelEffortSuffix("grok-4.6-xhigh")).toEqual({
+      baseModel: "grok-4.6",
+      reasoning: "xhigh",
+    });
+  });
+
+  it("does not treat effort tokens embedded in the model id as suffixes", () => {
+    expect(parseCursorAcpModelEffortSuffix("gpt-5.4-medium-fast")).toEqual({
+      baseModel: "gpt-5.4-medium-fast",
+    });
   });
 });
 

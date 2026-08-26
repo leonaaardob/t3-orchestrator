@@ -476,6 +476,44 @@ export function resolveCursorAcpBaseModelId(model: string | null | undefined): s
   return base.includes("[") ? base.slice(0, base.indexOf("[")) : base;
 }
 
+const CURSOR_MODEL_EFFORT_SUFFIXES = ["xhigh", "high", "medium", "low", "max"] as const;
+
+/**
+ * Some UIs persist Cursor model + effort as a composite slug such as
+ * `gemini-3.7-flash-high`, while Cursor ACP expects the base model id plus a
+ * separate reasoning/effort config option. Only strip a trailing effort token
+ * when the full slug is not itself a valid ACP model id (see retry logic in
+ * `applyCursorAcpModelSelection`).
+ */
+export function parseCursorAcpModelEffortSuffix(model: string | null | undefined): {
+  readonly baseModel: string;
+  readonly reasoning?: string;
+} {
+  const withoutBracketTraits = resolveCursorAcpBaseModelId(model);
+  for (const suffix of CURSOR_MODEL_EFFORT_SUFFIXES) {
+    const token = `-${suffix}`;
+    if (withoutBracketTraits.endsWith(token) && withoutBracketTraits.length > token.length) {
+      return {
+        baseModel: withoutBracketTraits.slice(0, -token.length),
+        reasoning: suffix,
+      };
+    }
+  }
+  return { baseModel: withoutBracketTraits };
+}
+
+export function mergeCursorAcpReasoningSelection(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  reasoning: string | undefined,
+): ReadonlyArray<ProviderOptionSelection> | null | undefined {
+  if (!reasoning || getProviderOptionStringSelectionValue(selections, "reasoning")) {
+    return selections;
+  }
+  const merged = selections ? [...selections] : [];
+  merged.push({ id: "reasoning", value: reasoning });
+  return merged;
+}
+
 export function resolveCursorAcpConfigUpdates(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,

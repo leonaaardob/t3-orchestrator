@@ -2,12 +2,15 @@ import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/cont
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+  mergeCursorAcpReasoningSelection,
+  parseCursorAcpModelEffortSuffix,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
@@ -87,18 +90,32 @@ export function applyCursorAcpModelSelection<E>(input: {
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    yield* input.runtime.setModel(resolveCursorAcpBaseModelId(input.model)).pipe(
-      Effect.mapError((cause) =>
-        input.mapError({
-          cause,
-          step: "set-model",
-        }),
-      ),
-    );
+    const setModel = (modelId: string) =>
+      input.runtime.setModel(modelId).pipe(
+        Effect.mapError((cause) =>
+          input.mapError({
+            cause,
+            step: "set-model",
+          }),
+        ),
+      );
+
+    let resolvedSelections = input.selections;
+    const initialModelId = resolveCursorAcpBaseModelId(input.model);
+    const initialSet = yield* setModel(initialModelId).pipe(Effect.result);
+    if (Result.isFailure(initialSet)) {
+      const parsed = parseCursorAcpModelEffortSuffix(input.model);
+      if (parsed.reasoning && parsed.baseModel !== initialModelId && parsed.baseModel.length > 0) {
+        resolvedSelections = mergeCursorAcpReasoningSelection(input.selections, parsed.reasoning);
+        yield* setModel(parsed.baseModel);
+      } else {
+        return yield* Effect.fail(initialSet.failure);
+      }
+    }
 
     const configUpdates = resolveCursorAcpConfigUpdates(
       yield* input.runtime.getConfigOptions,
-      input.selections,
+      resolvedSelections,
     );
     for (const update of configUpdates) {
       yield* input.runtime.setConfigOption(update.configId, update.value).pipe(
