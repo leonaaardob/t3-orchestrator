@@ -57,6 +57,12 @@ Long agent sessions lose context. Plans drift, dependencies get forgotten, and w
 
 This fork adds a durable planning layer:
 
+<p align="center">
+  <img src="./docs/assets/project-supervisor-sidebar.png" alt="Sidebar showing a pinned Project Supervisor thread with Supervisor badge" width="340" />
+</p>
+
+<p align="center"><sub>Project Supervisor is a normal T3 thread — pinned and badged, not a separate runtime.</sub></p>
+
 - **Project Supervisor** — normal T3 thread (`Project Supervisor`) guided by [`AGENTS.md`](./AGENTS.md) and [`WORKFLOW.md`](./WORKFLOW.md)
 - **Agent Board** — `.t3/agent-board.json` as the visible proof ledger
 - **Scheduler** — claims `Ready` cards every 15s, even with the Planning UI closed

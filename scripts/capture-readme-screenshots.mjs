@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,15 +38,31 @@ await page.goto(`${baseUrl}/pair#token=${token}`, {
 });
 await page.waitForTimeout(2500);
 
+await page.waitForTimeout(2500);
+
 const createSupervisor = page.getByRole("button", {
   name: /Create Project Supervisor/i,
 });
 if (await createSupervisor.count()) {
   await createSupervisor.first().click();
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
 }
 
-await page.getByRole("button", { name: "Planning" }).first().click();
+const sidebar = page.locator("[data-sidebar=sidebar], aside").first();
+const sidebarBox = await sidebar.boundingBox();
+if (sidebarBox) {
+  await page.screenshot({
+    path: shot("project-supervisor-sidebar.png"),
+    clip: {
+      x: sidebarBox.x,
+      y: sidebarBox.y,
+      width: Math.min(sidebarBox.width + 4, 360),
+      height: Math.min(sidebarBox.height, 640),
+    },
+  });
+}
+
+await page.getByText("Planning", { exact: true }).click();
 await page.waitForTimeout(2200);
 
 const board = page.locator('[data-testid="agent-board-panel"], main').first();
@@ -64,11 +80,6 @@ if (heroClip) {
 } else {
   await page.screenshot({ path: shot("readme-hero-planning.png") });
 }
-
-await page.screenshot({
-  path: shot("readme-hero-sidebar.png"),
-  clip: { x: 0, y: 0, width: 320, height: 720 },
-});
 
 await page.goto(`${baseUrl}/settings/general`, { waitUntil: "networkidle" });
 await page.waitForTimeout(1500);
