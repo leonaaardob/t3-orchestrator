@@ -523,7 +523,7 @@ describe("parseCursorAboutOutput", () => {
         stdout: JSON.stringify({
           cliVersion: "2026.04.09-f2b0fcd",
           subscriptionTier: "Team",
-          userEmail: "jmarminge@gmail.com",
+          userEmail: "cursor@example.com",
         }),
         stderr: "",
       }),
@@ -532,7 +532,7 @@ describe("parseCursorAboutOutput", () => {
       status: "ready",
       auth: {
         status: "authenticated",
-        email: "jmarminge@gmail.com",
+        email: "cursor@example.com",
         type: "Team",
         label: "Cursor Team Subscription",
       },
