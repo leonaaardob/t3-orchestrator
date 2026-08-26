@@ -5,11 +5,18 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
+  DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import {
+  AgentExecutionAdvancedPreset,
+  AgentExecutionMode,
+  AgentExecutionPresets,
+  AgentExecutionSimplePreset,
+  ModelSelection,
+} from "./orchestration.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -616,6 +623,14 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const DEFAULT_AGENT_EXECUTION_PRESETS: AgentExecutionPresets = {
+  mode: "simple",
+  selection: {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: DEFAULT_MODEL,
+  },
+};
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -700,6 +715,9 @@ export const ServerSettings = Schema.Struct({
   // See providerInstance.ts for the forward/backward compatibility invariant.
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  agentExecutionPresets: AgentExecutionPresets.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
@@ -893,6 +911,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  agentExecutionPresets: Schema.optionalKey(AgentExecutionPresets),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

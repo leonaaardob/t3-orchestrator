@@ -26,9 +26,14 @@ import {
 } from "@t3tools/shared/agentBoardPrompt";
 import {
   MISSING_WORKER_CONFIG_ERROR,
-  resolveWorkerModelSelection,
+  REVIEW_INDEPENDENCE_ERROR,
+  resolveEffectiveAgentExecutionPresets,
+  resolveExecutionPresetForOperation,
+  resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
+import { DEFAULT_AGENT_EXECUTION_PRESETS } from "@t3tools/contracts/settings";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -285,22 +290,6 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         const projectOption = yield* input.collaborators.projectionSnapshotQuery
           .getActiveProjectByWorkspaceRoot(input.cwd)
           .pipe(Effect.catch(() => Effect.succeed(Option.none())));
-        const resolution = resolveWorkerModelSelection(
-          input.board,
-          Option.isSome(projectOption)
-            ? (projectOption.value.defaultModelSelection as unknown as
-                | import("@t3tools/contracts").ModelSelection
-                | null)
-            : null,
-        );
-        if (resolution._tag === "missing-config") {
-          return {
-            _tag: "error" as const,
-            error: MISSING_WORKER_CONFIG_ERROR,
-            needsDecision: true as const,
-            question: MISSING_WORKER_CONFIG_ERROR,
-          };
-        }
         if (Option.isNone(projectOption)) {
           const msg = `No active project matches the board workspace root: ${input.cwd}`;
           return {
@@ -311,6 +300,46 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           };
         }
         const project = projectOption.value;
+        const settingsOption = yield* Effect.serviceOption(ServerSettingsService);
+        const globalPresets = yield* Option.match(settingsOption, {
+          onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+          onSome: (svc) =>
+            svc.getSettings.pipe(
+              Effect.map((s) => s.agentExecutionPresets),
+              Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+            ),
+        });
+        const boardSelection = input.board.runner.workerModelSelection ?? null;
+        const projectDefault = (project as unknown as { defaultModelSelection?: unknown })
+          .defaultModelSelection as unknown as import("@t3tools/contracts").ModelSelection | null;
+        const projectPresets = (project as unknown as { agentExecutionPresets?: unknown })
+          .agentExecutionPresets as unknown as
+          | import("@t3tools/contracts").AgentExecutionPresets
+          | null
+          | undefined;
+        const resolution = resolveExecutionPresetForOperation({
+          globalPresets,
+          projectPresets,
+          projectDefault,
+          boardSelection,
+          operation: "review",
+        });
+        if (resolution._tag === "missing-config") {
+          return {
+            _tag: "error" as const,
+            error: MISSING_WORKER_CONFIG_ERROR,
+            needsDecision: true as const,
+            question: MISSING_WORKER_CONFIG_ERROR,
+          };
+        }
+        if (resolution._tag === "needs-decision") {
+          return {
+            _tag: "error" as const,
+            error: resolution.error,
+            needsDecision: true as const,
+            question: resolution.error,
+          };
+        }
         const worktreePath = projectScriptCwd({
           project: { cwd: input.cwd },
           worktreePath: input.card.runtime.workspacePath ?? `.t3/workspaces/${input.card.id}`,
@@ -390,14 +419,49 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
 
     const dispatchRepairTurn = Effect.fn("AgentBoardScheduler.dispatchRepairTurn")(
       function* (input: {
-        readonly orchestrationEngine: OrchestrationEngineService["Service"];
+        readonly collaborators: TickCollaborators;
         readonly cwd: string;
+        readonly board: AgentBoardFile;
         readonly card: AgentBoardCard;
         readonly reviewReason: string;
       }) {
         const runId = input.card.runtime.implementationRunId;
         if (runId === undefined) return null;
-        yield* input.orchestrationEngine.dispatch({
+        // Resolve repair preset (Global→Project) when available; otherwise
+        // reuse the implementation thread's existing model (no override).
+        let repairModelSelection: import("@t3tools/contracts").ModelSelection | undefined =
+          undefined;
+        const projectOptionForRepair = yield* input.collaborators.projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(input.cwd)
+          .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+        if (Option.isSome(projectOptionForRepair)) {
+          const projectForRepair = projectOptionForRepair.value;
+          const settingsOptionForRepair = yield* Effect.serviceOption(ServerSettingsService);
+          const globalForRepair = yield* Option.match(settingsOptionForRepair, {
+            onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+            onSome: (svc) =>
+              svc.getSettings.pipe(
+                Effect.map((s) => s.agentExecutionPresets),
+                Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+              ),
+          });
+          const effectiveForRepair = resolveEffectiveAgentExecutionPresets({
+            globalPresets: globalForRepair,
+            projectPresets: (projectForRepair as unknown as { agentExecutionPresets?: unknown })
+              .agentExecutionPresets as unknown as
+              | import("@t3tools/contracts").AgentExecutionPresets
+              | null
+              | undefined,
+            projectDefault: (projectForRepair as unknown as { defaultModelSelection?: unknown })
+              .defaultModelSelection as unknown as
+              | import("@t3tools/contracts").ModelSelection
+              | null,
+            boardSelection: input.board.runner.workerModelSelection ?? null,
+          });
+          const repairSelection = resolveModelSelectionForOperation(effectiveForRepair, "repair");
+          if (repairSelection) repairModelSelection = repairSelection;
+        }
+        yield* input.collaborators.orchestrationEngine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make(yield* nextUuid),
           threadId: ThreadId.make(runId),
@@ -407,6 +471,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             text: buildAgentBoardRepairPrompt(input.card, input.reviewReason),
             attachments: [],
           },
+          ...(repairModelSelection ? { modelSelection: repairModelSelection } : {}),
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           createdAt: yield* nowIso,
@@ -772,8 +837,9 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
               }).pipe(Effect.catch(() => Effect.void));
               const repairDispatched = yield* outcome(
                 dispatchRepairTurn({
-                  orchestrationEngine: input.collaborators.orchestrationEngine,
+                  collaborators: input.collaborators,
                   cwd,
+                  board,
                   card,
                   reviewReason: reason,
                 }),
@@ -891,8 +957,9 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
               }).pipe(Effect.catch(() => Effect.void));
               const repairDispatched = yield* outcome(
                 dispatchRepairTurn({
-                  orchestrationEngine: input.collaborators.orchestrationEngine,
+                  collaborators: input.collaborators,
                   cwd,
+                  board,
                   card,
                   reviewReason: parsed.reason,
                 }),
@@ -948,8 +1015,9 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           } else {
             const repairDispatched = yield* outcome(
               dispatchRepairTurn({
-                orchestrationEngine: input.collaborators.orchestrationEngine,
+                collaborators: input.collaborators,
                 cwd,
+                board,
                 card,
                 reviewReason: detail,
               }),
@@ -1006,8 +1074,9 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           } else {
             const repairDispatched = yield* outcome(
               dispatchRepairTurn({
-                orchestrationEngine: input.collaborators.orchestrationEngine,
+                collaborators: input.collaborators,
                 cwd,
+                board,
                 card,
                 reviewReason: detail,
               }),

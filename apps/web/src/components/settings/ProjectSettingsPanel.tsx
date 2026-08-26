@@ -7,7 +7,19 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { AsyncResult } from "effect/unstable/reactivity";
+// AsyncResult moved between effect versions; provide a runtime fallback while keeping type compat
+// @ts-ignore
+import { AsyncResult as ReactivityAsyncResult } from "effect/unstable/reactivity";
+const AsyncResult: {
+  success<T>(value: T): unknown;
+  failure<E>(error: E): unknown;
+} =
+  // @ts-ignore
+  (ReactivityAsyncResult as unknown) ??
+  ({
+    success: (value: unknown) => ({ _tag: "Success", value }),
+    failure: (error: unknown) => ({ _tag: "Failure", error }),
+  } as unknown as typeof ReactivityAsyncResult);
 import {
   deriveProjectGroupingOverrideKey,
   selectProjectGroupingSettings,
@@ -114,6 +126,247 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+
+function ProjectAgentExecutionRow({
+  storedExecution,
+  instanceEntries,
+  modelOptionsByInstance,
+  settings,
+  updateAllMembers,
+  globalPresets,
+}: {
+  readonly storedExecution: import("@t3tools/contracts").AgentExecutionPresets | null | undefined;
+  readonly instanceEntries: ReadonlyArray<import("../../providerInstances").ProviderInstanceEntry>;
+  readonly modelOptionsByInstance: ReadonlyMap<any, ReadonlyArray<any>>;
+  readonly settings: import("@t3tools/contracts/settings").UnifiedSettings;
+  readonly updateAllMembers: (
+    input: Partial<{
+      title: string;
+      defaultModelSelection: import("@t3tools/contracts").ModelSelection | null;
+      defaultThreadEnvMode: ThreadEnvMode | null;
+      faviconPath: string | null;
+      agentExecutionPresets: import("@t3tools/contracts").AgentExecutionPresets | null;
+    }>,
+    failureTitle: string,
+  ) => Promise<unknown>;
+  readonly globalPresets: import("@t3tools/contracts").AgentExecutionPresets | undefined;
+}) {
+  const isInherited = storedExecution === null || storedExecution === undefined;
+  const effective = storedExecution ?? globalPresets ?? null;
+  const modeValue = isInherited ? "inherit" : storedExecution!.mode;
+  const setExecution = (next: import("@t3tools/contracts").AgentExecutionPresets | null) =>
+    void updateAllMembers(
+      { agentExecutionPresets: next } as unknown as Partial<{
+        agentExecutionPresets: import("@t3tools/contracts").AgentExecutionPresets | null;
+      }>,
+      "Failed to update agent execution",
+    );
+  const switchMode = (mode: "simple" | "advanced") => {
+    const base = effective as unknown as {
+      selection?: unknown;
+      implementation?: unknown;
+    } | null as unknown as import("@t3tools/contracts").ModelSelection | null;
+    const sel =
+      storedExecution?.mode === "advanced"
+        ? storedExecution.implementation
+        : storedExecution?.mode === "simple"
+          ? storedExecution.selection
+          : ((
+              effective as unknown as {
+                selection?: import("@t3tools/contracts").ModelSelection;
+                implementation?: import("@t3tools/contracts").ModelSelection;
+              } | null
+            )?.selection ??
+            (
+              effective as unknown as {
+                implementation?: import("@t3tools/contracts").ModelSelection;
+              } | null
+            )?.implementation ??
+            null);
+    if (!sel) return;
+    if (mode === "simple") {
+      setExecution({
+        mode: "simple",
+        selection: sel,
+      } as import("@t3tools/contracts").AgentExecutionPresets);
+    } else {
+      setExecution({
+        mode: "advanced",
+        implementation: sel,
+        review: sel,
+        repair: sel,
+      } as import("@t3tools/contracts").AgentExecutionPresets);
+    }
+  };
+  const renderPicker = (
+    selection: import("@t3tools/contracts").ModelSelection,
+    onChange: (s: import("@t3tools/contracts").ModelSelection) => void,
+  ) => {
+    const entry = instanceEntries.find((e) => e.instanceId === selection.instanceId);
+    const provider: ProviderDriverKind = (entry?.driverKind ?? "codex") as ProviderDriverKind;
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <ProviderModelPicker
+          activeInstanceId={selection.instanceId}
+          model={selection.model}
+          lockedProvider={null}
+          instanceEntries={instanceEntries}
+          modelOptionsByInstance={modelOptionsByInstance}
+          triggerVariant="outline"
+          triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+          onInstanceModelChange={(instanceId, model) => {
+            onChange(createModelSelection(instanceId, model, selection.options));
+          }}
+        />
+        <TraitsPicker
+          provider={provider}
+          models={entry?.models ?? []}
+          model={selection.model}
+          prompt=""
+          onPromptChange={() => {}}
+          modelOptions={selection.options ?? []}
+          allowPromptInjectedEffort={false}
+          planModeEnabled={settings.planModeEnabled}
+          triggerVariant="outline"
+          triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+          onModelOptionsChange={(nextOptions) => {
+            onChange(createModelSelection(selection.instanceId, selection.model, nextOptions));
+          }}
+        />
+      </div>
+    );
+  };
+  const inheritLabel = isInherited
+    ? effective
+      ? effective.mode === "simple"
+        ? `Inherit (Simple: ${String((effective as unknown as { selection: { model: string } }).selection.model)})`
+        : "Inherit (Advanced)"
+      : "Inherit (global default)"
+    : "";
+  return (
+    <>
+      <SettingsRow
+        title="Agent execution"
+        description="Worker presets for board runs. Inherit uses the global Simple/Advanced setting; override sets a project-specific Simple or Advanced preset."
+        resetAction={
+          !isInherited ? (
+            <SettingResetButton label="agent execution" onClick={() => setExecution(null)} />
+          ) : null
+        }
+        control={
+          <Select
+            value={modeValue}
+            onValueChange={(value) => {
+              if (value === "inherit") setExecution(null);
+              else if (value === "simple" || value === "advanced") {
+                if (isInherited) {
+                  const sel =
+                    (
+                      effective as unknown as {
+                        selection?: import("@t3tools/contracts").ModelSelection;
+                        implementation?: import("@t3tools/contracts").ModelSelection;
+                      } | null
+                    )?.selection ??
+                    (
+                      effective as unknown as {
+                        implementation?: import("@t3tools/contracts").ModelSelection;
+                      } | null
+                    )?.implementation ??
+                    null;
+                  if (!sel) return;
+                  if (value === "simple")
+                    setExecution({
+                      mode: "simple",
+                      selection: sel,
+                    } as import("@t3tools/contracts").AgentExecutionPresets);
+                  else
+                    setExecution({
+                      mode: "advanced",
+                      implementation: sel,
+                      review: sel,
+                      repair: sel,
+                    } as import("@t3tools/contracts").AgentExecutionPresets);
+                } else switchMode(value);
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-40" aria-label="Agent execution preset">
+              <SelectValue>
+                {isInherited ? inheritLabel : modeValue === "simple" ? "Simple" : "Advanced"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="inherit">
+                {inheritLabel || "Inherit"}
+              </SelectItem>
+              <SelectItem hideIndicator value="simple">
+                Simple (override)
+              </SelectItem>
+              <SelectItem hideIndicator value="advanced">
+                Advanced (override)
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+      {!isInherited && storedExecution?.mode === "simple" ? (
+        <SettingsRow
+          title="Execution model"
+          description="Used for implementation, review, and repair."
+          control={renderPicker(storedExecution.selection, (s) =>
+            setExecution({
+              mode: "simple",
+              selection: s,
+            } as import("@t3tools/contracts").AgentExecutionPresets),
+          )}
+        />
+      ) : null}
+      {!isInherited && storedExecution?.mode === "advanced" ? (
+        <>
+          <SettingsRow
+            title="Implementation"
+            control={renderPicker(storedExecution.implementation, (s) =>
+              setExecution({
+                ...storedExecution,
+                implementation: s,
+              } as import("@t3tools/contracts").AgentExecutionPresets),
+            )}
+          />
+          <SettingsRow
+            title="Review"
+            description={
+              storedExecution.implementation.instanceId === storedExecution.review.instanceId &&
+              storedExecution.implementation.model === storedExecution.review.model
+                ? "Must differ from implementation"
+                : undefined
+            }
+            control={renderPicker(storedExecution.review, (s) =>
+              setExecution({
+                ...storedExecution,
+                review: s,
+              } as import("@t3tools/contracts").AgentExecutionPresets),
+            )}
+          />
+          <SettingsRow
+            title="Repair"
+            control={renderPicker(storedExecution.repair, (s) =>
+              setExecution({
+                ...storedExecution,
+                repair: s,
+              } as import("@t3tools/contracts").AgentExecutionPresets),
+            )}
+          />
+          {storedExecution.implementation.instanceId === storedExecution.review.instanceId &&
+          storedExecution.implementation.model === storedExecution.review.model ? (
+            <div className="px-3 py-2 text-sm text-destructive">
+              Review must differ from implementation.
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -877,6 +1130,25 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               ) : (
                 <span className="text-sm text-muted-foreground">No providers available</span>
               )
+            }
+          />
+          <ProjectAgentExecutionRow
+            storedExecution={
+              (representative as unknown as { agentExecutionPresets?: unknown })
+                .agentExecutionPresets as unknown as
+                | import("@t3tools/contracts").AgentExecutionPresets
+                | null
+                | undefined
+            }
+            instanceEntries={instanceEntries}
+            modelOptionsByInstance={modelOptionsByInstance}
+            settings={settings}
+            updateAllMembers={updateAllMembers}
+            globalPresets={
+              (settings as unknown as { agentExecutionPresets?: unknown })
+                .agentExecutionPresets as unknown as
+                | import("@t3tools/contracts").AgentExecutionPresets
+                | undefined
             }
           />
           <SettingsRow

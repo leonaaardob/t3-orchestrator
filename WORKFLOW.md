@@ -23,13 +23,18 @@ agent:
   review_agent: fresh
 provider:
   # Workers run through T3's provider-neutral runtime; no CLI or driver is
-  # pinned here. The machine-readable worker execution selection lives in the
-  # project board file under `runner.workerModelSelection` (`instanceId` +
-  # `model` + option entries such as reasoning effort), falling back to the
-  # project's `defaultModelSelection`. This front matter documents intent;
-  # .t3/agent-board.json is authoritative.
+  # pinned here. Execution presets (Global→Project) select the model per
+  # operation: Simple (one ModelSelection for impl/review/repair) or Advanced
+  # ({implementation, review, repair} each ModelSelection). Global default is
+  # `ServerSettings.agentExecutionPresets` (Simple: codex/gpt-5.6-sol); a
+  # project may override via `OrchestrationProject.agentExecutionPresets`
+  # (null = inherit). Legacy `runner.workerModelSelection` and
+  # `defaultModelSelection` still decode as synthetic Simple presets. Review
+  # independence is enforced: same instanceId+model for impl and review
+  # blocks review with Needs Decision. This front matter documents intent;
+  # .t3/agent-board.json is authoritative for the legacy board override.
   runtime: t3-provider-neutral
-  worker_model_selection_source: .t3/agent-board.json#runner.workerModelSelection
+  worker_model_selection_source: ServerSettings.agentExecutionPresets -> OrchestrationProject.agentExecutionPresets (inherit) -> legacy .t3/agent-board.json#runner.workerModelSelection
 ---
 
 # T3 Code Agent Board Workflow
@@ -125,6 +130,11 @@ orchestration is available and authorized. Worker agents receive bounded
 handoff packets and report back to the supervisor. The supervisor integrates
 the result, updates docs, verifies proof, and decides whether the card can move
 forward.
+
+The Supervisor is a normal T3 thread with title `Project Supervisor`, pinned
+via the existing `thread.pin` API and rendered with a `Supervisor` badge in the
+thread list (see `apps/web/src/lib/supervisorThread.ts`). No orchestration
+state is stored in `.t3/agent-board.json`.
 
 Direct supervisor edits are acceptable for low-risk docs, board maintenance,
 formatting, and tiny explicitly requested fixes. Any direct edit that changes

@@ -33,6 +33,7 @@ import {
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
+import { createModelSelection } from "@t3tools/shared/model";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -42,6 +43,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  CrownIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -108,7 +110,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readThreadShell, useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -121,7 +123,8 @@ import {
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
-import { cn } from "~/lib/utils";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "../types";
+import { cn, newThreadId } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
@@ -176,6 +179,7 @@ import {
 } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { isSupervisorThread, SUPERVISOR_THREAD_TITLE } from "../lib/supervisorThread";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
@@ -904,6 +908,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     }
                   : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const isSupervisor = isSupervisorThread(thread);
+  const supervisorBadge = isSupervisor ? (
+    <span
+      data-testid="supervisor-badge"
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-400/30 dark:bg-violet-400/15 dark:text-violet-300"
+      aria-label="Supervisor"
+    >
+      <CrownIcon className="size-2.5" />
+      Supervisor
+    </span>
+  ) : null;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -1276,6 +1291,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
             </span>
             {title}
+            {supervisorBadge}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1440,6 +1456,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {pinIndicator}
+              {supervisorBadge}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -1547,8 +1564,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {title}
+              {supervisorBadge}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1710,6 +1728,15 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {isSupervisorThread(thread) ? (
+            <span
+              data-testid="supervisor-badge"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-400/30 dark:bg-violet-400/15 dark:text-violet-300"
+            >
+              <CrownIcon className="size-2.5" />
+              Supervisor
+            </span>
+          ) : null}
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -2138,6 +2165,109 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
+  const hasSupervisorThread = useMemo(
+    () => searchableThreads.some((thread) => isSupervisorThread(thread)),
+    [searchableThreads],
+  );
+  const supervisorCreateProjectRef = useMemo(() => {
+    if (scopedProjectGroup) {
+      const first = scopedProjectGroup.memberProjects[0];
+      if (first) return scopeProjectRef(first.environmentId, first.id);
+    }
+    if (projectGroups.length > 0) {
+      const first = projectGroups[0]!.memberProjects[0];
+      if (first) return scopeProjectRef(first.environmentId, first.id);
+    }
+    const fallback = projects[0];
+    if (fallback) return scopeProjectRef(fallback.environmentId, fallback.id);
+    return null;
+  }, [projects, projectGroups, scopedProjectGroup]);
+  const createThreadCommand = useAtomCommand(threadEnvironment.create, {
+    reportFailure: false,
+  });
+  const handleCreateSupervisorThread = useCallback(() => {
+    if (!supervisorCreateProjectRef) {
+      toastManager.add({
+        type: "error",
+        title: "No project available",
+        description: "Create a project before adding a Supervisor thread.",
+      });
+      return;
+    }
+    const project = projects.find(
+      (candidate) =>
+        candidate.id === supervisorCreateProjectRef.projectId &&
+        candidate.environmentId === supervisorCreateProjectRef.environmentId,
+    );
+    let modelSelection = project?.defaultModelSelection ?? null;
+    if (!modelSelection) {
+      const envEntries = providerEntriesByEnvironment.get(supervisorCreateProjectRef.environmentId);
+      if (envEntries) {
+        for (const entry of envEntries.values()) {
+          if (entry.models.length > 0) {
+            modelSelection = createModelSelection(entry.instanceId, entry.models[0]!.slug);
+            break;
+          }
+        }
+      }
+    }
+    if (!modelSelection) {
+      toastManager.add({
+        type: "error",
+        title: "No provider configured",
+        description: "Configure a provider before creating a Supervisor thread.",
+      });
+      return;
+    }
+    const threadId = newThreadId();
+    void (async () => {
+      const result = await createThreadCommand({
+        environmentId: supervisorCreateProjectRef.environmentId,
+        input: {
+          threadId,
+          projectId: supervisorCreateProjectRef.projectId,
+          title: SUPERVISOR_THREAD_TITLE,
+          modelSelection,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to create Supervisor thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+      const pinResult = await pinThread(
+        scopeThreadRef(supervisorCreateProjectRef.environmentId, threadId),
+      );
+      if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
+        const error = squashAtomCommandFailure(pinResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Supervisor created, but pin failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    })();
+  }, [
+    createThreadCommand,
+    pinThread,
+    projects,
+    providerEntriesByEnvironment,
+    supervisorCreateProjectRef,
+  ]);
   const threadSearchResults = useMemo(
     () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
     [searchableThreads, threadSearchQuery],
@@ -2684,6 +2814,82 @@ export default function Sidebar() {
     },
     [unpinThread],
   );
+  const attemptMakeSupervisor = useCallback(
+    (threadRef: ScopedThreadRef, currentTitle: string) => {
+      void (async () => {
+        if (currentTitle.trim() !== SUPERVISOR_THREAD_TITLE) {
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, title: SUPERVISOR_THREAD_TITLE },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to make Supervisor",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+            return;
+          }
+        }
+        const shell = readThreadShell(threadRef);
+        if (shell?.pinnedAt == null) {
+          const pinResult = await pinThread(threadRef);
+          if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
+            const error = squashAtomCommandFailure(pinResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to pin Supervisor thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        }
+      })();
+    },
+    [pinThread, updateThreadMetadata],
+  );
+  const attemptRemoveSupervisor = useCallback(
+    (threadRef: ScopedThreadRef, currentTitle: string) => {
+      void (async () => {
+        const shell = readThreadShell(threadRef);
+        if (shell?.pinnedAt != null) {
+          const result = await unpinThread(threadRef);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to unpin Supervisor thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        }
+        if (currentTitle.trim() === SUPERVISOR_THREAD_TITLE) {
+          const nextTitle = "Thread";
+          const result = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, title: nextTitle },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to remove Supervisor",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        }
+      })();
+    },
+    [unpinThread, updateThreadMetadata],
+  );
 
   const handlePinnedDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -3085,6 +3291,7 @@ export default function Sidebar() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
+        const isSupervisor = isSupervisorThread(thread);
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
@@ -3098,6 +3305,7 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
+              isSupervisor,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
@@ -3155,6 +3363,12 @@ export default function Sidebar() {
             return;
           case "unpin":
             attemptUnpin(threadRef);
+            return;
+          case "make-supervisor":
+            attemptMakeSupervisor(threadRef, thread.title);
+            return;
+          case "remove-supervisor":
+            attemptRemoveSupervisor(threadRef, thread.title);
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
@@ -3263,7 +3477,9 @@ export default function Sidebar() {
     },
     [
       archiveThread,
+      attemptMakeSupervisor,
       attemptPin,
+      attemptRemoveSupervisor,
       attemptSettle,
       attemptSnooze,
       attemptUnpin,
@@ -3835,6 +4051,22 @@ export default function Sidebar() {
                       </li>
                     ) : null,
                   ];
+                  if (!hasSupervisorThread && !isSearchingThreads) {
+                    items.push(
+                      <li key="supervisor-create" className="list-none px-1 py-1">
+                        <button
+                          type="button"
+                          data-testid="create-supervisor-thread"
+                          onClick={handleCreateSupervisorThread}
+                          className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 px-2.5 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-500/60 hover:bg-violet-500/10 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300 dark:hover:border-violet-400/50"
+                        >
+                          <CrownIcon className="size-3.5 shrink-0" />
+                          <span className="flex-1 truncate">Create Project Supervisor</span>
+                          <PlusIcon className="size-3 shrink-0 opacity-60" />
+                        </button>
+                      </li>,
+                    );
+                  }
                   if (pinnedThreads.length > 0) {
                     items.push(
                       <li

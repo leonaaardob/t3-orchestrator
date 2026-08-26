@@ -9,6 +9,9 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import { SUPERVISOR_THREAD_TITLE, isSupervisorThread } from "../lib/supervisorThread";
+
+export { SUPERVISOR_THREAD_TITLE, isSupervisorThread };
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";

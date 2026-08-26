@@ -15,6 +15,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "make-supervisor"
+  | "remove-supervisor"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -34,6 +36,7 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  readonly isSupervisor: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -91,6 +94,21 @@ export function buildThreadActionMenuItems(
                   id: `snooze:${preset.id}` as const,
                   label: `${preset.label} (${preset.whenLabel})`,
                 })),
+              },
+        ]
+      : []),
+    ...(state.supports.pinning
+      ? [
+          state.isSupervisor
+            ? {
+                id: "remove-supervisor" as const,
+                label: "Remove Supervisor",
+                icon: "star-off",
+              }
+            : {
+                id: "make-supervisor" as const,
+                label: "Make Supervisor",
+                icon: "star",
               },
         ]
       : []),

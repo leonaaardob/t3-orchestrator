@@ -16,8 +16,12 @@ import {
 } from "@t3tools/shared/agentBoardPrompt";
 import {
   MISSING_WORKER_CONFIG_ERROR,
-  resolveWorkerModelSelection,
+  resolveEffectiveAgentExecutionPresets,
+  resolveExecutionPresetForOperation,
+  resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
+import { DEFAULT_AGENT_EXECUTION_PRESETS } from "@t3tools/contracts/settings";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
 import {
@@ -147,16 +151,6 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         .getActiveProjectByWorkspaceRoot(projectRoot)
         .pipe(Effect.mapError((cause) => toError("project.lookup", cause)));
 
-      // Worker execution is centrally configured, never composer-first: the
-      // board's runner override wins, then the project default. Missing config
-      // blocks the card before any thread exists.
-      const resolution = resolveWorkerModelSelection(
-        claimed.board,
-        Option.isSome(projectOption) ? projectOption.value.defaultModelSelection : null,
-      );
-      if (resolution._tag === "missing-config") {
-        return yield* blockAndFail("workerModelSelection.resolve", MISSING_WORKER_CONFIG_ERROR);
-      }
       if (Option.isNone(projectOption)) {
         return yield* blockAndFail(
           "project.lookup",
@@ -164,6 +158,39 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         );
       }
       const project = projectOption.value;
+      // Worker execution via Global→Project presets (new) with legacy board /
+      // project-default fallbacks. Missing config blocks the card before any
+      // thread exists.
+      const settingsOption = yield* Effect.serviceOption(ServerSettingsService);
+      const globalPresets = yield* Option.match(settingsOption, {
+        onNone: () => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS),
+        onSome: (svc) =>
+          svc.getSettings.pipe(
+            Effect.map((s) => s.agentExecutionPresets),
+            Effect.catch(() => Effect.succeed(DEFAULT_AGENT_EXECUTION_PRESETS)),
+          ),
+      });
+      const boardSelection = claimed.board.runner.workerModelSelection ?? null;
+      const projectDefault = (project as unknown as { defaultModelSelection?: unknown })
+        .defaultModelSelection as unknown as import("@t3tools/contracts").ModelSelection | null;
+      const projectPresets = (project as unknown as { agentExecutionPresets?: unknown })
+        .agentExecutionPresets as unknown as
+        | import("@t3tools/contracts").AgentExecutionPresets
+        | null
+        | undefined;
+      const resolution = resolveExecutionPresetForOperation({
+        globalPresets,
+        projectPresets,
+        projectDefault,
+        boardSelection,
+        operation: "implementation",
+      });
+      if (resolution._tag === "missing-config") {
+        return yield* blockAndFail("workerModelSelection.resolve", MISSING_WORKER_CONFIG_ERROR);
+      }
+      if (resolution._tag === "needs-decision") {
+        return yield* blockAndFail("workerModelSelection.resolve", resolution.error);
+      }
 
       // 3. Card worktree: a REAL git worktree at
       // <projectRoot>/.t3/workspaces/<safe-card-id> on branch board/<card-id>,

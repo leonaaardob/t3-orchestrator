@@ -45,6 +45,21 @@ The current patch attaches to upstream T3 Code through these areas:
 
 ### Contracts (`packages/contracts`)
 
+- `src/orchestration.ts`
+  - `AgentExecutionMode` / `AgentExecutionSimplePreset` /
+    `AgentExecutionAdvancedPreset` / `AgentExecutionPresets` union (Simple:
+    one ModelSelection, Advanced: {implementation, review, repair}). Project
+    execution override `OrchestrationProject.agentExecutionPresets` and shell
+    `OrchestrationProjectShell.agentExecutionPresets` (NullOr with decoding
+    default null = inherit global). Commands/payloads
+    `ProjectCreateCommand` / `ProjectMetaUpdateCommand` /
+    `ProjectCreatedPayload` / `ProjectMetaUpdatedPayload` carry the optional
+    override. Back-compat: old projects without the field still decode.
+- `src/settings.ts`
+  - `AgentExecutionPresets` re-exported from orchestration plus
+    `DEFAULT_AGENT_EXECUTION_PRESETS` (Simple: codex/gpt-5.6-sol) and
+    `ServerSettings.agentExecutionPresets` with decoding default. Patch
+    `ServerSettingsPatch.agentExecutionPresets` for whole-preset replacement.
 - `src/agentBoard.ts`
   - Shared board schema, card states, runtime metadata, graph links, claim
     contract types, the `AgentBoardRunInput`/`AgentBoardRunResult` launch
@@ -52,7 +67,9 @@ The current patch attaches to upstream T3 Code through these areas:
     absolute card `workspacePath`), and the `AgentBoardFileError` RPC error.
     Runner settings carry an optional `workerModelSelection`
     (`ModelSelection` imported from `./orchestration.ts`) — the
-    project-central worker execution config for board card runs.
+    project-central worker execution config for board card runs (deprecated;
+    new code reads Global→Project presets but the field still decodes for
+    back-compat).
 - `src/agentBoard.test.ts`
   - Contract coverage for the board file shape plus the run input/result
     schemas (runner: `vite-plus/test`).
@@ -92,10 +109,17 @@ The current patch attaches to upstream T3 Code through these areas:
 .dispatch(thread.create)` with the resolved model selection and
     `runtimeMode: "full-access"` -> `dispatch(thread.turn.start)` with the
     shared prompt -> persist `runtime.implementationRunId` + heartbeat.
-    Model selection resolves through `@t3tools/shared/agentBoardRunner`
-    (board override -> project default) BEFORE any thread is created; every
-    failure path marks the card `Blocked` with `runtime.currentError`, and a
-    failed turn start deletes the created thread. Tested headless with fake
+    Model selection resolves via Global→Project presets
+    (`ServerSettings.agentExecutionPresets` →
+    `OrchestrationProject.agentExecutionPresets`, legacy
+    `defaultModelSelection` / `runner.workerModelSelection` as synthetic
+    Simple) through `@t3tools/shared/agentBoardRunner`
+    (`resolveEffectiveAgentExecutionPresets`,
+    `resolveExecutionPresetForOperation`) BEFORE any thread is created;
+    every failure path marks the card `Blocked` with
+    `runtime.currentError`, and a failed turn start deletes the created
+    thread. Review independence is not checked for implementation; repair
+    passes `repair` preset when Advanced. Tested headless with fake
     engine/git layers in `Layers/AgentBoardRunner.test.ts`.
 - `src/agentBoard/Services/AgentBoardScheduler.ts` +
   `src/agentBoard/Layers/AgentBoardScheduler.ts`
@@ -108,7 +132,10 @@ The current patch attaches to upstream T3 Code through these areas:
     and interrupts cards moved out of `Running`/`Reviewing`/`Diagnosing`.
     Review handoff is `Running` completed → `Reviewing` with a fresh review
     thread (same worktree, new thread via `buildAgentBoardReviewPrompt` +
-    `resolveWorkerModelSelection`); `Reviewing` polls `getThreadShellById` +
+    `resolveEffectiveAgentExecutionPresets` /
+    `resolveExecutionPresetForOperation` (Global→Project + legacy fallback,
+    review `needs-decision` on same instanceId+model); `Reviewing` polls
+    `getThreadShellById` +
     `getThreadDetailById` and parses `REVIEW: PASS`/`REVIEW: FAIL`/
     `NEEDS_DECISION:` via `parseAgentBoardReviewResult`; `FAIL` routine →
     `Diagnosing` → repair turn on the implementation thread
@@ -153,12 +180,33 @@ The current patch attaches to upstream T3 Code through these areas:
     — claim + worktree + thread launch happen server-side in one call, and the
     returned board is rendered directly.
   - Slice 7 (2026-08-25): `AgentBoardLocalView` `graph` → `execution-path` (contract `AgentBoardView: kanban|table|execution-path`, `AgentBoardFile.defaultView`) with back-compat mapping for legacy `?view=graph`; view state ↔ `board.defaultView` persistence via existing `agentBoardEnvironment.save` (persisted as `kanban` for the `expanded` presentation variant) plus `?view=kanban|table|execution-path|expanded` URL sync (`history.replaceState` + `popstate`); dead canvas guard `graphModel.width < 0` removed so the pan/zoom/grid canvas (`L625-656`, `L1005-1085`, `L948`, `0.5–1.8`) is the interactive Execution-path view alongside the dependency tree; expanded mode is a Kanban-only `?view=expanded` CSS variant (`260px → 320px`, full-bleed) toggled by an Expand/Exit button — no new component, no new RPC, monolith kept under 500 lines/view.
+- `src/lib/supervisorThread.ts`
+  - `SUPERVISOR_THREAD_TITLE = "Project Supervisor"` and `isSupervisorThread` helper — pure title check, no board state.
+- `src/components/Sidebar.logic.ts`
+  - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
+- `src/components/Sidebar.tsx`
+  - Supervisor badge (violet `Crown` pill, `data-testid="supervisor-badge"`) in card, slim, and search rows; pin indicator retained. Context menu wires `Make Supervisor` / `Remove Supervisor` (rename to title + pin/unpin via existing `thread.pin` / `thread.meta.update` APIs). Placeholder `Create Project Supervisor` dashed button when no supervisor thread exists for the current scope (creates normal thread with `Project Supervisor` title and pins it at top via `pinOrderKeyBetween`).
 - `src/components/ChatView.tsx`
   - Planning tab strip + persisted `Break` safety control. Board runs no
     longer launch from the client: the previous
     `onRunClaimedAgentBoardCard` callback and its provider-metadata prompt
     block were deleted when launching moved into the server-side runner
     service.
+- `src/components/chat/ChatHeader.tsx`
+  - Shows Supervisor badge next to title when `title === "Project Supervisor"`.
+- `src/components/threadActionMenu.logic.ts` + `src/hooks/useThreadActionMenu.ts`
+  - Added `make-supervisor` / `remove-supervisor` menu items (`isSupervisor` state) dispatching through existing pin + metadata commands.
+- `src/components/AgentBoardPanel.tsx`
+  - Supervisor affordance banner (violet accent) — shows whether the current project's Supervisor thread exists; `Create Supervisor` button creates a normal thread with `SUPERVISOR_THREAD_TITLE` and pins it via existing commands. No board file state.
+- `src/components/settings/SettingsPanels.tsx`
+  - Global Agent Execution section: Simple (single `ProviderModelPicker` + `TraitsPicker`) vs Advanced (three pickers for implementation / review / repair) over `ServerSettings.agentExecutionPresets`; mode `Select` with validation that review must differ from implementation; reset to `DEFAULT_AGENT_EXECUTION_PRESETS`.
+- `src/components/settings/ProjectSettingsPanel.tsx`
+  - Project Agent Execution row: inherit (null) vs override (Simple/Advanced) over `OrchestrationProject.agentExecutionPresets` via `projectEnvironment.update`; shows inherited effective label; same pickers and same-model validation.
+
+### Client runtime (`packages/client-runtime`)
+
+- `src/state/supervisorThread.ts`
+  - Mirror of `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for non-web consumers (mobile shares the same title rule via `packages/shared` or web lib).
 
 ### Shared (`packages/shared`) — planning-fork modules
 
@@ -166,6 +214,15 @@ The current patch attaches to upstream T3 Code through these areas:
   - Worker execution resolver (`resolveWorkerModelSelection`: board runner
     override -> project default -> typed missing-config) plus the shared
     missing-config error text; unit-tested in `src/agentBoardRunner.test.ts`.
+    Extended for presets: `AgentExecutionOperation`,
+    `resolveEffectiveAgentExecutionPresets` (Global→Project + legacy board /
+    project-default fallback), `resolveModelSelectionForOperation` /
+    `resolveImplementationModelSelection` /
+    `resolveReviewModelSelection` / `resolveRepairModelSelection`,
+    `isSameModelSelection` / `isReviewIndependent` /
+    `REVIEW_INDEPENDENCE_ERROR`, and `resolveExecutionPresetForOperation`
+    (operation-aware + Needs Decision on same impl/review). Keeps legacy
+    `resolveWorkerModelSelection` for back-compat decode.
     Consumed by both the server runner service and the web Planning UI picker.
 - `src/agentBoardPrompt.ts` (subpath export
   `@t3tools/shared/agentBoardPrompt`)

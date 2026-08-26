@@ -848,6 +848,59 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }),
   );
 
+  it.effect("preserves agentExecutionPresets in getActiveProjectByWorkspaceRoot", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+
+      const presetsJson = JSON.stringify({
+        mode: "advanced",
+        implementation: { instanceId: "cursor", model: "composer-2.5" },
+        review: { instanceId: "cursor", model: "gemini-3.7-flash-high" },
+        repair: { instanceId: "cursor", model: "composer-2.5" },
+      });
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          agent_execution_presets_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-presets',
+          'Presets Project',
+          '/tmp/presets-workspace',
+          '{"instanceId":"codex","model":"gpt-5.6-sol"}',
+          ${presetsJson},
+          '[]',
+          '2026-03-01T00:00:00.000Z',
+          '2026-03-01T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      const project =
+        yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/presets-workspace");
+      assert.equal(project._tag, "Some");
+      if (project._tag === "Some") {
+        assert.deepEqual(project.value.agentExecutionPresets, {
+          mode: "advanced",
+          implementation: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+          review: { instanceId: ProviderInstanceId.make("cursor"), model: "gemini-3.7-flash-high" },
+          repair: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+        });
+      }
+    }),
+  );
+
   it.effect("reads single-thread checkpoint context without hydrating unrelated threads", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

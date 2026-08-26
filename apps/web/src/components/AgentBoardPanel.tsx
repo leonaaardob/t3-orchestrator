@@ -41,18 +41,26 @@ import {
 } from "lucide-react";
 import { Schema } from "effect";
 
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  squashAtomCommandFailure,
+  isAtomCommandInterrupted,
+} from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   MISSING_WORKER_CONFIG_ERROR,
   resolveWorkerModelSelection,
 } from "@t3tools/shared/agentBoardRunner";
+import { SUPERVISOR_THREAD_TITLE, isSupervisorThread } from "../lib/supervisorThread";
 import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { projectEnvironment } from "~/state/projects";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useProjects, useThreadShells } from "~/state/entities";
+import { threadEnvironment } from "~/state/threads";
+import { newThreadId } from "~/lib/utils";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "~/types";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -1373,6 +1381,110 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     [board, saveBoard],
   );
 
+  // ----- Supervisor thread (normal thread, pinned + badge) -----
+  const boardProjects = useProjects();
+  const boardThreadShells = useThreadShells();
+  const supervisorProject = useMemo(() => {
+    if (!workspaceRoot) return null;
+    return (
+      boardProjects.find(
+        (candidate) =>
+          candidate.environmentId === environmentId && candidate.workspaceRoot === workspaceRoot,
+      ) ?? null
+    );
+  }, [boardProjects, environmentId, workspaceRoot]);
+  const hasSupervisorForProject = useMemo(() => {
+    if (!supervisorProject) return false;
+    return boardThreadShells.some(
+      (shell) =>
+        shell.environmentId === environmentId &&
+        shell.projectId === supervisorProject.id &&
+        isSupervisorThread(shell),
+    );
+  }, [boardThreadShells, environmentId, supervisorProject]);
+  const createSupervisorThreadForBoard = useAtomCommand(threadEnvironment.create, {
+    reportFailure: false,
+  });
+  const pinSupervisorThreadForBoard = useAtomCommand(threadEnvironment.pin, {
+    reportFailure: false,
+  });
+  const handleCreateSupervisorThreadForBoard = useCallback(() => {
+    if (!supervisorProject) {
+      toastManager.add({
+        type: "error",
+        title: "No project found",
+        description: "Open a project before creating a Supervisor thread.",
+      });
+      return;
+    }
+    let modelSelection = supervisorProject.defaultModelSelection ?? null;
+    if (!modelSelection) {
+      for (const entry of instanceEntries) {
+        if (entry.models.length > 0) {
+          modelSelection = createModelSelection(entry.instanceId, entry.models[0]!.slug);
+          break;
+        }
+      }
+    }
+    if (!modelSelection) {
+      toastManager.add({
+        type: "error",
+        title: "No provider configured",
+        description: "Configure a provider before creating a Supervisor thread.",
+      });
+      return;
+    }
+    const threadId = newThreadId();
+    void (async () => {
+      const result = await createSupervisorThreadForBoard({
+        environmentId,
+        input: {
+          threadId,
+          projectId: supervisorProject.id,
+          title: SUPERVISOR_THREAD_TITLE,
+          modelSelection,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to create Supervisor thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+      const pinResult = await pinSupervisorThreadForBoard({
+        environmentId,
+        input: { threadId },
+      });
+      if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
+        const error = squashAtomCommandFailure(pinResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Supervisor created, but pin failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    })();
+  }, [
+    createSupervisorThreadForBoard,
+    environmentId,
+    instanceEntries,
+    pinSupervisorThreadForBoard,
+    supervisorProject,
+  ]);
+
   const addDraftCard = useCallback(() => {
     if (!board) return;
     const title = draftTitle.trim();
@@ -2046,7 +2158,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           <Button
             size="icon-xs"
             variant="ghost"
-            onClick={loadBoard}
+            onClick={() => loadBoard()}
             disabled={loading || !workspaceRoot}
             aria-label="Refresh board"
             className="text-muted-foreground/50 hover:text-foreground/70"
@@ -2133,6 +2245,35 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           </span>
         )}
       </div>
+
+      {/* Supervisor thread affordance — a normal pinned thread, just easy to find. */}
+      {supervisorProject ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-violet-500/[0.04] px-3 py-2">
+          <Badge
+            variant="outline"
+            className="shrink-0 rounded-full border-violet-500/30 bg-violet-500/15 px-1.5 py-0 text-[10px] font-medium text-violet-700 dark:border-violet-400/30 dark:text-violet-300"
+          >
+            Supervisor
+          </Badge>
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70">
+            {hasSupervisorForProject
+              ? "Project Supervisor thread is pinned at the top of the list."
+              : "No Supervisor thread yet for this project."}
+          </span>
+          {!hasSupervisorForProject ? (
+            <Button
+              size="xs"
+              variant="outline"
+              className="h-6 shrink-0 px-2 text-[11px]"
+              disabled={!workspaceRoot || saving}
+              onClick={handleCreateSupervisorThreadForBoard}
+            >
+              <PlusIcon className="size-3" />
+              Create Supervisor
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className={cn("shrink-0 border-b border-border/50 p-3", mode === "page" && "hidden")}>
         <div className="flex gap-2">

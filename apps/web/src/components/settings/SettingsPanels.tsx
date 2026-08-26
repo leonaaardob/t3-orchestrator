@@ -995,6 +995,187 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
+function AgentExecutionGlobalSection() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const presets = (settings as unknown as { agentExecutionPresets?: unknown })
+    .agentExecutionPresets as import("@t3tools/contracts").AgentExecutionPresets | undefined;
+  const effective = presets ?? DEFAULT_UNIFIED_SETTINGS.agentExecutionPresets;
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+      ),
+    [serverProviders, settings],
+  );
+  const modelOptionsByInstance = useMemo(
+    () => getCustomModelOptionsByInstance(settings, serverProviders),
+    [serverProviders, settings],
+  );
+  const isDirty = !Equal.equals(
+    settings.agentExecutionPresets ?? null,
+    DEFAULT_UNIFIED_SETTINGS.agentExecutionPresets ?? null,
+  );
+  const setSimpleSelection = useCallback(
+    (selection: import("@t3tools/contracts").ModelSelection) => {
+      updateSettings({
+        agentExecutionPresets: { mode: "simple", selection },
+      } as unknown as Record<string, unknown>);
+    },
+    [updateSettings],
+  );
+  const setAdvanced = useCallback(
+    (
+      field: "implementation" | "review" | "repair",
+      selection: import("@t3tools/contracts").ModelSelection,
+    ) => {
+      if (effective.mode !== "advanced") return;
+      updateSettings({
+        agentExecutionPresets: { ...effective, [field]: selection },
+      } as unknown as Record<string, unknown>);
+    },
+    [effective, updateSettings],
+  );
+  const switchMode = useCallback(
+    (mode: "simple" | "advanced") => {
+      if (mode === effective.mode) return;
+      if (mode === "simple") {
+        const sel = effective.mode === "advanced" ? effective.implementation : effective.selection;
+        updateSettings({
+          agentExecutionPresets: { mode: "simple", selection: sel },
+        } as unknown as Record<string, unknown>);
+      } else {
+        const sel = effective.mode === "simple" ? effective.selection : effective.implementation;
+        updateSettings({
+          agentExecutionPresets: {
+            mode: "advanced",
+            implementation: sel,
+            review: sel,
+            repair: sel,
+          },
+        } as unknown as Record<string, unknown>);
+      }
+    },
+    [effective, updateSettings],
+  );
+  const renderPicker = (
+    selection: import("@t3tools/contracts").ModelSelection,
+    onChange: (s: import("@t3tools/contracts").ModelSelection) => void,
+  ) => {
+    const entry = instanceEntries.find((e) => e.instanceId === selection.instanceId);
+    const provider: ProviderDriverKind = (entry?.driverKind ?? "codex") as ProviderDriverKind;
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <ProviderModelPicker
+          activeInstanceId={selection.instanceId}
+          model={selection.model}
+          lockedProvider={null}
+          instanceEntries={instanceEntries}
+          modelOptionsByInstance={modelOptionsByInstance}
+          triggerVariant="outline"
+          triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+          onInstanceModelChange={(instanceId, model) => {
+            onChange(createModelSelection(instanceId, model, selection.options));
+          }}
+        />
+        <TraitsPicker
+          provider={provider}
+          models={entry?.models ?? []}
+          model={selection.model}
+          prompt=""
+          onPromptChange={() => {}}
+          modelOptions={selection.options ?? []}
+          allowPromptInjectedEffort={false}
+          planModeEnabled={settings.planModeEnabled}
+          triggerVariant="outline"
+          triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+          onModelOptionsChange={(nextOptions) => {
+            onChange(createModelSelection(selection.instanceId, selection.model, nextOptions));
+          }}
+        />
+      </div>
+    );
+  };
+  const sameImplReview =
+    effective.mode === "advanced" &&
+    effective.implementation.instanceId === effective.review.instanceId &&
+    effective.implementation.model === effective.review.model;
+  return (
+    <>
+      <SettingsRow
+        title="Mode"
+        description="Simple uses one model for implementation, review, and repair. Advanced uses three distinct models; review must differ from implementation."
+        resetAction={
+          isDirty ? (
+            <SettingResetButton
+              label="agent execution"
+              onClick={() =>
+                updateSettings({
+                  agentExecutionPresets: DEFAULT_UNIFIED_SETTINGS.agentExecutionPresets,
+                } as unknown as Record<string, unknown>)
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={effective.mode}
+            onValueChange={(v) => {
+              if (v === "simple" || v === "advanced") switchMode(v);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-32" aria-label="Agent execution mode">
+              <SelectValue>{effective.mode === "simple" ? "Simple" : "Advanced"}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="simple">
+                Simple
+              </SelectItem>
+              <SelectItem hideIndicator value="advanced">
+                Advanced
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+      {effective.mode === "simple" ? (
+        <SettingsRow
+          title="Worker model"
+          description="Used for implementation, review, and repair."
+          control={renderPicker(effective.selection, setSimpleSelection)}
+        />
+      ) : (
+        <>
+          <SettingsRow
+            title="Implementation"
+            description="Runs the implementation agent."
+            control={renderPicker(effective.implementation, (s) =>
+              setAdvanced("implementation", s),
+            )}
+          />
+          <SettingsRow
+            title="Review"
+            description="Fresh review agent; must differ from implementation."
+            control={renderPicker(effective.review, (s) => setAdvanced("review", s))}
+          />
+          <SettingsRow
+            title="Repair"
+            description="Repair turn on the implementation thread."
+            control={renderPicker(effective.repair, (s) => setAdvanced("repair", s))}
+          />
+          {sameImplReview ? (
+            <div className="px-3 py-2 text-sm text-destructive">
+              Review model must differ from implementation model (same instanceId and model). Change
+              one of them.
+            </div>
+          ) : null}
+        </>
+      )}
+    </>
+  );
+}
+
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -2589,6 +2770,14 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
+      </SettingsSection>
+
+      <SettingsSection title="Agent execution">
+        <SettingsRow
+          title="Agent execution presets"
+          description="Simple uses one model for all ops; Advanced uses distinct implementation, review, repair. Global default is inherited by projects unless overridden."
+        />
+        <AgentExecutionGlobalSection />
       </SettingsSection>
 
       <SettingsSection title="About">

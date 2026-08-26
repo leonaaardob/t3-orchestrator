@@ -117,6 +117,29 @@ export const ModelSelection = ModelSelectionSource.pipe(
 );
 export type ModelSelection = typeof ModelSelection.Type;
 
+export const AgentExecutionMode = Schema.Literals(["simple", "advanced"]);
+export type AgentExecutionMode = typeof AgentExecutionMode.Type;
+
+export const AgentExecutionSimplePreset = Schema.Struct({
+  mode: Schema.Literal("simple"),
+  selection: ModelSelection,
+});
+export type AgentExecutionSimplePreset = typeof AgentExecutionSimplePreset.Type;
+
+export const AgentExecutionAdvancedPreset = Schema.Struct({
+  mode: Schema.Literal("advanced"),
+  implementation: ModelSelection,
+  review: ModelSelection,
+  repair: ModelSelection,
+});
+export type AgentExecutionAdvancedPreset = typeof AgentExecutionAdvancedPreset.Type;
+
+export const AgentExecutionPresets = Schema.Union([
+  AgentExecutionSimplePreset,
+  AgentExecutionAdvancedPreset,
+]);
+export type AgentExecutionPresets = typeof AgentExecutionPresets.Type;
+
 export const RuntimeMode = Schema.Literals([
   "approval-required",
   "auto-accept-edits",
@@ -249,6 +272,11 @@ export const OrchestrationProject = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  // Execution presets override (Global→Project). Null/absent = inherit global.
+  // Optional so old project snapshots still decode.
+  agentExecutionPresets: Schema.optional(
+    Schema.NullOr(AgentExecutionPresets).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  ),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -457,6 +485,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  agentExecutionPresets: Schema.optional(
+    Schema.NullOr(AgentExecutionPresets).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  ),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
@@ -663,6 +694,7 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  agentExecutionPresets: Schema.optional(Schema.NullOr(AgentExecutionPresets)),
   createdAt: IsoDateTime,
 });
 
@@ -673,6 +705,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  agentExecutionPresets: Schema.optional(Schema.NullOr(AgentExecutionPresets)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
@@ -1121,6 +1154,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  agentExecutionPresets: Schema.optional(Schema.NullOr(AgentExecutionPresets)),
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.Array(ProjectScript),
@@ -1134,6 +1168,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  agentExecutionPresets: Schema.optional(Schema.NullOr(AgentExecutionPresets)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),

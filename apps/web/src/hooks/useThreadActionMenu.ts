@@ -19,6 +19,7 @@ import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import { SUPERVISOR_THREAD_TITLE, isSupervisorThread } from "../lib/supervisorThread";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -142,6 +143,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          isSupervisor: isSupervisorThread(thread),
           supports,
           snoozePresets,
         });
@@ -218,6 +220,45 @@ export function useThreadActionMenu(input: {
           case "unpin":
             await reportFailure("Failed to unpin thread", () => unpinThread(threadRef));
             return;
+          case "make-supervisor": {
+            const threadShell = readThreadShell(threadRef);
+            if (!threadShell) return;
+            if (threadShell.title.trim() !== SUPERVISOR_THREAD_TITLE) {
+              const renamed = await updateThreadMetadata({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId, title: SUPERVISOR_THREAD_TITLE },
+              });
+              if (renamed._tag === "Failure" && !isAtomCommandInterrupted(renamed)) {
+                failureToast("Failed to make Supervisor", squashAtomCommandFailure(renamed));
+                return;
+              }
+            }
+            if (threadShell.pinnedAt == null) {
+              await reportFailure("Failed to pin Supervisor thread", () => pinThread(threadRef));
+            }
+            return;
+          }
+          case "remove-supervisor": {
+            const threadShell = readThreadShell(threadRef);
+            if (threadShell?.pinnedAt != null) {
+              const unpinned = await unpinThread(threadRef);
+              if (unpinned._tag === "Failure" && !isAtomCommandInterrupted(unpinned)) {
+                failureToast(
+                  "Failed to unpin Supervisor thread",
+                  squashAtomCommandFailure(unpinned),
+                );
+              }
+            }
+            if (threadShell && threadShell.title.trim() === SUPERVISOR_THREAD_TITLE) {
+              await reportFailure("Failed to remove Supervisor", () =>
+                updateThreadMetadata({
+                  environmentId: threadRef.environmentId,
+                  input: { threadId: threadRef.threadId, title: "Thread" },
+                }),
+              );
+            }
+            return;
+          }
           case "rename":
             onStartRename();
             return;
