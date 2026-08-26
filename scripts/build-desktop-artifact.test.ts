@@ -182,25 +182,41 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
   });
 
-  it.effect("resolves GitHub desktop publish config from Effect config", () =>
+  it.effect("defaults GitHub desktop publish config to the fork update repository", () =>
+    Effect.gen(function* () {
+      const latestConfig = yield* resolveGitHubPublishConfig("latest").pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+      const nightlyConfig = yield* resolveGitHubPublishConfig("nightly").pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      assert.deepStrictEqual(latestConfig, {
+        provider: "github",
+        owner: "leonaaardob",
+        repo: "t3code-planning-fork",
+        releaseType: "release",
+      });
+      assert.deepStrictEqual(nightlyConfig, {
+        provider: "github",
+        owner: "leonaaardob",
+        repo: "t3code-planning-fork",
+        releaseType: "prerelease",
+        channel: "nightly",
+      });
+      assert.notEqual(latestConfig?.owner, "pingdotgg");
+      assert.notEqual(latestConfig?.repo, "t3code");
+    }),
+  );
+
+  it.effect("honors T3CODE_DESKTOP_UPDATE_REPOSITORY for GitHub desktop publish config", () =>
     Effect.gen(function* () {
       const latestConfig = yield* resolveGitHubPublishConfig("latest").pipe(
         Effect.provide(
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code",
-              },
-            }),
-          ),
-        ),
-      );
-      const nightlyConfig = yield* resolveGitHubPublishConfig("nightly").pipe(
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromEnv({
-              env: {
-                GITHUB_REPOSITORY: "pingdotgg/t3code",
+                T3CODE_DESKTOP_UPDATE_REPOSITORY: "example/custom-repo",
               },
             }),
           ),
@@ -209,16 +225,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
-        owner: "pingdotgg",
-        repo: "t3code",
+        owner: "example",
+        repo: "custom-repo",
         releaseType: "release",
-      });
-      assert.deepStrictEqual(nightlyConfig, {
-        provider: "github",
-        owner: "pingdotgg",
-        repo: "t3code",
-        releaseType: "prerelease",
-        channel: "nightly",
       });
     }),
   );
@@ -248,18 +257,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
-          owner: "pingdotgg",
-          repo: "t3code",
+          owner: "leonaaardob",
+          repo: "t3code-planning-fork",
           releaseType: "release",
         },
       ]);
-    }).pipe(
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it("omits bundled workspace packages from staged desktop dependencies", () => {
