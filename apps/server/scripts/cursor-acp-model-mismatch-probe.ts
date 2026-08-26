@@ -1,4 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
+//
+// Minimal Cursor ACP reprobes (outside agent-board):
+//   node apps/server/scripts/cursor-acp-model-mismatch-probe.ts <cwd> composer-2.5 "Say REVIEW: PASS"
+//   node apps/server/scripts/cursor-acp-model-mismatch-probe.ts <cwd> grok-4.6 "Say REVIEW: PASS"
+//   node apps/server/scripts/cursor-acp-model-mismatch-probe.ts <cwd> gemini-3.7-flash-high "Say REVIEW: PASS"
+//   CURSOR_REASONING=high node apps/server/scripts/cursor-acp-model-mismatch-probe.ts <cwd> gemini-3.7-flash "Say REVIEW: PASS"
+// Gemini models may return "trouble connecting to the model provider" even when session/set_config succeeds.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeProcess from "node:process";
 import * as NodeReadline from "node:readline";
