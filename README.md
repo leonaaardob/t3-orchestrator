@@ -1,28 +1,71 @@
 # T3 Code Planning Fork
 
-**T3 Code with project-level orchestration.**
+### Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code)
 
-An experimental fork of [T3 Code](https://github.com/pingdotgg/t3code) that keeps the familiar T3 agent experience and adds a Supervisor-first planning workflow inspired by [OpenAI Symphony](https://github.com/openai/symphony). You talk to a project Supervisor, work is tracked on an Agent Board, and an autonomous scheduler launches isolated workers through T3's provider runtime — with independent review and bounded repair cycles.
+[![Planning](https://img.shields.io/badge/Planning-Agent%20Board-6366f1?style=flat-square)](#agent-board)
+[![Cross-provider](https://img.shields.io/badge/Execution-Cross--provider-0ea5e9?style=flat-square)](#cross-provider-execution)
+[![Review loop](https://img.shields.io/badge/Review-Autonomous-10b981?style=flat-square)](#review-and-repair-loop)
+[![Upstream](https://img.shields.io/badge/Upstream-v0.0.34-64748b?style=flat-square)](https://github.com/pingdotgg/t3code/releases)
 
-> **This is not the official T3 Code project.** Upstream T3 Code lives at [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This repository is maintained separately as a planning/orchestration experiment.
+Talk to your **Project Supervisor**.  
+It plans the work, launches isolated agents through T3, reviews their output, and repairs routine failures automatically.
 
-![Agent Board Kanban view](./docs/assets/planning-kanban.png)
+> **This is not the official T3 Code project.** Upstream lives at [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This repository is a separate planning/orchestration experiment inspired by [OpenAI Symphony](https://github.com/openai/symphony) — not affiliated with OpenAI.
+
+<p align="center">
+  <img src="./docs/assets/readme-hero-planning.png" alt="Planning board with Draft, Ready, Running, and Review cards plus a Run action" width="920" />
+</p>
+
+```text
+You
+ ↓
+Supervisor
+ ↓
+Agent Board
+ ↓
+Scheduler
+ ├─ Cursor
+ ├─ Codex
+ └─ OpenCode
+ ↓
+Independent Review
+ ↓
+Repair / Done
+```
+
+## Cross-provider execution
+
+Unlike Symphony's Codex-centric reference, this fork runs workers through **T3's provider runtime**. Pick different models per operation — implementation, review, and repair — globally or per project.
+
+<p align="center">
+  <img src="./docs/assets/execution-presets-advanced.png" alt="Advanced execution presets for implementation, review, and repair" width="820" />
+</p>
+
+**Simple** uses one model for everything. **Advanced** splits implementation / review / repair; review must differ from implementation. Example intent:
+
+```text
+Implementation → Cursor / Composer
+Review         → Cursor / Grok
+Repair         → same as implementation (or override)
+```
+
+No parallel custom provider layer. If T3 can run the provider on your machine, the scheduler can dispatch it.
 
 ## Why this fork exists
 
 Long agent sessions lose context. Plans drift, dependencies get forgotten, and work can be marked done without enough proof.
 
-This fork adds a durable planning layer on top of T3 Code:
+This fork adds a durable planning layer:
 
-- A **Project Supervisor** thread shapes intent and keeps docs in sync.
-- An **Agent Board** is the visible proof ledger for what is ready, running, reviewing, or blocked.
-- A **scheduler/reconciler** claims `Ready` cards, runs workers in isolated workspaces, and keeps going without the Planning UI open.
-- **Independent review** uses a fresh thread (not the implementation conversation) before work moves forward.
-- **Bounded repair** retries routine failures, then stops at `Needs Decision` when automation should not guess.
+- **Project Supervisor** — normal T3 thread (`Project Supervisor`) guided by [`AGENTS.md`](./AGENTS.md) and [`WORKFLOW.md`](./WORKFLOW.md)
+- **Agent Board** — `.t3/agent-board.json` as the visible proof ledger
+- **Scheduler** — claims `Ready` cards every 15s, even with the Planning UI closed
+- **Independent review** — fresh thread, same workspace, not the implementation conversation
+- **Bounded repair** — routine failures retry; intent blockers stop at `Needs Decision`
 
 ## How it works
 
-The Supervisor is not a separate service. It is a normal T3 project thread — typically titled **Project Supervisor** — guided by [`AGENTS.md`](./AGENTS.md) and [`WORKFLOW.md`](./WORKFLOW.md). The UI can pin it and show a Supervisor badge, but orchestration state lives in `.t3/agent-board.json`, not in chat history.
+Orchestration state lives in the board file and task records — not in chat history.
 
 ```mermaid
 flowchart TD
@@ -38,7 +81,7 @@ flowchart TD
   Review -->|cap exceeded or intent| Decision["Needs Decision"]
 ```
 
-Card lifecycle (actual board states):
+Card lifecycle:
 
 ```text
 Backlog / Draft → Ready → Running → Reviewing → Review / Done
@@ -67,12 +110,6 @@ The server starts a board scheduler automatically (15-second reconciler). It:
 - Appends proof to linked task records when possible
 - Runs headless — the Planning tab does not need to stay open
 
-### Cross-provider execution
-
-Unlike Symphony's Codex-centric reference implementation, this fork uses **T3's provider abstraction**. The scheduler resolves models from global and project execution presets, then launches whichever provider T3 supports on your machine — for example Codex, Cursor, Claude Code, Grok Build, or OpenCode (including local models via OpenCode/Ollama when configured).
-
-There is no parallel custom provider layer in this fork.
-
 ### Simple vs Advanced execution presets
 
 Configure defaults in **Settings → General → Agent execution presets**. Projects can inherit or override.
@@ -82,9 +119,7 @@ Configure defaults in **Settings → General → Agent execution presets**. Proj
 | **Simple**   | One model selection for implementation, review, and repair |
 | **Advanced** | Separate selections for implementation, review, and repair |
 
-In Advanced mode, **review must use a different model than implementation** (same `instanceId` + model is blocked). Repair may reuse the implementation model. These are execution presets, not a separate agent-role system.
-
-![Agent execution presets](./docs/assets/execution-presets-settings.png)
+In Advanced mode, **review must use a different model than implementation** (same `instanceId` + model is blocked). Repair may reuse the implementation model.
 
 ### Review and repair loop
 
@@ -98,10 +133,6 @@ After implementation completes:
 6. Intent or credential questions → `Needs Decision` immediately
 
 ## Visual walkthrough
-
-**Kanban** — primary control surface for card states and manual Run:
-
-![Planning Kanban view](./docs/assets/planning-kanban.png)
 
 **Planning table** — dense grouping by area and slice:
 

@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "projectRoot": "/demo/readme",
+  "defaultView": "kanban",
+  "runner": {
+    "maxConcurrentCards": 1,
+    "repairCycles": 3
+  },
+  "cards": [
+    {
+      "id": "DEMO-008-worker-handoff",
+      "title": "Worker handoff packet generator",
+      "state": "Draft",
+      "priority": 3,
+      "area": "Supervisor",
+      "slice": "Handoffs",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "intentBrief": {
+        "intent": "Shape rough requests into bounded worker packets.",
+        "desiredOutcome": "Ready cards launch with clear scope.",
+        "acceptanceCriteria": ["Intent and proof-of-done are documented."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      },
+      "parallelism": {
+        "safe": "false",
+        "reason": "Supervisor-only planning work.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["docs/agents/**"]
+      },
+      "runtime": { "attemptCount": 0 },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T00:00:00.000Z"
+    },
+    {
+      "id": "DEMO-005-kanban-editor",
+      "title": "Kanban card editor and quick add",
+      "state": "Ready",
+      "priority": 2,
+      "area": "Frontend",
+      "slice": "Planning UI",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": ["DEMO-003-board-rpc"],
+      "intentBrief": {
+        "intent": "Edit cards and move work to Ready from the board.",
+        "desiredOutcome": "Operators can run or schedule cards without chat.",
+        "acceptanceCriteria": ["Ready cards expose Run.", "Card detail edits persist."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      },
+      "parallelism": {
+        "safe": "true",
+        "reason": "UI-only slice with isolated write scopes.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["apps/web/src/components/AgentBoardPanel.tsx"]
+      },
+      "runtime": { "attemptCount": 0 },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T00:00:00.000Z"
+    },
+    {
+      "id": "DEMO-006-planning-table",
+      "title": "Accordion planning table",
+      "state": "Running",
+      "priority": 3,
+      "area": "Frontend",
+      "slice": "Planning UI",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": ["DEMO-003-board-rpc"],
+      "intentBrief": {
+        "intent": "Dense table view over the same board cards.",
+        "desiredOutcome": "Area/slice grouping is scannable.",
+        "acceptanceCriteria": ["Table reads the same board file as Kanban."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      },
+      "parallelism": {
+        "safe": "true",
+        "reason": "Read-mostly view layer.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["apps/web/src/components/AgentBoardPanel.tsx"]
+      },
+      "runtime": {
+        "attemptCount": 1,
+        "lastHeartbeatAt": "2026-05-05T12:00:00.000Z"
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T12:00:00.000Z"
+    },
+    {
+      "id": "DEMO-003-board-rpc",
+      "title": "Server board load/save APIs",
+      "state": "Review",
+      "priority": 2,
+      "area": "Backend",
+      "slice": "Board service",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "intentBrief": {
+        "intent": "Persist board state through typed RPC.",
+        "desiredOutcome": "Web and scheduler share one board file.",
+        "acceptanceCriteria": ["Load/save round-trip passes contract tests."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      },
+      "parallelism": {
+        "safe": "false",
+        "reason": "Touches contracts and server wiring.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["packages/contracts/**", "apps/server/src/agentBoard/**"]
+      },
+      "runtime": {
+        "attemptCount": 1,
+        "lastHeartbeatAt": "2026-05-05T11:00:00.000Z"
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T11:00:00.000Z"
+    }
+  ],
+  "graphLinks": [],
+  "createdAt": "2026-05-05T00:00:00.000Z",
+  "updatedAt": "2026-05-05T12:00:00.000Z"
+}
