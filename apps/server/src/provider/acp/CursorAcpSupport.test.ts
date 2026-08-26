@@ -118,4 +118,67 @@ describe("applyCursorAcpModelSelection", () => {
       { type: "config", configId: "fast", value: "true" },
     ]);
   });
+
+  it("retries composite effort slugs by splitting base model and reasoning option", async () => {
+    const geminiConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> = [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "gemini-3.7-flash",
+        options: [{ value: "gemini-3.7-flash", name: "Gemini 3.7 Flash" }],
+      },
+      {
+        id: "reasoning",
+        name: "Effort",
+        category: "model_option",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+        ],
+      },
+    ];
+
+    const calls: Array<
+      | { readonly type: "model"; readonly value: string }
+      | { readonly type: "config"; readonly configId: string; readonly value: string | boolean }
+    > = [];
+
+    const runtime = {
+      getConfigOptions: Effect.succeed(geminiConfigOptions),
+      setModel: (value: string) => {
+        calls.push({ type: "model", value });
+        if (value === "gemini-3.7-flash-high") {
+          return Effect.fail({ message: 'Invalid value "gemini-3.7-flash-high"' });
+        }
+        return Effect.void;
+      },
+      setConfigOption: (configId: string, value: string | boolean) =>
+        Effect.sync(() => {
+          calls.push({ type: "config", configId, value });
+        }),
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gemini-3.7-flash-high",
+        selections: null,
+        mapError: ({ step, configId, cause }) =>
+          step === "set-config-option"
+            ? `failed to set config option ${configId}: ${cause.message}`
+            : `failed to set model: ${cause.message}`,
+      }),
+    );
+
+    expect(calls).toEqual([
+      { type: "model", value: "gemini-3.7-flash-high" },
+      { type: "model", value: "gemini-3.7-flash" },
+      { type: "config", configId: "reasoning", value: "high" },
+    ]);
+  });
 });
