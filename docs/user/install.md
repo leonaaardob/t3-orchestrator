@@ -24,6 +24,11 @@ official T3 Code. Upgrading from T3 Orchestrator 0.0.34 starts a separate
 profile; it does not import settings or connections from the shared legacy
 T3 Code location.
 
+On unsigned macOS builds, the app can detect updates but cannot install them
+automatically. When an update is available, download the matching DMG from the
+in-app prompt and install it manually. Signed/notarized macOS builds keep
+automatic Install & Restart.
+
 Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.

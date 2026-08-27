@@ -43,12 +43,14 @@ function downloadedState(overrides: Partial<DesktopUpdateState> = {}): DesktopUp
     enabled: true,
     status: "downloaded",
     channel: "latest",
+    installMode: "automatic",
     currentVersion: "0.0.29",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
     availableVersion: "0.0.30",
     downloadedVersion: "0.0.30",
+    manualDownloadUrl: null,
     releaseNotes: [],
     downloadPercent: 100,
     checkedAt: null,
@@ -72,7 +74,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     link?.props.onClick?.();
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/leonaaardob/t3-orchestrator/releases/tag/v0.0.30",
+        "https://github.com/leonaaardob/t3-orchestrator/releases/tag/orchestrator-v0.0.30",
       );
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
@@ -90,7 +92,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
     await vi.waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/leonaaardob/t3-orchestrator/releases/tag/v0.0.30",
+        "https://github.com/leonaaardob/t3-orchestrator/releases/tag/orchestrator-v0.0.30",
       );
     });
   });

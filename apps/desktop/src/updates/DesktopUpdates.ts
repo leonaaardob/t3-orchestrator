@@ -4,8 +4,14 @@ import {
   type DesktopUpdateActionResult,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
+  type DesktopUpdateInstallMode,
   type DesktopUpdateState,
 } from "@t3tools/contracts";
+import {
+  getDesktopUpdateManualDmgUrl,
+  resolveDesktopUpdateManualDmgArch,
+  resolveDesktopUpdateRepository,
+} from "@t3tools/shared/desktopUpdateRepository";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -27,6 +33,11 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import {
+  inspectMacDeveloperIdSignature,
+  MAC_UNSIGNED_MANUAL_UPDATE_MESSAGE,
+  resolveDesktopUpdateInstallMode,
+} from "./macUpdateInstallCapability.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -119,12 +130,62 @@ export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<Desktop
   "DesktopUpdaterReportedError",
   {
     operation: Schema.Literals(["check", "download", "install", "channel", "background"]),
+    phase: Schema.Literals(["check", "download", "install", "channel", "background", "event"]),
+    platform: Schema.String,
+    currentVersion: Schema.String,
+    targetVersion: Schema.NullOr(Schema.String),
+    underlyingError: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
     return `Desktop updater ${this.operation} operation reported an error.`;
   }
+}
+
+function summarizeUpdaterCause(cause: unknown): string {
+  if (cause instanceof Error) {
+    return cause.message.trim() || cause.name;
+  }
+  if (typeof cause === "string") {
+    const trimmed = cause.trim();
+    return trimmed.length > 0 ? trimmed : "unknown updater error";
+  }
+  if (cause && typeof cause === "object" && "message" in cause) {
+    const message = (cause as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+  }
+  return "unknown updater error";
+}
+
+function parseInstallModeOverride(raw: Option.Option<string>): DesktopUpdateInstallMode | null {
+  if (Option.isNone(raw)) return null;
+  const value = raw.value.trim().toLowerCase();
+  if (value === "automatic" || value === "manual") {
+    return value;
+  }
+  return null;
+}
+
+function resolveManualDownloadUrl(input: {
+  readonly version: string;
+  readonly hostArch: string;
+  readonly appArch: string;
+}): string | null {
+  const arch = resolveDesktopUpdateManualDmgArch({
+    hostArch: input.hostArch,
+    appArch: input.appArch,
+  });
+  if (!arch) {
+    return null;
+  }
+  return getDesktopUpdateManualDmgUrl({
+    version: input.version,
+    arch,
+    repository: resolveDesktopUpdateRepository(),
+  });
 }
 
 export class DesktopUpdateUnexpectedActionError extends Schema.TaggedErrorClass<DesktopUpdateUnexpectedActionError>()(
@@ -189,9 +250,15 @@ function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  installMode: DesktopUpdateInstallMode,
 ): DesktopUpdateState {
   return {
-    ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
+    ...createInitialDesktopUpdateState(
+      environment.appVersion,
+      environment.runtimeInfo,
+      channel,
+      installMode,
+    ),
     enabled,
     status: enabled ? "idle" : "disabled",
   };
@@ -260,11 +327,23 @@ export const make = Effect.gen(function* () {
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  const installModeOverride = parseInstallModeOverride(config.macUpdateInstallModeOverride);
+  const hasDeveloperIdApplicationSignature =
+    environment.platform === "darwin" && environment.isPackaged
+      ? inspectMacDeveloperIdSignature(environment.appPath)
+      : null;
+  const installMode = resolveDesktopUpdateInstallMode({
+    platform: environment.platform,
+    isPackaged: environment.isPackaged,
+    installModeOverride,
+    hasDeveloperIdApplicationSignature,
+  });
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
       environment.runtimeInfo,
       environment.defaultDesktopSettings.updateChannel,
+      installMode,
     ),
   );
 
@@ -405,6 +484,14 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    if (state.installMode === "manual") {
+      yield* logUpdaterInfo("skipping in-app download for manual macOS update mode", {
+        availableVersion: state.availableVersion,
+        manualDownloadUrl: state.manualDownloadUrl,
+      });
+      return { accepted: false, completed: false };
+    }
+
     if (!(yield* tryStartUpdateAction("download"))) {
       return { accepted: false, completed: false };
     }
@@ -464,6 +551,15 @@ export const make = Effect.gen(function* () {
 
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
+    if (state.installMode === "manual") {
+      yield* logUpdaterInfo("skipping quitAndInstall for manual macOS update mode", {
+        availableVersion: state.availableVersion,
+        downloadedVersion: state.downloadedVersion,
+        manualDownloadUrl: state.manualDownloadUrl,
+      });
+      return { accepted: false, completed: false };
+    }
+
     const hasInstallableDownload =
       state.downloadedVersion !== null &&
       (state.status === "downloaded" ||
@@ -594,14 +690,35 @@ export const make = Effect.gen(function* () {
 
           const checkedAt = yield* currentIsoTimestamp;
           const releaseNotes = normalizeDesktopUpdateReleaseNotes(info.releaseNotes, info.version);
+          const manualDownloadUrl =
+            state.installMode === "manual"
+              ? resolveManualDownloadUrl({
+                  version: info.version,
+                  hostArch: state.hostArch,
+                  appArch: state.appArch,
+                })
+              : null;
           yield* setState(
-            reduceDesktopUpdateStateOnUpdateAvailable(state, info.version, checkedAt, releaseNotes),
+            reduceDesktopUpdateStateOnUpdateAvailable(
+              state,
+              info.version,
+              checkedAt,
+              releaseNotes,
+              manualDownloadUrl,
+            ),
           );
           yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
           yield* logUpdaterInfo("update available", {
             version: info.version,
             releaseNoteGroups: releaseNotes.length,
+            installMode: state.installMode,
+            manualDownloadUrl,
           });
+          if (state.installMode === "manual") {
+            yield* logUpdaterInfo(MAC_UNSIGNED_MANUAL_UPDATE_MESSAGE, {
+              version: info.version,
+            });
+          }
         }),
       ),
       Effect.catchCause((cause) => {
@@ -629,20 +746,34 @@ export const make = Effect.gen(function* () {
     cause: unknown,
   ) {
     const activeAction = yield* activeUpdateAction;
+    const state = yield* Ref.get(updateStateRef);
+    const operation = Option.getOrElse(activeAction, () => "background" as const);
     const error = new DesktopUpdaterReportedError({
-      operation: Option.getOrElse(activeAction, () => "background" as const),
+      operation,
+      phase: operation,
+      platform: environment.platform,
+      currentVersion: state.currentVersion,
+      targetVersion: state.availableVersion ?? state.downloadedVersion,
+      underlyingError: summarizeUpdaterCause(cause),
       cause,
     });
+    const errorContext = {
+      errorTag: error._tag,
+      operation: error.operation,
+      phase: error.phase,
+      platform: error.platform,
+      currentVersion: error.currentVersion,
+      targetVersion: error.targetVersion,
+      underlyingError: error.underlyingError,
+    } as const;
+
     if (Option.isSome(activeAction) && activeAction.value === "install") {
       yield* finishUpdateAction("install");
       yield* Ref.set(desktopState.quitting, false);
       yield* updateState((current) =>
         reduceDesktopUpdateStateOnInstallFailure(current, error.message),
       );
-      yield* logUpdaterError(error.message, {
-        errorTag: error._tag,
-        operation: error.operation,
-      });
+      yield* logUpdaterError(error.message, errorContext);
       return;
     }
 
@@ -659,10 +790,7 @@ export const make = Effect.gen(function* () {
       }));
     }
 
-    yield* logUpdaterError(error.message, {
-      errorTag: error._tag,
-      operation: error.operation,
-    });
+    yield* logUpdaterError(error.message, errorContext);
   });
 
   const handleDownloadProgress = Effect.fn("desktop.updates.handleDownloadProgress")(function* (
@@ -743,7 +871,9 @@ export const make = Effect.gen(function* () {
 
       const settings = yield* desktopSettings.get;
       const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(createBaseUpdateState(settings.updateChannel, enabled, environment));
+      yield* setState(
+        createBaseUpdateState(settings.updateChannel, enabled, environment, installMode),
+      );
       if (!enabled) {
         return;
       }
@@ -755,6 +885,14 @@ export const make = Effect.gen(function* () {
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
+
+      yield* logUpdaterInfo("desktop update install mode resolved", {
+        installMode,
+        platform: environment.platform,
+        isPackaged: environment.isPackaged,
+        hasDeveloperIdApplicationSignature,
+        installModeOverride,
+      });
 
       if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
         yield* logUpdaterInfo(
@@ -814,7 +952,7 @@ export const make = Effect.gen(function* () {
           );
 
         const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
+        yield* setState(createBaseUpdateState(nextChannel, enabled, environment, installMode));
 
         if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);

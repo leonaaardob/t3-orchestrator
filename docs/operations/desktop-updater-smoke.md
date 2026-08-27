@@ -19,8 +19,9 @@
   unsigned preview with publish omitted).
 - No `T3CODE_DESKTOP_UPDATE_REPOSITORY` override unless deliberately testing
   override behavior.
-- The next macOS ZIP must contain a signed/notarized app. Windows remains
-  unsigned; expect SmartScreen there and do not disable OS protections.
+- Until Apple credentials exist, unsigned macOS N+1 clients must offer manual
+  DMG download instead of Install & Restart. Windows/Linux keep automatic
+  install. Do not disable OS protections.
 
 ## What “pass” means
 
@@ -29,8 +30,12 @@ On each required platform:
 1. Installed **0.0.35** client detects a newer version (**N+1**).
 2. Updater selects the **correct architecture** for the host.
 3. Download URL / artifact name matches the platform mapping below.
-4. Metadata verification succeeds (`sha512` / size from the merged manifest).
-5. Install + restart leaves the app running as **N+1** (About / update UI).
+4. Metadata verification succeeds (`sha512` / size from the merged manifest)
+   for automatic platforms; unsigned macOS opens the matching public DMG URL.
+5. **Windows / Linux / signed macOS:** Install + restart leaves the app running
+   as **N+1**.
+6. **Unsigned macOS:** no `quitAndInstall`; user installs the DMG manually and
+   relaunches as **N+1**.
 
 ## Architecture → asset mapping
 

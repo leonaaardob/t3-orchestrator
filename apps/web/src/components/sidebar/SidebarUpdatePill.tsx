@@ -12,7 +12,10 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateManualDownloadLabel,
+  getDesktopUpdateManualDownloadUrl,
   isDesktopUpdateButtonDisabled,
+  MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
@@ -44,7 +47,7 @@ function resolveSidebarUpdatePresentation({
       ? "downloaded"
       : isDownloading
         ? "downloading"
-        : action === "download"
+        : action === "download" || action === "manual-download"
           ? "available"
           : "idle";
 
@@ -187,6 +190,54 @@ function SidebarUpdateControl() {
     if (isInteractionDisabled) return;
 
     setIsActionPending(true);
+
+    if (action === "manual-download") {
+      const downloadUrl = getDesktopUpdateManualDownloadUrl(state);
+      if (!downloadUrl) {
+        setIsActionPending(false);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "No download URL is available for this update.",
+          }),
+        );
+        return;
+      }
+      void (async () => {
+        try {
+          if (await bridge.openExternal(downloadUrl)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: getDesktopUpdateManualDownloadLabel(state),
+                description: MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
+              }),
+            );
+            return;
+          }
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open update download",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
+          return;
+        } finally {
+          setIsActionPending(false);
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "The system could not open the release download.",
+          }),
+        );
+      })();
+      return;
+    }
 
     if (action === "download") {
       void bridge

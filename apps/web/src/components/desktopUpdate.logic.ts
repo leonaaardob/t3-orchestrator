@@ -1,11 +1,10 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
-import { getDesktopUpdateReleaseTagUrlBase } from "@t3tools/shared/desktopUpdateRepository";
+import { getDesktopUpdateReleaseTagUrl } from "@t3tools/shared/desktopUpdateRepository";
 
-import { APP_BASE_NAME } from "../branding";
+export type DesktopUpdateButtonAction = "download" | "install" | "manual-download" | "none";
 
-export type DesktopUpdateButtonAction = "download" | "install" | "none";
-
-const DESKTOP_RELEASE_TAG_URL = getDesktopUpdateReleaseTagUrlBase();
+export const MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE =
+  "Automatic installation is unavailable on unsigned macOS builds. Download and install the update manually.";
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -20,12 +19,33 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
-  return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
+  return getDesktopUpdateReleaseTagUrl(normalizedVersion);
+}
+
+export function getDesktopUpdateManualDownloadUrl(state: DesktopUpdateState): string | null {
+  if (state.manualDownloadUrl?.trim()) {
+    return state.manualDownloadUrl.trim();
+  }
+  const version = state.availableVersion?.trim();
+  if (!version) return null;
+  return getDesktopUpdateReleaseTagUrl(version);
 }
 
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
 ): DesktopUpdateButtonAction {
+  if (state.installMode === "manual") {
+    if (
+      state.availableVersion &&
+      (state.status === "available" ||
+        state.status === "downloaded" ||
+        (state.status === "error" && state.errorContext !== "check"))
+    ) {
+      return "manual-download";
+    }
+    return "none";
+  }
+
   if (
     state.downloadedVersion &&
     (state.status === "downloaded" ||
@@ -56,7 +76,7 @@ export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null):
 }
 
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {
-  return state?.hostArch === "arm64" && state.appArch === "x64";
+  return state?.hostArch === "arm64" && state?.appArch === "x64";
 }
 
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
@@ -69,16 +89,30 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
   }
 
   const action = resolveDesktopUpdateButtonAction(state);
+  if (action === "manual-download") {
+    return "This Mac has Apple Silicon, but T3 Orchestrator is still running the Intel build under Rosetta. Download the Apple Silicon installer and replace this copy.";
+  }
   if (action === "download") {
-    return `This Mac has Apple Silicon, but ${APP_BASE_NAME} is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.`;
+    return "This Mac has Apple Silicon, but T3 Orchestrator is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
   }
   if (action === "install") {
-    return `This Mac has Apple Silicon, but ${APP_BASE_NAME} is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.`;
+    return "This Mac has Apple Silicon, but T3 Orchestrator is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
   }
-  return `This Mac has Apple Silicon, but ${APP_BASE_NAME} is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.`;
+  return "This Mac has Apple Silicon, but T3 Orchestrator is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+}
+
+export function getDesktopUpdateManualDownloadLabel(state: DesktopUpdateState): string {
+  const version = state.availableVersion?.trim();
+  return version ? `Download T3 Orchestrator ${version}` : "Open release download";
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+  if (state.installMode === "manual") {
+    if (state.availableVersion) {
+      return `${getDesktopUpdateManualDownloadLabel(state)}. ${MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE}`;
+    }
+    return MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE;
+  }
   if (state.status === "available") {
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
@@ -109,7 +143,7 @@ export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  return `Install update${version ? ` ${version}` : ""} and restart ${APP_BASE_NAME}?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+  return `Install update${version ? ` ${version}` : ""} and restart T3 Orchestrator?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {
@@ -125,6 +159,7 @@ export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateAction
 
 export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
   if (!state || state.status !== "error") return false;
+  if (state.installMode === "manual") return false;
   return state.errorContext === "download" || state.errorContext === "install";
 }
 

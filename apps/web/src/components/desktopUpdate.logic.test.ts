@@ -7,8 +7,11 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateManualDownloadLabel,
+  getDesktopUpdateManualDownloadUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
+  MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
@@ -19,12 +22,14 @@ const baseState: DesktopUpdateState = {
   enabled: true,
   status: "idle",
   channel: "latest",
+  installMode: "automatic",
   currentVersion: "1.0.0",
   hostArch: "x64",
   appArch: "x64",
   runningUnderArm64Translation: false,
   availableVersion: null,
   downloadedVersion: null,
+  manualDownloadUrl: null,
   releaseNotes: [],
   downloadPercent: null,
   checkedAt: null,
@@ -187,13 +192,13 @@ describe("getDesktopUpdateActionError", () => {
 describe("desktop update UI helpers", () => {
   it("builds the stable release URL for a downloaded version", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30")).toBe(
-      "https://github.com/leonaaardob/t3-orchestrator/releases/tag/v0.0.30",
+      "https://github.com/leonaaardob/t3-orchestrator/releases/tag/orchestrator-v0.0.30",
     );
   });
 
   it("builds the nightly release URL without dropping its version suffix", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931")).toBe(
-      "https://github.com/leonaaardob/t3-orchestrator/releases/tag/v0.0.30-nightly.20260728.931",
+      "https://github.com/leonaaardob/t3-orchestrator/releases/tag/orchestrator-v0.0.30-nightly.20260728.931",
     );
   });
 
@@ -344,5 +349,42 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+});
+
+describe("unsigned macOS manual update UX", () => {
+  const manualState: DesktopUpdateState = {
+    ...baseState,
+    installMode: "manual",
+    status: "available",
+    availableVersion: "0.0.36",
+    manualDownloadUrl:
+      "https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v0.0.36/T3-Orchestrator-0.0.36-x64.dmg",
+  };
+
+  it("shows a manual download action and never install/restart", () => {
+    expect(shouldShowDesktopUpdateButton(manualState)).toBe(true);
+    expect(resolveDesktopUpdateButtonAction(manualState)).toBe("manual-download");
+    expect(resolveDesktopUpdateButtonAction({ ...manualState, status: "downloaded" })).toBe(
+      "manual-download",
+    );
+    expect(getDesktopUpdateManualDownloadLabel(manualState)).toBe(
+      "Download T3 Orchestrator 0.0.36",
+    );
+    expect(getDesktopUpdateManualDownloadUrl(manualState)).toBe(manualState.manualDownloadUrl);
+    expect(getDesktopUpdateButtonTooltip(manualState)).toContain(
+      MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
+    );
+  });
+
+  it("keeps automatic install for signed updater mode", () => {
+    const signedState: DesktopUpdateState = {
+      ...baseState,
+      installMode: "automatic",
+      status: "downloaded",
+      availableVersion: "0.0.36",
+      downloadedVersion: "0.0.36",
+    };
+    expect(resolveDesktopUpdateButtonAction(signedState)).toBe("install");
   });
 });

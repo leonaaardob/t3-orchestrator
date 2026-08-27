@@ -50,6 +50,11 @@ export const DesktopConfig = Config.all({
   ),
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
+  /**
+   * Explicit override for macOS update install capability (`automatic` | `manual`).
+   * Used by tests and operators; production packaged apps resolve from code signature.
+   */
+  macUpdateInstallModeOverride: trimmedString("T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
   mockUpdateServerPort: Config.port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
     Config.withDefault(3000),

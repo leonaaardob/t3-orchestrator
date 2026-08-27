@@ -55,7 +55,10 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateManualDownloadLabel,
+  getDesktopUpdateManualDownloadUrl,
   isDesktopUpdateButtonDisabled,
+  MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -277,6 +280,52 @@ function AboutVersionSection() {
 
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
+    if (action === "manual-download") {
+      if (!updateState) return;
+      const downloadUrl = getDesktopUpdateManualDownloadUrl(updateState);
+      if (!downloadUrl) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "No download URL is available for this update.",
+          }),
+        );
+        return;
+      }
+      void (async () => {
+        try {
+          if (await bridge.openExternal(downloadUrl)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: getDesktopUpdateManualDownloadLabel(updateState),
+                description: MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
+              }),
+            );
+            return;
+          }
+        } catch (error: unknown) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open update download",
+              description: error instanceof Error ? error.message : "Download failed.",
+            }),
+          );
+          return;
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "The system could not open the release download.",
+          }),
+        );
+      })();
+      return;
+    }
+
     if (action === "download") {
       void bridge.downloadUpdate().catch((error: unknown) => {
         toastManager.add(
@@ -363,7 +412,13 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = {
+    download: "Download",
+    install: "Install",
+    "manual-download": updateState
+      ? getDesktopUpdateManualDownloadLabel(updateState)
+      : "Open release download",
+  };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
@@ -372,9 +427,11 @@ function AboutVersionSection() {
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
   const description =
-    action === "download" || action === "install"
-      ? "Update available."
-      : "Current version of the application.";
+    action === "manual-download"
+      ? MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE
+      : action === "download" || action === "install"
+        ? "Update available."
+        : "Current version of the application.";
 
   return (
     <>

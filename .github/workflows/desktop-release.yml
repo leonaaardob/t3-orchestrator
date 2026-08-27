@@ -3,8 +3,9 @@ name: Desktop Release
 # Fork-owned T3 Orchestrator desktop builds for leonaaardob/t3-orchestrator.
 # Intentionally omits upstream release.yml concerns: npm OIDC, Vercel, Azure
 # Trusted Signing, relay production secrets, and AUR. macOS Developer ID
-# signing and notarization are fork-owned because they are required for the
-# updater ZIP to install on customer Macs.
+# signing and notarization remain available via sign_macos=true when Apple
+# secrets are present. Unsigned dry runs are the default and pair with the
+# in-app manual DMG update path.
 
 on:
   workflow_dispatch:
@@ -15,6 +16,11 @@ on:
         type: string
       publish_release:
         description: "Publish a GitHub Release after all builds succeed"
+        required: false
+        type: boolean
+        default: false
+      sign_macos:
+        description: "Sign and notarize macOS builds (requires Apple secrets). Leave false for unsigned dry runs."
         required: false
         type: boolean
         default: false
@@ -38,6 +44,7 @@ jobs:
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
       publish_release: ${{ steps.release_meta.outputs.publish_release }}
+      sign_macos: ${{ steps.release_meta.outputs.sign_macos }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -54,6 +61,7 @@ jobs:
         env:
           DISPATCH_VERSION: ${{ inputs.version }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          SIGN_MACOS: ${{ inputs.sign_macos }}
         run: |
           set -euo pipefail
 
@@ -72,6 +80,7 @@ jobs:
           echo "tag=orchestrator-v$version" >> "$GITHUB_OUTPUT"
           echo "release_name=T3 Orchestrator $version" >> "$GITHUB_OUTPUT"
           echo "publish_release=${PUBLISH_RELEASE:-false}" >> "$GITHUB_OUTPUT"
+          echo "sign_macos=${SIGN_MACOS:-false}" >> "$GITHUB_OUTPUT"
 
           if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -306,29 +315,33 @@ jobs:
           fi
 
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            missing=()
-            for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
-              if [[ -z "${!name:-}" ]]; then
-                missing+=("$name")
+            if [[ "${{ needs.preflight.outputs.sign_macos }}" == "true" ]]; then
+              missing=()
+              for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+                if [[ -z "${!name:-}" ]]; then
+                  missing+=("$name")
+                fi
+              done
+              if (( ${#missing[@]} > 0 )); then
+                echo "sign_macos=true requires Apple secrets; missing: ${missing[*]}" >&2
+                exit 1
               fi
-            done
-            if (( ${#missing[@]} > 0 )); then
-              echo "Signed macOS validation is required; missing GitHub secrets: ${missing[*]}" >&2
-              exit 1
-            fi
 
-            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY" > "$key_path"
-            export APPLE_API_KEY="$key_path"
-            echo "Building signed/notarized ${{ matrix.label }}."
-            args+=(--signed)
+              key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+              printf '%s' "$APPLE_API_KEY" > "$key_path"
+              export APPLE_API_KEY="$key_path"
+              echo "Building signed/notarized ${{ matrix.label }}."
+              args+=(--signed)
+            else
+              echo "Building unsigned ${{ matrix.label }} (sign_macos=false; automatic in-app install disabled on these builds)."
+            fi
           else
             echo "Building unsigned ${{ matrix.label }} (macOS signing does not affect this target)."
           fi
           vp run dist:desktop:artifact "${args[@]}"
 
       - name: Verify signed and notarized macOS updater ZIP
-        if: matrix.platform == 'mac'
+        if: matrix.platform == 'mac' && needs.preflight.outputs.sign_macos == 'true'
         shell: bash
         env:
           EXPECTED_TEAM_ID: ${{ secrets.T3_ORCHESTRATOR_APPLE_TEAM_ID }}
@@ -354,6 +367,19 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Contents/Info.plist")" = "$EXPECTED_VERSION"
           spctl --assess --type execute --verbose=4 "$app_path"
           xcrun stapler validate "$app_path"
+
+      - name: Confirm unsigned macOS updater ZIP exists
+        if: matrix.platform == 'mac' && needs.preflight.outputs.sign_macos != 'true'
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip_path="release/T3-Orchestrator-${EXPECTED_VERSION}-${{ matrix.arch }}.zip"
+          dmg_path="release/T3-Orchestrator-${EXPECTED_VERSION}-${{ matrix.arch }}.dmg"
+          test -f "$zip_path"
+          test -f "$dmg_path"
+          echo "Unsigned macOS artifacts present for ${{ matrix.label }}."
 
       - name: Collect release assets
         shell: bash
@@ -636,8 +662,9 @@ jobs:
             Status:
             Experimental.
 
-            macOS builds are Developer ID signed and notarized. The updater
-            install path is pending physical Mac-agent validation.
+            macOS: unsigned builds detect updates and open the architecture-correct
+            public DMG for manual install. Signed/notarized builds (when Apple
+            credentials are configured) keep automatic in-app install.
             Windows may show a SmartScreen warning. Do not disable system-wide
             protections.
 

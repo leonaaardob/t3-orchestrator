@@ -12,11 +12,14 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 - Input `publish_release` defaults to `false` so builds can be inspected as
   Actions artifacts before creating a public Release. Dry runs still aggregate
   artifacts and merge updater manifests; only GitHub Release creation is skipped.
+- Input `sign_macos` defaults to `false`. Unsigned macOS dry runs are allowed
+  without Apple secrets. Set `sign_macos=true` only when signing secrets are
+  present and you intentionally want Developer ID + notarization.
 - Version defaults to `apps/desktop/package.json` (aligned via
   `scripts/update-release-package-versions.ts`); optional `version` input
   overrides it.
-- Matrix: macOS / Windows / Linux × x64 + arm64. macOS is Developer ID signed
-  and notarized; Windows and Linux remain unsigned.
+- Matrix: macOS / Windows / Linux × x64 + arm64. macOS is signed/notarized only
+  when `sign_macos=true`; Windows and Linux remain unsigned.
 - Linux x64 AppImages keep electron-builder's native `x86_64` arch token in the
   filename (`T3-Orchestrator-<version>-x86_64.AppImage`); arm64 stays `arm64`.
 - Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
@@ -31,19 +34,24 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 
 ### Fork signing and notarization
 
-Current public builds through **0.0.35** are unsigned. The next public macOS
-release must be Developer ID signed and notarized before it is published.
+Current public builds through **0.0.35** are unsigned. Until Apple Developer
+credentials are available:
 
-- **macOS:** release jobs require a complete signing configuration, including
-  non-publishing dispatches. This is intentional: an unsigned dry run is not
-  proof that the updater can install a signed release. The job verifies the app
-  extracted from the updater ZIP with `codesign`, `spctl`, its bundle identity,
-  version, Team ID, and the app's stapled notarization ticket. The DMG retains
-  that stapled app; it is not a separately notarized updater payload.
+- **macOS unsigned:** update detection stays enabled. Automatic
+  `Install & Restart` is disabled. The UI offers a direct architecture-correct
+  DMG download (`T3-Orchestrator-<version>-x64.dmg` /
+  `T3-Orchestrator-<version>-arm64.dmg`) and explains that manual install is
+  required.
+- **macOS signed/notarized:** when `sign_macos=true` and Apple secrets are
+  present, builds keep automatic electron-updater install. The job verifies the
+  app extracted from the updater ZIP with `codesign`, `spctl`, bundle identity,
+  version, Team ID, and the stapled notarization ticket.
 - **Windows:** no Authenticode / Trusted Signing. SmartScreen warning is
   expected on first launch of the NSIS installer.
 - Do **not** ask users to disable system-wide Gatekeeper or SmartScreen.
-  Only the macOS warning is expected to disappear after the signed release.
+
+Unsigned dry runs (`publish_release=false`, `sign_macos=false`) are the default
+validation path and do not require Apple secrets. Signed mode is opt-in.
 
 Required GitHub Actions secrets (all are fork-owned; never reuse upstream
 secrets):
@@ -74,7 +82,8 @@ Keep package versions aligned with upstream's `X.Y.Z` via
 parallel scheme. Upstream has already prepared **0.0.35**; the normal next
 fork desktop release is **0.0.36** / `orchestrator-v0.0.36`: upstream stable
 remains 0.0.35 while its nightly line has begun 0.0.36. Advance package
-versions deliberately and publish only after both signed macOS dry runs pass.
+versions deliberately and publish only after an unsigned six-target dry run
+passes. Re-enable `sign_macos=true` dry runs once Apple credentials exist.
 
 ### Fork next-release backlog
 
@@ -304,8 +313,15 @@ available.
 - `apps/desktop/src/main.ts` only wires the updater layers into the desktop runtime.
 - Update UX:
   - Background checks run on startup delay + interval.
-  - No automatic download or install.
-  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+  - No automatic download or install until the user acts.
+  - **Signed/notarized macOS, Windows, Linux:** rocket button downloads, then
+    Install & Restart via electron-updater.
+  - **Unsigned macOS:** update detection still runs; automatic install is
+    disabled. The UI offers `Download T3 Orchestrator <version>` which opens
+    the architecture-correct public DMG. Message:
+    “Automatic installation is unavailable on unsigned macOS builds…”
+  - Capability is resolved from the live app’s Developer ID Application
+    signature (override: `T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE`).
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
@@ -317,6 +333,8 @@ available.
 - macOS metadata note:
   - `electron-updater` reads `latest-mac.yml` on stable and `nightly-mac.yml` on nightly, for both Intel and Apple Silicon.
   - The workflow merges the per-arch mac manifests into one channel-specific mac manifest before publishing the GitHub Release.
+  - Unsigned macOS clients use the public DMG assets for manual install; do not
+    point users at the updater ZIP as a manual installer.
 
 ### Windows payload topology and update validation
 

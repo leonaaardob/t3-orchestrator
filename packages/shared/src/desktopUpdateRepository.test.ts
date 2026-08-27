@@ -2,8 +2,13 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   DEFAULT_DESKTOP_UPDATE_REPOSITORY,
+  getDesktopUpdateManualDmgFileName,
+  getDesktopUpdateManualDmgUrl,
+  getDesktopUpdateReleaseTag,
+  getDesktopUpdateReleaseTagUrl,
   getDesktopUpdateReleaseTagUrlBase,
   parseDesktopUpdateRepository,
+  resolveDesktopUpdateManualDmgArch,
   resolveDesktopUpdateRepository,
   UPSTREAM_DESKTOP_UPDATE_REPOSITORY,
 } from "./desktopUpdateRepository.js";
@@ -41,6 +46,32 @@ describe("desktopUpdateRepository", () => {
     assert.equal(
       getDesktopUpdateReleaseTagUrlBase("example/custom-repo"),
       "https://github.com/example/custom-repo/releases/tag",
+    );
+    assert.equal(getDesktopUpdateReleaseTag("0.0.36"), "orchestrator-v0.0.36");
+    assert.equal(
+      getDesktopUpdateReleaseTagUrl("0.0.36"),
+      "https://github.com/leonaaardob/t3-orchestrator/releases/tag/orchestrator-v0.0.36",
+    );
+  });
+
+  it("selects architecture-correct public macOS DMG URLs", () => {
+    assert.equal(resolveDesktopUpdateManualDmgArch({ hostArch: "x64", appArch: "x64" }), "x64");
+    assert.equal(resolveDesktopUpdateManualDmgArch({ hostArch: "arm64", appArch: "x64" }), "arm64");
+    assert.equal(
+      getDesktopUpdateManualDmgFileName("0.0.36", "x64"),
+      "T3-Orchestrator-0.0.36-x64.dmg",
+    );
+    assert.equal(
+      getDesktopUpdateManualDmgFileName("0.0.36", "arm64"),
+      "T3-Orchestrator-0.0.36-arm64.dmg",
+    );
+    assert.equal(
+      getDesktopUpdateManualDmgUrl({ version: "0.0.36", arch: "x64" }),
+      "https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v0.0.36/T3-Orchestrator-0.0.36-x64.dmg",
+    );
+    assert.equal(
+      getDesktopUpdateManualDmgUrl({ version: "0.0.36", arch: "arm64" }),
+      "https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v0.0.36/T3-Orchestrator-0.0.36-arm64.dmg",
     );
   });
 });

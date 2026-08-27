@@ -130,7 +130,10 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateManualDownloadLabel,
+  getDesktopUpdateManualDownloadUrl,
   isDesktopUpdateButtonDisabled,
+  MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
@@ -2770,7 +2773,7 @@ function SortableProjectItem({
 interface SidebarProjectsContentProps {
   showArm64IntelBuildWarning: boolean;
   arm64IntelBuildWarningDescription: string | null;
-  desktopUpdateButtonAction: "download" | "install" | "none";
+  desktopUpdateButtonAction: "download" | "install" | "manual-download" | "none";
   desktopUpdateButtonDisabled: boolean;
   desktopUpdateActionPending: boolean;
   handleDesktopUpdateButtonClick: () => void;
@@ -2911,9 +2914,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   disabled={desktopUpdateButtonDisabled || desktopUpdateActionPending}
                   onClick={handleDesktopUpdateButtonClick}
                 >
-                  {desktopUpdateButtonAction === "download"
+                  {desktopUpdateButtonAction === "manual-download"
                     ? "Download ARM build"
-                    : "Install ARM build"}
+                    : desktopUpdateButtonAction === "download"
+                      ? "Download ARM build"
+                      : "Install ARM build"}
                 </Button>
               </AlertAction>
             ) : null}
@@ -3561,6 +3566,54 @@ export default function LegacySidebar() {
     }
 
     setDesktopUpdateActionPending(true);
+
+    if (desktopUpdateButtonAction === "manual-download") {
+      const downloadUrl = getDesktopUpdateManualDownloadUrl(desktopUpdateState);
+      if (!downloadUrl) {
+        setDesktopUpdateActionPending(false);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "No download URL is available for this update.",
+          }),
+        );
+        return;
+      }
+      void (async () => {
+        try {
+          if (await bridge.openExternal(downloadUrl)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: getDesktopUpdateManualDownloadLabel(desktopUpdateState),
+                description: MAC_UNSIGNED_MANUAL_UPDATE_USER_MESSAGE,
+              }),
+            );
+            return;
+          }
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open update download",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
+          return;
+        } finally {
+          setDesktopUpdateActionPending(false);
+        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not open update download",
+            description: "The system could not open the release download.",
+          }),
+        );
+      })();
+      return;
+    }
 
     if (desktopUpdateButtonAction === "download") {
       void bridge

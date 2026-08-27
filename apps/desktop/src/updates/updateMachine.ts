@@ -1,6 +1,7 @@
 import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
+  DesktopUpdateInstallMode,
   DesktopUpdateReleaseNote,
   DesktopUpdateState,
 } from "@t3tools/contracts";
@@ -19,17 +20,20 @@ export function createInitialDesktopUpdateState(
   currentVersion: string,
   runtimeInfo: DesktopRuntimeInfo,
   channel: DesktopUpdateChannel,
+  installMode: DesktopUpdateInstallMode = "automatic",
 ): DesktopUpdateState {
   return {
     enabled: false,
     status: "disabled",
     channel,
+    installMode,
     currentVersion,
     hostArch: runtimeInfo.hostArch,
     appArch: runtimeInfo.appArch,
     runningUnderArm64Translation: runtimeInfo.runningUnderArm64Translation,
     availableVersion: null,
     downloadedVersion: null,
+    manualDownloadUrl: null,
     releaseNotes: [],
     downloadPercent: null,
     checkedAt: null,
@@ -89,8 +93,10 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
   version: string,
   checkedAt: string,
   releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote> = [],
+  manualDownloadUrl: string | null = null,
 ): DesktopUpdateState {
-  const isDownloadedVersion = state.downloadedVersion === version;
+  const isDownloadedVersion =
+    state.installMode === "automatic" && state.downloadedVersion === version;
   const nextReleaseNotes =
     isDownloadedVersion && releaseNotes.length === 0 ? state.releaseNotes : releaseNotes;
   return {
@@ -98,6 +104,7 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
     status: isDownloadedVersion ? "downloaded" : "available",
     availableVersion: version,
     downloadedVersion: isDownloadedVersion ? version : null,
+    manualDownloadUrl: state.installMode === "manual" ? manualDownloadUrl : null,
     releaseNotes: nextReleaseNotes,
     downloadPercent: isDownloadedVersion ? 100 : null,
     checkedAt,
@@ -111,7 +118,7 @@ export function reduceDesktopUpdateStateOnNoUpdate(
   state: DesktopUpdateState,
   checkedAt: string,
 ): DesktopUpdateState {
-  if (state.downloadedVersion !== null) {
+  if (state.installMode === "automatic" && state.downloadedVersion !== null) {
     return {
       ...state,
       status: "downloaded",
@@ -129,6 +136,7 @@ export function reduceDesktopUpdateStateOnNoUpdate(
     status: "up-to-date",
     availableVersion: null,
     downloadedVersion: null,
+    manualDownloadUrl: null,
     releaseNotes: [],
     downloadPercent: null,
     checkedAt,
@@ -183,6 +191,20 @@ export function reduceDesktopUpdateStateOnDownloadComplete(
   state: DesktopUpdateState,
   version: string,
 ): DesktopUpdateState {
+  if (state.installMode === "manual") {
+    // Cached ZIP installs are not usable on unsigned macOS; keep the manual path.
+    return {
+      ...state,
+      status: "available",
+      availableVersion: version,
+      downloadedVersion: null,
+      downloadPercent: null,
+      message: null,
+      errorContext: null,
+      canRetry: false,
+    };
+  }
+
   return {
     ...state,
     status: "downloaded",

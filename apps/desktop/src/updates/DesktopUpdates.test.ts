@@ -38,6 +38,8 @@ const flushCallbacks = Effect.yieldNow;
 
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
+  let downloadCount = 0;
+  let quitAndInstallCount = 0;
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -83,8 +85,13 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
-    downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    downloadUpdate: Effect.sync(() => {
+      downloadCount += 1;
+    }),
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -148,6 +155,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
           T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
           T3CODE_DESKTOP_MOCK_UPDATES: "true",
           T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+          T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE: "automatic",
           ...options.env,
         }),
       ),
@@ -201,6 +209,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
         T3CODE_DESKTOP_MOCK_UPDATES: "true",
         T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+        T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE: "automatic",
         ...options.env,
       }),
     ),
@@ -211,6 +220,8 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   return {
     layer,
     checkCount: () => checkCount,
+    downloadCount: () => downloadCount,
+    quitAndInstallCount: () => quitAndInstallCount,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>
@@ -243,6 +254,11 @@ describe("DesktopUpdates", () => {
     });
     const reportedError = new DesktopUpdates.DesktopUpdaterReportedError({
       operation: "download",
+      phase: "download",
+      platform: "darwin",
+      currentVersion: "1.2.3",
+      targetVersion: "1.2.4",
+      underlyingError: "updater failed",
       cause,
     });
     const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
@@ -258,6 +274,11 @@ describe("DesktopUpdates", () => {
     assert.equal(eventError.message, "Failed to handle desktop update download-progress event.");
     assert.strictEqual(reportedError.cause, cause);
     assert.equal(reportedError.operation, "download");
+    assert.equal(reportedError.phase, "download");
+    assert.equal(reportedError.platform, "darwin");
+    assert.equal(reportedError.currentVersion, "1.2.3");
+    assert.equal(reportedError.targetVersion, "1.2.4");
+    assert.equal(reportedError.underlyingError, "updater failed");
     assert.equal(reportedError.message, "Desktop updater download operation reported an error.");
     assert.strictEqual(unexpectedActionError.cause, cause);
     assert.equal(unexpectedActionError.action, "install");
@@ -856,6 +877,80 @@ describe("DesktopUpdates", () => {
         const checkResult = yield* updates.check("manual");
         assert.isTrue(checkResult.checked);
         assert.equal(harness.checkCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("uses manual macOS update mode without downloading or installing", () => {
+    const harness = makeHarness({
+      env: {
+        T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE: "manual",
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const configured = yield* updates.getState;
+        assert.equal(configured.installMode, "manual");
+        assert.equal(configured.enabled, true);
+
+        harness.emit("update-available", { version: "1.3.0", releaseNotes: "notes" });
+        yield* flushCallbacks;
+
+        const available = yield* updates.getState;
+        assert.equal(available.status, "available");
+        assert.equal(available.availableVersion, "1.3.0");
+        assert.equal(available.downloadedVersion, null);
+        assert.equal(
+          available.manualDownloadUrl,
+          "https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v1.3.0/T3-Orchestrator-1.3.0-x64.dmg",
+        );
+
+        const downloadResult = yield* updates.download;
+        assert.isFalse(downloadResult.accepted);
+        assert.equal(harness.downloadCount(), 0);
+
+        const installResult = yield* updates.install;
+        assert.isFalse(installResult.accepted);
+        assert.equal(harness.quitAndInstallCount(), 0);
+
+        const afterActions = yield* updates.getState;
+        assert.equal(afterActions.status, "available");
+        assert.equal(afterActions.downloadedVersion, null);
+        assert.equal(harness.quitAndInstallCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps automatic install available for signed macOS updater mode", () => {
+    const harness = makeHarness({
+      env: {
+        T3CODE_DESKTOP_MAC_UPDATE_INSTALL_MODE: "automatic",
+      },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const configured = yield* updates.getState;
+        assert.equal(configured.installMode, "automatic");
+
+        harness.emit("update-available", { version: "1.3.0" });
+        yield* flushCallbacks;
+        const downloadResult = yield* updates.download;
+        assert.isTrue(downloadResult.accepted);
+        assert.equal(harness.downloadCount(), 1);
+
+        harness.emit("update-downloaded", { version: "1.3.0" });
+        yield* flushCallbacks;
+        const installResult = yield* updates.install;
+        assert.isTrue(installResult.accepted);
+        assert.equal(harness.quitAndInstallCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
