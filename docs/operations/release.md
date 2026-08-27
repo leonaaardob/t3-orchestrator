@@ -4,7 +4,7 @@
 
 ## Fork desktop releases (T3 Orchestrator)
 
-This repository publishes **T3 Planning** desktop binaries through the
+This repository publishes **T3 Orchestrator** desktop binaries through the
 fork-owned workflow `.github/workflows/desktop-release.yml` to
 [`leonaaardob/t3-orchestrator` Releases](https://github.com/leonaaardob/t3-orchestrator/releases).
 
@@ -17,7 +17,7 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
   overrides it.
 - Matrix: macOS / Windows / Linux × x64 + arm64, unsigned.
 - Linux x64 AppImages keep electron-builder's native `x86_64` arch token in the
-  filename (`T3-Planning-<version>-x86_64.AppImage`); arm64 stays `arm64`.
+  filename (`T3-Orchestrator-<version>-x86_64.AppImage`); arm64 stays `arm64`.
 - Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
   published with the installers so `electron-updater` can resolve the fork feed.
   `builder-debug*.yml` dumps are excluded from upload/release assets.

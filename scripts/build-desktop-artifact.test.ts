@@ -159,8 +159,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Planning");
-    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Planning (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Orchestrator");
+    assert.equal(
+      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
+      "T3 Orchestrator (Nightly)",
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
@@ -484,12 +487,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.equal(mac.productName, "T3 Planning");
-      assert.equal(linux.productName, "T3 Planning");
-      assert.equal(win.productName, "T3 Planning");
-      assert.equal(mac.artifactName, "T3-Planning-${version}-${arch}.${ext}");
-      assert.equal(linux.artifactName, "T3-Planning-${version}-${arch}.${ext}");
-      assert.equal(win.artifactName, "T3-Planning-${version}-${arch}.${ext}");
+      assert.equal(mac.productName, "T3 Orchestrator");
+      assert.equal(linux.productName, "T3 Orchestrator");
+      assert.equal(win.productName, "T3 Orchestrator");
+      assert.equal(mac.artifactName, "T3-Orchestrator-${version}-${arch}.${ext}");
+      assert.equal(linux.artifactName, "T3-Orchestrator-${version}-${arch}.${ext}");
+      assert.equal(win.artifactName, "T3-Orchestrator-${version}-${arch}.${ext}");
       // tree as the hand-packed server.asar sidecar in extraResources instead
       // of unpacking thousands of loose files at install time.
       assert.notProperty(mac, "asarUnpack");
@@ -517,7 +520,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "**/node_modules/.bin/**",
       ]);
       assert.deepStrictEqual(mac.dmg, {
-        title: "T3 Planning 1.2.3 Installer",
+        title: "T3 Orchestrator 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
         window: { width: 540, height: 412 },
         contents: [
@@ -530,7 +533,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
-        { name: "T3 Planning", schemes: ["t3code", "t3code-dev"] },
+        { name: "T3 Orchestrator", schemes: ["t3code", "t3code-dev"] },
       ]);
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
@@ -1202,7 +1205,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
-        { name: "T3 Planning", schemes: ["t3code", "t3code-dev"] },
+        { name: "T3 Orchestrator", schemes: ["t3code", "t3code-dev"] },
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );

@@ -1,4 +1,4 @@
-/** Default GitHub Releases feed for packaged T3 Planning desktop builds. */
+/** Default GitHub Releases feed for packaged T3 Orchestrator desktop builds. */
 export const DEFAULT_DESKTOP_UPDATE_REPOSITORY = "leonaaardob/t3-orchestrator";
 
 /** Upstream T3 Code desktop update repository; fork builds must never default to this. */

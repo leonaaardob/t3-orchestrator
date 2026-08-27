@@ -130,11 +130,11 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       "linux",
       `version: 0.0.34
 files:
-  - url: T3-Planning-0.0.34-arm64.AppImage
+  - url: T3-Orchestrator-0.0.34-arm64.AppImage
     sha512: 4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==
     size: 164372257
     blockMapSize: 170605
-path: T3-Planning-0.0.34-arm64.AppImage
+path: T3-Orchestrator-0.0.34-arm64.AppImage
 sha512: 4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==
 releaseDate: '2026-08-27T03:20:17.962Z'
 `,
@@ -145,11 +145,11 @@ releaseDate: '2026-08-27T03:20:17.962Z'
       "linux",
       `version: 0.0.34
 files:
-  - url: T3-Planning-0.0.34-x86_64.AppImage
+  - url: T3-Orchestrator-0.0.34-x86_64.AppImage
     sha512: WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==
     size: 164433671
     blockMapSize: 171803
-path: T3-Planning-0.0.34-x86_64.AppImage
+path: T3-Orchestrator-0.0.34-x86_64.AppImage
 sha512: WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==
 releaseDate: '2026-08-27T03:20:06.212Z'
 `,
@@ -171,14 +171,14 @@ releaseDate: '2026-08-27T03:20:06.212Z'
       })),
       [
         {
-          url: "T3-Planning-0.0.34-arm64.AppImage",
+          url: "T3-Orchestrator-0.0.34-arm64.AppImage",
           sha512:
             "4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==",
           size: 164372257,
           blockMapSize: 170605,
         },
         {
-          url: "T3-Planning-0.0.34-x86_64.AppImage",
+          url: "T3-Orchestrator-0.0.34-x86_64.AppImage",
           sha512:
             "WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==",
           size: 164433671,
@@ -192,7 +192,7 @@ releaseDate: '2026-08-27T03:20:06.212Z'
     assert.equal((serialized.match(/- url:/g) ?? []).length, 2);
     assert.ok(serialized.includes("blockMapSize: 170605"));
     assert.ok(serialized.includes("blockMapSize: 171803"));
-    assert.ok(serialized.includes("T3-Planning-0.0.34-x86_64.AppImage"));
+    assert.ok(serialized.includes("T3-Orchestrator-0.0.34-x86_64.AppImage"));
 
     const reparsed = parsePlatformUpdateManifest("linux", serialized, "latest-linux.yml");
     assert.deepStrictEqual(
@@ -208,7 +208,7 @@ releaseDate: '2026-08-27T03:20:06.212Z'
           "linux",
           `version: 0.0.34
 files:
-  - url: T3-Planning-0.0.34-arm64.AppImage
+  - url: T3-Orchestrator-0.0.34-arm64.AppImage
     sha512: arm64appimage
     size: 1
     unknownField: 42

@@ -416,7 +416,7 @@ browser pass over the Planning tab remain manual follow-ups.
   scheduler reconciliation, continuation retries, and Run/claim handoff.
 - CSS/component library changes may affect `AgentBoardPanel` layout.
 - Desktop packaging CI is fork-owned:
-  `.github/workflows/desktop-release.yml` builds T3 Planning for macOS /
+  `.github/workflows/desktop-release.yml` builds T3 Orchestrator for macOS /
   Windows / Linux (x64 + arm64), uploads Actions artifacts, and optionally
   publishes a GitHub Release to `leonaaardob/t3-orchestrator` with
   electron-updater metadata. It must not restore upstream `release.yml`

@@ -14,6 +14,6 @@ describe("isBuilderDebugArtifactName", () => {
     expect(isBuilderDebugArtifactName("latest-linux-x64.yml")).toBe(false);
     expect(isBuilderDebugArtifactName("latest-mac.yml")).toBe(false);
     expect(isBuilderDebugArtifactName("latest.yml")).toBe(false);
-    expect(isBuilderDebugArtifactName("T3-Planning-0.0.34-x86_64.AppImage")).toBe(false);
+    expect(isBuilderDebugArtifactName("T3-Orchestrator-0.0.34-x86_64.AppImage")).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 name: Desktop Release
 
-# Fork-owned T3 Planning desktop builds for leonaaardob/t3-orchestrator.
+# Fork-owned T3 Orchestrator desktop builds for leonaaardob/t3-orchestrator.
 # Intentionally omits upstream release.yml concerns: npm OIDC, Vercel, Apple
 # signing, Azure Trusted Signing, relay production secrets, and AUR.
 
@@ -68,7 +68,7 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "release_name=T3 Planning $version" >> "$GITHUB_OUTPUT"
+          echo "release_name=T3 Orchestrator $version" >> "$GITHUB_OUTPUT"
           echo "publish_release=${PUBLISH_RELEASE:-false}" >> "$GITHUB_OUTPUT"
 
           if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -568,6 +568,29 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
+          body: |
+            T3 Orchestrator — first desktop release.
+
+            Project-level orchestration for T3 Code.
+
+            Includes:
+            - Project Supervisor
+            - Agent Board
+            - autonomous scheduler/reconciler
+            - cross-provider implementation/review/repair presets
+            - independent review
+            - bounded repair cycles
+            - macOS, Windows and Linux desktop builds
+
+            Status:
+            Experimental.
+
+            Desktop binaries are currently unsigned.
+            macOS may show a Gatekeeper warning; Windows may show SmartScreen.
+            Do not disable system-wide protections.
+
+            This is not the official T3 Code project.
+            Upstream lives at https://github.com/pingdotgg/t3code.
           generate_release_notes: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}

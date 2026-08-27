@@ -19,11 +19,11 @@ afterEach(() => {
 });
 
 describe("branding", () => {
-  it("defaults to T3 Planning branding without desktop injection", async () => {
+  it("defaults to T3 Orchestrator branding without desktop injection", async () => {
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("T3 Planning");
-    expect(branding.APP_DISPLAY_NAME).toMatch(/^T3 Planning/);
+    expect(branding.APP_BASE_NAME).toBe("T3 Orchestrator");
+    expect(branding.APP_DISPLAY_NAME).toMatch(/^T3 Orchestrator/);
   });
 
   it("uses injected desktop branding when available", async () => {
@@ -50,8 +50,8 @@ describe("branding", () => {
   it("defaults to the fork product name when desktop branding is unavailable", async () => {
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("T3 Planning");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning (Dev)");
+    expect(branding.APP_BASE_NAME).toBe("T3 Orchestrator");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Orchestrator (Dev)");
   });
 
   it("normalizes hosted app channel metadata", async () => {
@@ -62,7 +62,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Orchestrator (Nightly)");
   });
 
   it("does not label the latest hosted app channel", async () => {
@@ -73,7 +73,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("latest");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Latest");
     expect(branding.APP_STAGE_LABEL).toBe("Latest");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Orchestrator");
   });
 
   it("ignores unknown hosted app channels", async () => {
@@ -88,7 +88,7 @@ describe("branding", () => {
 
 describe("branding logic", () => {
   it("derives the sidebar product suffix from the app base name", () => {
-    expect(resolveSidebarProductSuffix("T3 Planning")).toBe("Planning");
+    expect(resolveSidebarProductSuffix("T3 Orchestrator")).toBe("Orchestrator");
     expect(resolveSidebarProductSuffix("T3 Code")).toBe("Code");
     expect(resolveSidebarProductSuffix("Custom")).toBe("Custom");
   });
