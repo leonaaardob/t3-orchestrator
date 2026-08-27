@@ -1,6 +1,7 @@
 # T3 Orchestrator Patch
 
-Status: Active — synced onto upstream T3 Code **v0.0.33** (tag `planning-fork-upstream-sync-0.0.33`).
+Status: Active — synced onto upstream T3 Code **v0.0.34**; first public desktop
+Release is **T3 Orchestrator 0.0.34** on `leonaaardob/t3-orchestrator`.
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -430,6 +431,11 @@ browser pass over the Planning tab remain manual follow-ups.
   artifacts keep electron-builder's `x86_64` filename token. Collect steps
   drop `builder-debug.yml` / `builder-debug-*.yml`. Dry runs
   (`publish_release=false`) still merge and validate the release payload.
+- Root `vite.config.ts` test `exclude` includes `**/.t3/**` so board worktree
+  copies under `.t3/workspaces/` are not picked up by `vp test run`.
+- N → N+1 desktop updater smoke checklist:
+  `docs/operations/desktop-updater-smoke.md` (paired with the fork section of
+  `docs/operations/release.md`).
 
 ## Maintenance Rule
 

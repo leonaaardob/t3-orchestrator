@@ -23,6 +23,60 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
   `builder-debug*.yml` dumps are excluded from upload/release assets.
 - Does **not** use upstream signing, npm OIDC, Vercel, AUR, or relay production
   secrets. Do not restore upstream `.github/workflows/release.yml` wholesale.
+- Publish job may only target `leonaaardob/t3-orchestrator` and uses
+  `GITHUB_TOKEN` (`github.token`) — no Apple/Azure signing secrets.
+
+### Fork known limitations (unsigned distribution)
+
+Current public desktop builds are **unsigned**:
+
+- **macOS:** no Developer ID signing / notarization. Gatekeeper warning is
+  expected when opening a DMG/app downloaded from the internet.
+- **Windows:** no Authenticode / Trusted Signing. SmartScreen warning is
+  expected on first launch of the NSIS installer.
+- Do **not** ask users to disable system-wide Gatekeeper or SmartScreen.
+  Document the warning; signing/notarization remain a later distribution task.
+
+First public Release: **v0.0.34** / **T3 Orchestrator 0.0.34** (assets built
+from `df0e6fa`). Note: the git tag `refs/tags/v0.0.34` on this fork currently
+still points at the mirrored upstream commit (`badae6a`) while the GitHub
+Release `target_commitish` records the fork build commit. Downloadable Release
+assets are authoritative for users; for the next tag, create a **new** version
+tag at the fork commit and avoid reusing an upstream-mirrored tag tip.
+
+### Fork versioning (next release)
+
+Keep package versions aligned with upstream's `X.Y.Z` via
+`scripts/update-release-package-versions.ts` after syncing — do not invent a
+parallel scheme. Upstream has already prepared **0.0.35**; the normal next
+fork desktop release is therefore **0.0.35** once `main` includes that upstream
+bump (or an explicit workflow `version` override matching the packages). Prefer
+upstream sync before publishing N+1 so the fork does not ship a divergent
+version line.
+
+### Fork next-release backlog
+
+Lightweight follow-ups (no public issues required):
+
+- N → N+1 updater validation — see
+  [`desktop-updater-smoke.md`](./desktop-updater-smoke.md)
+- macOS signing / notarization
+- Windows signing
+- Physical Apple Silicon smoke
+- Physical Windows smoke
+- Rename CI Actions artifact IDs from `t3-planning-*` to orchestrator-prefixed
+  names (internal only; published asset names are already `T3-Orchestrator-*`)
+
+### Architecture → published asset names
+
+| Platform            | Asset                                          |
+| ------------------- | ---------------------------------------------- |
+| macOS Intel         | `T3-Orchestrator-<version>-x64.dmg` / `.zip`   |
+| macOS Apple Silicon | `T3-Orchestrator-<version>-arm64.dmg` / `.zip` |
+| Windows x64         | `T3-Orchestrator-<version>-x64.exe`            |
+| Windows ARM         | `T3-Orchestrator-<version>-arm64.exe`          |
+| Linux x64           | `T3-Orchestrator-<version>-x86_64.AppImage`    |
+| Linux ARM64         | `T3-Orchestrator-<version>-arm64.AppImage`     |
 
 The sections below describe **upstream** T3 Code's unified release workflow for
 reference. They are not the fork release path.
