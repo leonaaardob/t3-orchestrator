@@ -47,6 +47,13 @@ describe("branding", () => {
     expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
   });
 
+  it("defaults to the fork product name when desktop branding is unavailable", async () => {
+    const branding = await import("./branding");
+
+    expect(branding.APP_BASE_NAME).toBe("T3 Planning");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning (Dev)");
+  });
+
   it("normalizes hosted app channel metadata", async () => {
     vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");
 

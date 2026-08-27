@@ -66,6 +66,11 @@ authenticated.
 
 ## Desktop artifacts
 
+Desktop packaging compiles the Rust resource monitor (`native/resource-monitor`) as part of
+`vp run build:desktop` and the `dist:desktop:*` artifact tasks. Use **Rust stable >= 1.95**
+(`rustup update stable`; verify with `rustc --version`). Older toolchains fail while building
+`sysinfo` (for example: `rustc 1.93.0 is not supported; sysinfo requires rustc 1.95`).
+
 - `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target> --arch <arch>`: Builds a desktop artifact for a specific platform/target/arch.
 - `vp run dist:desktop:dmg`: Builds a shareable macOS `.dmg` into `./release`. Architecture defaults
   to the host, so this produces an arm64 DMG on Apple Silicon. Use `dist:desktop:dmg:arm64` or
