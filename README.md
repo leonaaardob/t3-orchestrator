@@ -162,14 +162,14 @@ Packaged **T3 Planning** builds are published on
 [GitHub Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
 (unsigned for now — no Apple/Windows signing).
 
-| Platform            | Download                               |
-| ------------------- | -------------------------------------- |
-| macOS Intel         | `T3-Planning-<version>-x64.dmg`        |
-| macOS Apple Silicon | `T3-Planning-<version>-arm64.dmg`      |
-| Windows Intel/AMD   | `T3-Planning-<version>-x64.exe`        |
-| Windows ARM         | `T3-Planning-<version>-arm64.exe`      |
-| Linux x64           | `T3-Planning-<version>-x64.AppImage`   |
-| Linux ARM64         | `T3-Planning-<version>-arm64.AppImage` |
+| Platform            | Download                                |
+| ------------------- | --------------------------------------- |
+| macOS Intel         | `T3-Planning-<version>-x64.dmg`         |
+| macOS Apple Silicon | `T3-Planning-<version>-arm64.dmg`       |
+| Windows Intel/AMD   | `T3-Planning-<version>-x64.exe`         |
+| Windows ARM         | `T3-Planning-<version>-arm64.exe`       |
+| Linux x64           | `T3-Planning-<version>-x86_64.AppImage` |
+| Linux ARM64         | `T3-Planning-<version>-arm64.AppImage`  |
 
 In-app updates also read that same Releases feed (`leonaaardob/t3-orchestrator`).
 

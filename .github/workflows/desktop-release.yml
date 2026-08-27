@@ -320,8 +320,10 @@ jobs:
             "release/*.yml"; do
             for file in $pattern; do
               # Skip electron-builder debug dumps; they are not updater assets.
+              # Matches builder-debug.yml and builder-debug-*.yml (see
+              # scripts/lib/release-assets.ts).
               base="$(basename "$file")"
-              if [[ "$base" == builder-debug-* ]]; then
+              if [[ "$base" == "builder-debug.yml" || "$base" == builder-debug-* ]]; then
                 continue
               fi
               cp "$file" release-publish/
@@ -362,27 +364,19 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish GitHub Release
+    # Always aggregate/validate the release payload after builds. GitHub Release
+    # creation stays gated on publish_release so dry runs prove merge + assets.
+    name: Aggregate release payload
     needs: [preflight, build]
     if: >-
       ${{ !failure() && !cancelled() &&
       needs.preflight.result == 'success' &&
-      needs.build.result == 'success' &&
-      needs.preflight.outputs.publish_release == 'true' }}
+      needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - name: Guard release repository
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REPOSITORY" != "leonaaardob/t3-orchestrator" ]]; then
-            echo "Refusing to publish desktop release outside leonaaardob/t3-orchestrator (got $GITHUB_REPOSITORY)." >&2
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -414,6 +408,15 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
+          # Defense in depth: drop any builder-debug dumps that slipped through
+          # collect (exact name or renamed builder-debug-win-*.yml).
+          for debug_file in release-assets/builder-debug.yml release-assets/builder-debug-*; do
+            if [[ -e "$debug_file" ]]; then
+              echo "Removing non-release builder debug dump: $debug_file"
+              rm -f "$debug_file"
+            fi
+          done
+
           for x64_manifest in release-assets/*-mac-x64.yml; do
             arm64_manifest="${x64_manifest%-x64.yml}.yml"
             if [[ -f "$arm64_manifest" ]]; then
@@ -424,6 +427,9 @@ jobs:
 
           found_windows_manifest=false
           for x64_manifest in release-assets/*-win-x64.yml; do
+            if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
+              continue
+            fi
             arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
             output_manifest="${x64_manifest/-win-x64.yml/.yml}"
             if [[ ! -f "$arm64_manifest" ]]; then
@@ -465,7 +471,98 @@ jobs:
           echo "Release assets after manifest merge:"
           ls -la release-assets
 
+      - name: Validate release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          missing=0
+          for required in \
+            release-assets/latest-mac.yml \
+            release-assets/latest.yml \
+            release-assets/latest-linux.yml; do
+            if [[ ! -f "$required" ]]; then
+              echo "Missing merged updater manifest: $required" >&2
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+          debug_leaks=(release-assets/builder-debug.yml release-assets/builder-debug-*)
+          for leak in "${debug_leaks[@]}"; do
+            if [[ -e "$leak" ]]; then
+              echo "builder-debug dump must not remain in release payload: $leak" >&2
+              exit 1
+            fi
+          done
+
+          leftover_per_arch=(
+            release-assets/*-mac-x64.yml
+            release-assets/*-win-x64.yml
+            release-assets/*-win-arm64.yml
+            release-assets/*-linux-x64.yml
+            release-assets/*-linux-arm64.yml
+          )
+          for leftover in "${leftover_per_arch[@]}"; do
+            if [[ -e "$leftover" ]]; then
+              echo "Per-arch updater manifest should have been merged away: $leftover" >&2
+              exit 1
+            fi
+          done
+
+          echo "Would-be GitHub Release assets:"
+          for pattern in \
+            release-assets/*.dmg \
+            release-assets/*.zip \
+            release-assets/*.AppImage \
+            release-assets/*.exe \
+            release-assets/*.blockmap \
+            release-assets/*.yml; do
+            for file in $pattern; do
+              basename "$file"
+            done
+          done | sort
+
+          echo "--- latest-mac.yml ---"
+          cat release-assets/latest-mac.yml
+          echo "--- latest.yml ---"
+          cat release-assets/latest.yml
+          echo "--- latest-linux.yml ---"
+          cat release-assets/latest-linux.yml
+
+          if ! grep -q 'blockMapSize:' release-assets/latest-linux.yml; then
+            echo "Merged latest-linux.yml is missing blockMapSize" >&2
+            exit 1
+          fi
+          if ! grep -q 'x86_64.AppImage' release-assets/latest-linux.yml; then
+            echo "Merged latest-linux.yml is missing x86_64 AppImage entry" >&2
+            exit 1
+          fi
+          if ! grep -q 'arm64.AppImage' release-assets/latest-linux.yml; then
+            echo "Merged latest-linux.yml is missing arm64 AppImage entry" >&2
+            exit 1
+          fi
+
+          echo "publish_release=${{ needs.preflight.outputs.publish_release }}"
+          if [[ "${{ needs.preflight.outputs.publish_release }}" != "true" ]]; then
+            echo "Dry run: release payload validated; skipping GitHub Release publish."
+          fi
+
+      - name: Guard release repository
+        if: ${{ needs.preflight.outputs.publish_release == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" != "leonaaardob/t3-orchestrator" ]]; then
+            echo "Refusing to publish desktop release outside leonaaardob/t3-orchestrator (got $GITHUB_REPOSITORY)." >&2
+            exit 1
+          fi
+
       - name: Publish release
+        if: ${{ needs.preflight.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}

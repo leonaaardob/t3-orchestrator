@@ -425,7 +425,11 @@ browser pass over the Planning tab remain manual follow-ups.
   force-added (`git add -f`) like the other tracked workflows.
 - Preview builds remain in `.github/workflows/desktop-macos-preview.yml`.
 - `scripts/merge-update-manifests.ts` accepts `linux` so multi-arch
-  `latest-linux.yml` can be merged the same way as mac/Windows.
+  `latest-linux.yml` can be merged the same way as mac/Windows. The parser
+  preserves per-file `blockMapSize` from real AppImage manifests. Linux x64
+  artifacts keep electron-builder's `x86_64` filename token. Collect steps
+  drop `builder-debug.yml` / `builder-debug-*.yml`. Dry runs
+  (`publish_release=false`) still merge and validate the release payload.
 
 ## Maintenance Rule
 

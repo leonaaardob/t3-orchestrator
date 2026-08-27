@@ -10,13 +10,17 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 
 - Trigger: manual `workflow_dispatch` only (no auto-publish on `main`).
 - Input `publish_release` defaults to `false` so builds can be inspected as
-  Actions artifacts before creating a public Release.
+  Actions artifacts before creating a public Release. Dry runs still aggregate
+  artifacts and merge updater manifests; only GitHub Release creation is skipped.
 - Version defaults to `apps/desktop/package.json` (aligned via
   `scripts/update-release-package-versions.ts`); optional `version` input
   overrides it.
 - Matrix: macOS / Windows / Linux × x64 + arm64, unsigned.
+- Linux x64 AppImages keep electron-builder's native `x86_64` arch token in the
+  filename (`T3-Planning-<version>-x86_64.AppImage`); arm64 stays `arm64`.
 - Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
   published with the installers so `electron-updater` can resolve the fork feed.
+  `builder-debug*.yml` dumps are excluded from upload/release assets.
 - Does **not** use upstream signing, npm OIDC, Vercel, AUR, or relay production
   secrets. Do not restore upstream `.github/workflows/release.yml` wholesale.
 

@@ -124,45 +124,100 @@ releaseDate: '2026-03-07T10:36:07.540Z'
   });
 
   it("merges arm64 and x64 Linux update manifests into one multi-arch manifest", () => {
+    // Fixture shape mirrors real electron-builder AppImage output from CI
+    // (x64 → x86_64 filename; per-file blockMapSize).
     const arm64 = parsePlatformUpdateManifest(
       "linux",
-      `version: 0.0.4
+      `version: 0.0.34
 files:
-  - url: T3-Planning-0.0.4-arm64.AppImage
-    sha512: arm64appimage
-    size: 125621344
-path: T3-Planning-0.0.4-arm64.AppImage
-sha512: arm64appimage
-releaseDate: '2026-03-07T10:32:14.587Z'
+  - url: T3-Planning-0.0.34-arm64.AppImage
+    sha512: 4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==
+    size: 164372257
+    blockMapSize: 170605
+path: T3-Planning-0.0.34-arm64.AppImage
+sha512: 4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==
+releaseDate: '2026-08-27T03:20:17.962Z'
 `,
       "latest-linux-arm64.yml",
     );
 
     const x64 = parsePlatformUpdateManifest(
       "linux",
-      `version: 0.0.4
+      `version: 0.0.34
 files:
-  - url: T3-Planning-0.0.4-x64.AppImage
-    sha512: x64appimage
-    size: 132000112
-path: T3-Planning-0.0.4-x64.AppImage
-sha512: x64appimage
-releaseDate: '2026-03-07T10:36:07.540Z'
+  - url: T3-Planning-0.0.34-x86_64.AppImage
+    sha512: WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==
+    size: 164433671
+    blockMapSize: 171803
+path: T3-Planning-0.0.34-x86_64.AppImage
+sha512: WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==
+releaseDate: '2026-08-27T03:20:06.212Z'
 `,
       "latest-linux-x64.yml",
     );
 
+    assert.equal(arm64.files[0]?.blockMapSize, 170605);
+    assert.equal(x64.files[0]?.blockMapSize, 171803);
+
     const merged = mergePlatformUpdateManifests("linux", arm64, x64);
 
-    assert.equal(merged.version, "0.0.4");
+    assert.equal(merged.version, "0.0.34");
     assert.deepStrictEqual(
-      merged.files.map((file) => file.url),
-      ["T3-Planning-0.0.4-arm64.AppImage", "T3-Planning-0.0.4-x64.AppImage"],
+      merged.files.map((file) => ({
+        url: file.url,
+        sha512: file.sha512,
+        size: file.size,
+        blockMapSize: file.blockMapSize,
+      })),
+      [
+        {
+          url: "T3-Planning-0.0.34-arm64.AppImage",
+          sha512:
+            "4IV7EUc66VS2EsbppPMAZt+3m0S3xZBaluNLg6jMVGc+EGxEhIbKad1flWpO1jLqiG5APLFhBzVOClTIdzwqkA==",
+          size: 164372257,
+          blockMapSize: 170605,
+        },
+        {
+          url: "T3-Planning-0.0.34-x86_64.AppImage",
+          sha512:
+            "WHPLkFM4fA+BJV6qGNjUBiL01mF+Z+x4GjIEkbHKVgxTAWfw+2QexzRDb7vbs+bwWFEo1KfwgwWAIOageVqS/g==",
+          size: 164433671,
+          blockMapSize: 171803,
+        },
+      ],
     );
 
     const serialized = serializePlatformUpdateManifest("linux", merged);
     assert.ok(!serialized.includes("path:"));
     assert.equal((serialized.match(/- url:/g) ?? []).length, 2);
+    assert.ok(serialized.includes("blockMapSize: 170605"));
+    assert.ok(serialized.includes("blockMapSize: 171803"));
+    assert.ok(serialized.includes("T3-Planning-0.0.34-x86_64.AppImage"));
+
+    const reparsed = parsePlatformUpdateManifest("linux", serialized, "latest-linux.yml");
+    assert.deepStrictEqual(
+      reparsed.files.map((file) => file.blockMapSize),
+      [170605, 171803],
+    );
+  });
+
+  it("still rejects unknown indented file fields", () => {
+    assert.throws(
+      () =>
+        parsePlatformUpdateManifest(
+          "linux",
+          `version: 0.0.34
+files:
+  - url: T3-Planning-0.0.34-arm64.AppImage
+    sha512: arm64appimage
+    size: 1
+    unknownField: 42
+releaseDate: '2026-08-27T03:20:17.962Z'
+`,
+          "latest-linux-arm64.yml",
+        ),
+      /unsupported line/,
+    );
   });
 
   it("rejects mismatched manifest versions", () => {

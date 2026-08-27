@@ -25,7 +25,7 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     displayName: "T3 Planning",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
-    appImagePath: Option.some("/home/alice/Applications/T3-Planning-0.0.33-x64.AppImage"),
+    appImagePath: Option.some("/home/alice/Applications/T3-Planning-0.0.33-x86_64.AppImage"),
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
@@ -165,7 +165,7 @@ describe("DesktopLinuxUrlHandler", () => {
       );
       assert.include(
         recorded.files[0]?.content,
-        'Exec="/home/alice/Applications/T3-Planning-0.0.33-x64.AppImage" %U',
+        'Exec="/home/alice/Applications/T3-Planning-0.0.33-x86_64.AppImage" %U',
       );
       assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
       assert.deepEqual(recorded.commands, [

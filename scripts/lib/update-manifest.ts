@@ -2,6 +2,8 @@ export interface UpdateManifestFile {
   readonly url: string;
   readonly sha512: string;
   readonly size: number;
+  /** Present on AppImage (and some other) electron-builder file entries. */
+  readonly blockMapSize?: number;
 }
 
 export type UpdateManifestScalar = string | number | boolean;
@@ -17,6 +19,7 @@ interface MutableUpdateManifestFile {
   url?: string;
   sha512?: string;
   size?: number;
+  blockMapSize?: number;
 }
 
 function stripSingleQuotes(value: string): string {
@@ -48,6 +51,9 @@ function parseFileRecord(
     url: currentFile.url,
     sha512: currentFile.sha512,
     size: currentFile.size,
+    ...(typeof currentFile.blockMapSize === "number"
+      ? { blockMapSize: currentFile.blockMapSize }
+      : {}),
   };
 }
 
@@ -62,6 +68,10 @@ function parseScalarValue(rawValue: string): UpdateManifestScalar {
     return Number(value);
   }
   return value;
+}
+
+function sameOptionalNumber(left: number | undefined, right: number | undefined): boolean {
+  return left === right;
 }
 
 export function parseUpdateManifest(
@@ -110,6 +120,18 @@ export function parseUpdateManifest(
         );
       }
       currentFile.size = Number(fileSizeMatch[1]);
+      continue;
+    }
+
+    // electron-builder embeds this on AppImage (and some other) file entries.
+    const fileBlockMapSizeMatch = line.match(/^    blockMapSize:\s*(\d+)$/);
+    if (fileBlockMapSizeMatch?.[1]) {
+      if (currentFile === null) {
+        throw new Error(
+          `Invalid ${platformLabel} update manifest at ${sourcePath}:${lineNumber}: blockMapSize without a file entry.`,
+        );
+      }
+      currentFile.blockMapSize = Number(fileBlockMapSizeMatch[1]);
       continue;
     }
 
@@ -219,7 +241,12 @@ export function mergeUpdateManifests(
   const filesByUrl = new Map<string, UpdateManifestFile>();
   for (const file of [...primary.files, ...secondary.files]) {
     const existing = filesByUrl.get(file.url);
-    if (existing && (existing.sha512 !== file.sha512 || existing.size !== file.size)) {
+    if (
+      existing &&
+      (existing.sha512 !== file.sha512 ||
+        existing.size !== file.size ||
+        !sameOptionalNumber(existing.blockMapSize, file.blockMapSize))
+    ) {
       throw new Error(
         `Cannot merge ${platformLabel} update manifests: conflicting file entry for ${file.url}.`,
       );
@@ -259,6 +286,9 @@ export function serializeUpdateManifest(
     lines.push(`  - url: ${file.url}`);
     lines.push(`    sha512: ${file.sha512}`);
     lines.push(`    size: ${file.size}`);
+    if (typeof file.blockMapSize === "number") {
+      lines.push(`    blockMapSize: ${file.blockMapSize}`);
+    }
   }
 
   for (const key of Object.keys(manifest.extras).toSorted()) {
