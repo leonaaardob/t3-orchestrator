@@ -87,6 +87,8 @@ authenticated.
   `127.0.0.1` document URL, and not an explicit `index.html` path).
 - Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an
   auth token for WebSocket/API traffic.
+- Desktop artifacts compile the Rust `resource-monitor` binary during staging. Use **Rust >= 1.95**
+  (`rustup update stable`). Older toolchains fail while building `sysinfo`.
 - Your tester can still open it on macOS by right-clicking the app and choosing **Open** on first
   launch.
 - To keep staging files for debugging package contents, run: `vp run dist:desktop:dmg --keep-stage`

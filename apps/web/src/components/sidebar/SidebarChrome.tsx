@@ -8,6 +8,8 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
+import { APP_BASE_NAME } from "../../branding";
+import { resolveSidebarProductSuffix } from "../../branding.logic";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
@@ -80,6 +82,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 });
 
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  const productSuffix = resolveSidebarProductSuffix(APP_BASE_NAME);
+
   return (
     <Link
       aria-label="Go to threads"
@@ -96,7 +100,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
-        Code
+        {productSuffix}
       </span>
     </Link>
   );

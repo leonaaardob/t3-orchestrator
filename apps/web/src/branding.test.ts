@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
+  resolveSidebarProductSuffix,
 } from "./branding.logic";
 
 const originalWindow = globalThis.window;
@@ -18,6 +19,13 @@ afterEach(() => {
 });
 
 describe("branding", () => {
+  it("defaults to T3 Planning branding without desktop injection", async () => {
+    const branding = await import("./branding");
+
+    expect(branding.APP_BASE_NAME).toBe("T3 Planning");
+    expect(branding.APP_DISPLAY_NAME).toMatch(/^T3 Planning/);
+  });
+
   it("uses injected desktop branding when available", async () => {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -47,7 +55,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning (Nightly)");
   });
 
   it("does not label the latest hosted app channel", async () => {
@@ -58,7 +66,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("latest");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Latest");
     expect(branding.APP_STAGE_LABEL).toBe("Latest");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Planning");
   });
 
   it("ignores unknown hosted app channels", async () => {
@@ -72,6 +80,12 @@ describe("branding", () => {
 });
 
 describe("branding logic", () => {
+  it("derives the sidebar product suffix from the app base name", () => {
+    expect(resolveSidebarProductSuffix("T3 Planning")).toBe("Planning");
+    expect(resolveSidebarProductSuffix("T3 Code")).toBe("Code");
+    expect(resolveSidebarProductSuffix("Custom")).toBe("Custom");
+  });
+
   it("returns Nightly for nightly primary server versions", () => {
     expect(
       resolveServerBackedAppStageLabel({

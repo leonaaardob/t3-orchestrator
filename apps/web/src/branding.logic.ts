@@ -1,5 +1,11 @@
 const NIGHTLY_SERVER_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
 
+/** Sidebar wordmark suffix after the shared T3 mark (`T3 Planning` → `Planning`). */
+export function resolveSidebarProductSuffix(baseName: string): string {
+  const trimmed = baseName.trim();
+  return trimmed.startsWith("T3 ") ? trimmed.slice(3) : trimmed;
+}
+
 export function formatAppDisplayName(input: {
   readonly baseName: string;
   readonly stageLabel: string;
