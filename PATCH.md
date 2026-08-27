@@ -1,6 +1,6 @@
 # T3 Orchestrator Patch
 
-Status: Active — synced onto upstream T3 Code **v0.0.34**; first public desktop
+Status: Active — synced through upstream T3 Code **v0.0.35**; first public desktop
 Release is **T3 Orchestrator 0.0.34** on `leonaaardob/t3-orchestrator`.
 
 Purpose: document the fork-specific Planning, agent-board, and
@@ -422,6 +422,11 @@ browser pass over the Planning tab remain manual follow-ups.
   publishes a GitHub Release to `leonaaardob/t3-orchestrator` with
   electron-updater metadata. It must not restore upstream `release.yml`
   (npm OIDC, Vercel, Apple/Azure signing, relay production secrets).
+  Fork release tags are `orchestrator-vX.Y.Z`; package and updater versions
+  remain `X.Y.Z`. The desktop app uses the independent bundle ID
+  `com.t3orchestrator.app`, `t3orchestrator://` protocol, and `T3 Orchestrator`
+  user-data profile so it can run beside official T3 Code. Existing shared T3
+  Code state is intentionally not migrated.
   Note: `.gitignore` ignores `.github/workflows/`; new workflow files must be
   force-added (`git add -f`) like the other tracked workflows.
 - Preview builds remain in `.github/workflows/desktop-macos-preview.yml`.

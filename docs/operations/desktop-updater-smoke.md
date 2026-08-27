@@ -9,7 +9,7 @@
 
 ## Preconditions
 
-- Current public baseline: **0.0.34** (`v0.0.34` Release assets / merged
+- Current public baseline: **0.0.34** (`orchestrator-v0.0.34` Release assets / merged
   `latest*.yml`).
 - Next version **N+1** is published on
   [`leonaaardob/t3-orchestrator` Releases](https://github.com/leonaaardob/t3-orchestrator/releases)

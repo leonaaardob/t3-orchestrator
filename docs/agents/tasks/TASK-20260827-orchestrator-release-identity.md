@@ -1,6 +1,6 @@
 # TASK-20260827-orchestrator-release-identity
 
-Status: `in-progress`
+Status: `tested`
 Agent eligible: no
 Slice: `docs/agents/slices/orchestrator-release-identity.md`
 
@@ -47,4 +47,6 @@ Allowed write scopes:
 
 ## Proof Of Done
 
-In progress.
+- Retagged the existing 0.0.34 release without re-uploading its assets.
+- Merged upstream 0.0.35 preparation normally.
+- Added fork-specific release tag and desktop technical identities.

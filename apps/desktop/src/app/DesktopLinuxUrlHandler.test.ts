@@ -23,7 +23,7 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     isPackaged: true,
     isDevelopment: false,
     displayName: "T3 Orchestrator",
-    linuxWmClass: "t3code",
+    linuxWmClass: "t3-orchestrator",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Orchestrator-0.0.33-x86_64.AppImage"),
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
@@ -107,7 +107,7 @@ describe("DesktopLinuxUrlHandler", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
       displayName: "T3 Code (Nightly)",
       execTarget: '/home/al ice/Apps/T3 "100%" $HOME\\x.AppImage',
-      scheme: "t3code",
+      scheme: "t3orchestrator",
     });
 
     assert.include(entry, "[Desktop Entry]");
@@ -127,8 +127,8 @@ describe("DesktopLinuxUrlHandler", () => {
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
-      scheme: "t3code",
-      desktopEntryPath: "/home/alice/.local/share/applications/t3code-url-handler.desktop",
+      scheme: "t3orchestrator",
+      desktopEntryPath: "/home/alice/.local/share/applications/t3-orchestrator-url-handler.desktop",
       cause: new Error("boom"),
     });
     assert.equal(

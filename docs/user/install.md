@@ -19,6 +19,11 @@ This starts the T3 Code server on your machine and opens the local web app. Use
 
 ## Desktop App
 
+T3 Orchestrator uses its own application profile and can be installed beside
+official T3 Code. Upgrading from T3 Orchestrator 0.0.34 starts a separate
+profile; it does not import settings or connections from the shared legacy
+T3 Code location.
+
 Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.
