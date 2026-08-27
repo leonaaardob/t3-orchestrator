@@ -2,6 +2,29 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
+## Fork desktop releases (T3 Orchestrator)
+
+This repository publishes **T3 Planning** desktop binaries through the
+fork-owned workflow `.github/workflows/desktop-release.yml` to
+[`leonaaardob/t3-orchestrator` Releases](https://github.com/leonaaardob/t3-orchestrator/releases).
+
+- Trigger: manual `workflow_dispatch` only (no auto-publish on `main`).
+- Input `publish_release` defaults to `false` so builds can be inspected as
+  Actions artifacts before creating a public Release.
+- Version defaults to `apps/desktop/package.json` (aligned via
+  `scripts/update-release-package-versions.ts`); optional `version` input
+  overrides it.
+- Matrix: macOS / Windows / Linux × x64 + arm64, unsigned.
+- Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
+  published with the installers so `electron-updater` can resolve the fork feed.
+- Does **not** use upstream signing, npm OIDC, Vercel, AUR, or relay production
+  secrets. Do not restore upstream `.github/workflows/release.yml` wholesale.
+
+The sections below describe **upstream** T3 Code's unified release workflow for
+reference. They are not the fork release path.
+
+---
+
 This document covers the unified release workflow for stable and nightly desktop releases.
 
 ## What the workflow does

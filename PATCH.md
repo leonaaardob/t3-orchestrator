@@ -415,8 +415,17 @@ browser pass over the Planning tab remain manual follow-ups.
 - Provider orchestration or projection-query changes may affect the runner,
   scheduler reconciliation, continuation retries, and Run/claim handoff.
 - CSS/component library changes may affect `AgentBoardPanel` layout.
-- GitHub Actions workflow files are intentionally omitted from this public
-  fork's initial push unless the publishing token has GitHub `workflow` scope.
+- Desktop packaging CI is fork-owned:
+  `.github/workflows/desktop-release.yml` builds T3 Planning for macOS /
+  Windows / Linux (x64 + arm64), uploads Actions artifacts, and optionally
+  publishes a GitHub Release to `leonaaardob/t3-orchestrator` with
+  electron-updater metadata. It must not restore upstream `release.yml`
+  (npm OIDC, Vercel, Apple/Azure signing, relay production secrets).
+  Note: `.gitignore` ignores `.github/workflows/`; new workflow files must be
+  force-added (`git add -f`) like the other tracked workflows.
+- Preview builds remain in `.github/workflows/desktop-macos-preview.yml`.
+- `scripts/merge-update-manifests.ts` accepts `linux` so multi-arch
+  `latest-linux.yml` can be merged the same way as mac/Windows.
 
 ## Maintenance Rule
 

@@ -16,11 +16,13 @@ import {
   type UpdateManifest,
 } from "./lib/update-manifest.ts";
 
-const UpdateManifestPlatform = Schema.Literals(["mac", "win"]);
+const UpdateManifestPlatform = Schema.Literals(["mac", "win", "linux"]);
 export type UpdateManifestPlatform = typeof UpdateManifestPlatform.Type;
 
 function getPlatformLabel(platform: UpdateManifestPlatform): string {
-  return platform === "mac" ? "macOS" : "Windows";
+  if (platform === "mac") return "macOS";
+  if (platform === "linux") return "Linux";
+  return "Windows";
 }
 
 export function parsePlatformUpdateManifest(

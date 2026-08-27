@@ -156,6 +156,23 @@ After implementation completes:
 - At least one provider CLI installed and authenticated (Codex, Claude, Cursor, OpenCode, …)
 - [Vite+](https://viteplus.dev/guide/) (`vp`) — the repo package manager and task runner
 
+### Desktop downloads
+
+Packaged **T3 Planning** builds are published on
+[GitHub Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
+(unsigned for now — no Apple/Windows signing).
+
+| Platform            | Download                               |
+| ------------------- | -------------------------------------- |
+| macOS Intel         | `T3-Planning-<version>-x64.dmg`        |
+| macOS Apple Silicon | `T3-Planning-<version>-arm64.dmg`      |
+| Windows Intel/AMD   | `T3-Planning-<version>-x64.exe`        |
+| Windows ARM         | `T3-Planning-<version>-arm64.exe`      |
+| Linux x64           | `T3-Planning-<version>-x64.AppImage`   |
+| Linux ARM64         | `T3-Planning-<version>-arm64.AppImage` |
+
+In-app updates also read that same Releases feed (`leonaaardob/t3-orchestrator`).
+
 ### Clone and run this fork
 
 Keep this checkout separate from a normal T3 Code install:
@@ -255,7 +272,7 @@ Do not push planning changes to upstream unless you are contributing through the
 ## Known limitations
 
 - No official T3 plugin system — this is a modified fork, not a drop-in extension.
-- GitHub Actions workflows are omitted from this public repository (publish token lacked `workflow` scope).
+- Desktop release CI is fork-owned (`.github/workflows/desktop-release.yml`); it does not use upstream signing, npm, or Vercel secrets.
 - `.t3/` runtime data, workspaces, and local board state are gitignored — seed from the example template.
 - Typed `WORKFLOW.md` front-matter validation and hook execution are not implemented yet.
 - A generic Cursor ACP fix for composite model slugs (e.g. `gemini-3.7-flash-high`) lives on `main` for validation; upstream may absorb it separately — it is not planning-specific.

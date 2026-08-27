@@ -123,6 +123,48 @@ releaseDate: '2026-03-07T10:36:07.540Z'
     assert.equal((serialized.match(/- url:/g) ?? []).length, 4);
   });
 
+  it("merges arm64 and x64 Linux update manifests into one multi-arch manifest", () => {
+    const arm64 = parsePlatformUpdateManifest(
+      "linux",
+      `version: 0.0.4
+files:
+  - url: T3-Planning-0.0.4-arm64.AppImage
+    sha512: arm64appimage
+    size: 125621344
+path: T3-Planning-0.0.4-arm64.AppImage
+sha512: arm64appimage
+releaseDate: '2026-03-07T10:32:14.587Z'
+`,
+      "latest-linux-arm64.yml",
+    );
+
+    const x64 = parsePlatformUpdateManifest(
+      "linux",
+      `version: 0.0.4
+files:
+  - url: T3-Planning-0.0.4-x64.AppImage
+    sha512: x64appimage
+    size: 132000112
+path: T3-Planning-0.0.4-x64.AppImage
+sha512: x64appimage
+releaseDate: '2026-03-07T10:36:07.540Z'
+`,
+      "latest-linux-x64.yml",
+    );
+
+    const merged = mergePlatformUpdateManifests("linux", arm64, x64);
+
+    assert.equal(merged.version, "0.0.4");
+    assert.deepStrictEqual(
+      merged.files.map((file) => file.url),
+      ["T3-Planning-0.0.4-arm64.AppImage", "T3-Planning-0.0.4-x64.AppImage"],
+    );
+
+    const serialized = serializePlatformUpdateManifest("linux", merged);
+    assert.ok(!serialized.includes("path:"));
+    assert.equal((serialized.match(/- url:/g) ?? []).length, 2);
+  });
+
   it("rejects mismatched manifest versions", () => {
     const primary = parsePlatformUpdateManifest(
       "win",
@@ -288,7 +330,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
 
   it.effect("rejects invalid platform values during cli parsing", () =>
     Effect.gen(function* () {
-      const error = yield* runCli(["--platform", "linux", "a.yml", "b.yml"]).pipe(Effect.flip);
+      const error = yield* runCli(["--platform", "android", "a.yml", "b.yml"]).pipe(Effect.flip);
 
       if (!CliError.isCliError(error)) {
         assert.fail(`Expected CliError, got ${String(error)}`);
@@ -302,7 +344,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       }
 
       assert.equal(platformError.option, "platform");
-      assert.equal(platformError.value, "linux");
+      assert.equal(platformError.value, "android");
     }),
   );
 });
