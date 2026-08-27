@@ -15,44 +15,66 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 - Version defaults to `apps/desktop/package.json` (aligned via
   `scripts/update-release-package-versions.ts`); optional `version` input
   overrides it.
-- Matrix: macOS / Windows / Linux × x64 + arm64, unsigned.
+- Matrix: macOS / Windows / Linux × x64 + arm64. macOS is Developer ID signed
+  and notarized; Windows and Linux remain unsigned.
 - Linux x64 AppImages keep electron-builder's native `x86_64` arch token in the
   filename (`T3-Orchestrator-<version>-x86_64.AppImage`); arm64 stays `arm64`.
 - Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
   published with the installers so `electron-updater` can resolve the fork feed.
   `builder-debug*.yml` dumps are excluded from upload/release assets.
-- Does **not** use upstream signing, npm OIDC, Vercel, AUR, or relay production
-  secrets. Do not restore upstream `.github/workflows/release.yml` wholesale.
+- Does **not** use upstream npm OIDC, Vercel, Azure signing, AUR, or relay
+  production secrets. Do not restore upstream `.github/workflows/release.yml`
+  wholesale.
 - Publish job may only target `leonaaardob/t3-orchestrator` and uses
-  `GITHUB_TOKEN` (`github.token`) — no Apple/Azure signing secrets.
+  `GITHUB_TOKEN` (`github.token`). macOS build jobs use only the fork-owned
+  Apple secrets listed below.
 
-### Fork known limitations (unsigned distribution)
+### Fork signing and notarization
 
-Current public desktop builds are **unsigned**:
+Current public builds through **0.0.35** are unsigned. The next public macOS
+release must be Developer ID signed and notarized before it is published.
 
-- **macOS:** no Developer ID signing / notarization. Gatekeeper warning is
-  expected when opening a DMG/app downloaded from the internet.
+- **macOS:** release jobs require a complete signing configuration, including
+  non-publishing dispatches. This is intentional: an unsigned dry run is not
+  proof that the updater can install a signed release. The job verifies the app
+  extracted from the updater ZIP with `codesign`, `spctl`, its bundle identity,
+  version, Team ID, and the app's stapled notarization ticket. The DMG retains
+  that stapled app; it is not a separately notarized updater payload.
 - **Windows:** no Authenticode / Trusted Signing. SmartScreen warning is
   expected on first launch of the NSIS installer.
 - Do **not** ask users to disable system-wide Gatekeeper or SmartScreen.
-  Document the warning; signing/notarization remain a later distribution task.
+  Only the macOS warning is expected to disappear after the signed release.
 
-First public Release: **v0.0.34** / **T3 Orchestrator 0.0.34** (assets built
-from `df0e6fa`). Note: the git tag `refs/tags/v0.0.34` on this fork currently
-still points at the mirrored upstream commit (`badae6a`) while the GitHub
-Release `target_commitish` records the fork build commit. Downloadable Release
-assets are authoritative for users; for the next tag, create a **new** version
-tag at the fork commit and avoid reusing an upstream-mirrored tag tip.
+Required GitHub Actions secrets (all are fork-owned; never reuse upstream
+secrets):
+
+- `T3_ORCHESTRATOR_CSC_LINK`: base64-encoded `.p12` export containing the
+  **Developer ID Application** certificate and private key.
+- `T3_ORCHESTRATOR_CSC_KEY_PASSWORD`: password for that `.p12` export.
+- `T3_ORCHESTRATOR_APPLE_TEAM_ID`: the 10-character Apple Developer Team ID.
+- `T3_ORCHESTRATOR_APPLE_API_KEY`: App Store Connect API `.p8` key contents.
+- `T3_ORCHESTRATOR_APPLE_API_KEY_ID`: App Store Connect API key ID.
+- `T3_ORCHESTRATOR_APPLE_API_ISSUER`: App Store Connect API issuer ID.
+
+The workflow maps these only for the macOS packaging step to electron-builder's
+standard `CSC_*` / `APPLE_API_*` variables. electron-builder submits with
+Apple's `notarytool` API-key flow; no Apple ID, app-specific password, or
+provisioning profile is needed for this Clerk-free app. The minimal hardened
+runtime entitlements are in `apps/desktop/entitlements.mac*.plist`; do not add
+Associated Domains, sandbox, or other app capabilities without a product need.
+
+Current public Release: **0.0.35** at `orchestrator-v0.0.35`, built from
+`20ffedd28b271e1631ac583875cbb7fc5751029e`. Its macOS assets are unsigned;
+do not replace or mutate them in place.
 
 ### Fork versioning (next release)
 
 Keep package versions aligned with upstream's `X.Y.Z` via
 `scripts/update-release-package-versions.ts` after syncing — do not invent a
 parallel scheme. Upstream has already prepared **0.0.35**; the normal next
-fork desktop release is therefore **0.0.35** once `main` includes that upstream
-bump (or an explicit workflow `version` override matching the packages). Prefer
-upstream sync before publishing N+1 so the fork does not ship a divergent
-version line.
+fork desktop release is **0.0.36** / `orchestrator-v0.0.36`: upstream stable
+remains 0.0.35 while its nightly line has begun 0.0.36. Advance package
+versions deliberately and publish only after both signed macOS dry runs pass.
 
 ### Fork next-release backlog
 
@@ -60,7 +82,6 @@ Lightweight follow-ups (no public issues required):
 
 - N → N+1 updater validation — see
   [`desktop-updater-smoke.md`](./desktop-updater-smoke.md)
-- macOS signing / notarization
 - Windows signing
 - Physical Apple Silicon smoke
 - Physical Windows smoke

@@ -9,24 +9,24 @@
 
 ## Preconditions
 
-- Current public baseline: **0.0.34** (`orchestrator-v0.0.34` Release assets / merged
-  `latest*.yml`).
+- Current public baseline: **0.0.35** (`orchestrator-v0.0.35` Release assets /
+  merged `latest*.yml`), whose macOS app is unsigned.
 - Next version **N+1** is published on
   [`leonaaardob/t3-orchestrator` Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
   with merged updater manifests (`latest-mac.yml`, `latest.yml`,
   `latest-linux.yml`) and the expected `T3-Orchestrator-*` artifacts.
-- Client under test was installed from the **0.0.34** feed (not a local
+- Client under test was installed from the **0.0.35** public feed (not a local
   unsigned preview with publish omitted).
 - No `T3CODE_DESKTOP_UPDATE_REPOSITORY` override unless deliberately testing
   override behavior.
-- Binaries remain **unsigned** until signing lands — expect Gatekeeper /
-  SmartScreen prompts; do not disable OS protections for the smoke.
+- The next macOS ZIP must contain a signed/notarized app. Windows remains
+  unsigned; expect SmartScreen there and do not disable OS protections.
 
 ## What “pass” means
 
 On each required platform:
 
-1. Installed **0.0.34** client detects a newer version (**N+1**).
+1. Installed **0.0.35** client detects a newer version (**N+1**).
 2. Updater selects the **correct architecture** for the host.
 3. Download URL / artifact name matches the platform mapping below.
 4. Metadata verification succeeds (`sha512` / size from the merged manifest).
@@ -34,14 +34,14 @@ On each required platform:
 
 ## Architecture → asset mapping
 
-| Host                        | Expected N+1 artifact                          |
-| --------------------------- | ---------------------------------------------- |
-| macOS Intel (x64)           | `T3-Orchestrator-<N+1>-x64.dmg` (+ zip feed)   |
-| macOS Apple Silicon (arm64) | `T3-Orchestrator-<N+1>-arm64.dmg` (+ zip feed) |
-| Windows x64                 | `T3-Orchestrator-<N+1>-x64.exe`                |
-| Windows ARM                 | `T3-Orchestrator-<N+1>-arm64.exe`              |
-| Linux x64                   | `T3-Orchestrator-<N+1>-x86_64.AppImage`        |
-| Linux ARM64                 | `T3-Orchestrator-<N+1>-arm64.AppImage`         |
+| Host                        | Expected N+1 artifact                                  |
+| --------------------------- | ------------------------------------------------------ |
+| macOS Intel (x64)           | `T3-Orchestrator-<N+1>-x64.zip` (DMG also published)   |
+| macOS Apple Silicon (arm64) | `T3-Orchestrator-<N+1>-arm64.zip` (DMG also published) |
+| Windows x64                 | `T3-Orchestrator-<N+1>-x64.exe`                        |
+| Windows ARM                 | `T3-Orchestrator-<N+1>-arm64.exe`                      |
+| Linux x64                   | `T3-Orchestrator-<N+1>-x86_64.AppImage`                |
+| Linux ARM64                 | `T3-Orchestrator-<N+1>-arm64.AppImage`                 |
 
 Manifest feeds: mac → `latest-mac.yml`, Windows → `latest.yml`, Linux →
 `latest-linux.yml`. Linux entries must keep `blockMapSize`.
@@ -65,7 +65,7 @@ If physical hardware is unavailable for Windows ARM or Linux ARM64:
 
 ## Suggested procedure (per platform)
 
-1. Install and launch **0.0.34** from the public Release asset for that arch.
+1. Install and launch **0.0.35** from the public Release asset for that arch.
 2. Clear any stale override env vars; confirm update repo is
    `leonaaardob/t3-orchestrator`.
 3. Trigger in-app update check (or wait for the normal check).
@@ -81,11 +81,13 @@ If physical hardware is unavailable for Windows ARM or Linux ARM64:
 - **Wrong arch asset:** inspect merged `latest*.yml` file list and host arch.
 - **Hash / size failure:** re-download Release assets; ensure no partial
   upload and no leftover per-arch temporary manifests on the Release.
-- **Install blocked by OS:** unsigned limitation (Gatekeeper / SmartScreen);
-  document bypass used for smoke only; do not ask users to disable defenses.
+- **Install blocked on macOS:** retain the failed updater logs and confirm the
+  downloaded ZIP's app passes the release verification commands. This smoke is
+  specifically the unsigned 0.0.35 → signed N+1 transition; do not substitute
+  0.0.34 unless testing it as a separate compatibility case.
 
 ## Related docs
 
 - Fork release path: [`release.md`](./release.md) (top “Fork desktop releases”).
-- Known unsigned limitations: same file, “Fork known limitations”.
+- Signing/notarization setup: same file, “Fork signing and notarization”.
 - Next-release backlog: same file, “Fork next-release backlog”.

@@ -442,8 +442,10 @@ browser pass over the Planning tab remain manual follow-ups.
   `.github/workflows/desktop-release.yml` builds T3 Orchestrator for macOS /
   Windows / Linux (x64 + arm64), uploads Actions artifacts, and optionally
   publishes a GitHub Release to `leonaaardob/t3-orchestrator` with
-  electron-updater metadata. It must not restore upstream `release.yml`
-  (npm OIDC, Vercel, Apple/Azure signing, relay production secrets).
+  electron-updater metadata. macOS uses fork-owned Developer ID and App Store
+  Connect API secrets to sign, notarize, staple, and verify the updater ZIP;
+  Windows remains unsigned. It must not restore upstream `release.yml`
+  (npm OIDC, Vercel, Azure signing, relay production secrets).
   Fork release tags are `orchestrator-vX.Y.Z`; package and updater versions
   remain `X.Y.Z`. The desktop app uses the independent bundle ID
   `com.t3orchestrator.app`, `t3orchestrator://` protocol, and `T3 Orchestrator`

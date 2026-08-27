@@ -98,9 +98,12 @@ Desktop packaging compiles the Rust resource monitor (`native/resource-monitor`)
   launch.
 - To keep staging files for debugging package contents, run: `vp run dist:desktop:dmg --keep-stage`
 - To allow code-signing/notarization when configured in CI/secrets, add: `--signed`.
-- Signed macOS builds also require `T3CODE_APPLE_TEAM_ID` and
-  `T3CODE_MACOS_PROVISIONING_PROFILE`. The passkey RP domain is derived from
-  `T3CODE_CLERK_PUBLISHABLE_KEY` unless `T3CODE_CLERK_PASSKEY_RP_DOMAINS` overrides it.
+  Signed macOS builds require electron-builder's `CSC_LINK`,
+  `CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and
+  `APPLE_API_ISSUER`; the release workflow supplies them from fork-owned
+  secrets. `APPLE_TEAM_ID` is used by its verification step. The app uses only
+  the checked-in hardened-runtime Electron entitlements; it has no Clerk or
+  Associated Domains provisioning-profile requirement.
 - Windows `--signed` uses Azure Trusted Signing and expects:
   `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`,
   `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`, and `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.

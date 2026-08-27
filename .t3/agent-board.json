@@ -8,6 +8,49 @@
   },
   "cards": [
     {
+      "id": "ORCH-036-macos-signing",
+      "title": "Sign and notarize T3 Orchestrator macOS releases",
+      "priority": 1,
+      "area": "Release Engineering",
+      "slice": "Orchestrator macOS signing and notarization",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260827-orchestrator-macos-signing.md",
+      "slicePlanPath": "docs/agents/slices/orchestrator-macos-signing.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Release workflow, macOS packaging, and public version strategy share one artifact contract.",
+        "conflictsWith": ["ORCH-035-release-identity"],
+        "allowedWriteScopes": [
+          ".github/workflows/desktop-release.yml",
+          "apps/desktop/entitlements.mac.plist",
+          "apps/desktop/entitlements.mac.inherit.plist",
+          "scripts/build-desktop-artifact.ts",
+          "scripts/build-desktop-artifact.test.ts",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 1,
+        "currentError": "Waiting for fork-owned Apple Developer certificate and App Store Connect API credentials before signed GitHub Actions validation."
+      },
+      "createdAt": "2026-08-27T00:00:00.000Z",
+      "updatedAt": "2026-08-27T00:00:00.000Z",
+      "state": "Running",
+      "intentBrief": {
+        "intent": "Ship signed and notarized macOS updater ZIPs without changing the updater.",
+        "desiredOutcome": "A physical Mac can update public unsigned 0.0.35 to signed 0.0.36.",
+        "acceptanceCriteria": [
+          "Both macOS signed dry runs pass before publication.",
+          "Updater ZIP contains a signed com.t3orchestrator.app."
+        ],
+        "constraints": ["No upstream secrets.", "No public release before validation."],
+        "nonGoals": ["Windows/Linux signing.", "Updater redesign."],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-035-release-identity",
       "title": "Repair 0.0.35 isolated-desktop release blockers",
       "priority": 1,
