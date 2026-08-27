@@ -74,6 +74,11 @@ export function hasCloudPublicConfig(): boolean {
   return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
 }
 
+/** The packaged Orchestrator is self-managed and never uses Clerk. */
+export function shouldEnableClerk(input: { readonly isDesktopManagedLocal: boolean }): boolean {
+  return !input.isDesktopManagedLocal && hasCloudPublicConfig();
+}
+
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {

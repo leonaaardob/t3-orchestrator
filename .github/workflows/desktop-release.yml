@@ -233,10 +233,6 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      - name: Load public configuration
-        shell: bash
-        run: cp .env.example .env
-
       - name: Download WSL node-pty prebuild
         if: matrix.platform == 'win'
         uses: actions/download-artifact@v8

@@ -33,18 +33,19 @@
       "runtime": {
         "attemptCount": 2,
         "lastHeartbeatAt": "2026-08-27T13:40:50.535Z",
-        "currentError": "claimed card has no implementationRunId; the launch never completed"
+        "currentError": "desktop Clerk removal implemented locally; focused verification and non-publishing release dry run pending"
       },
       "createdAt": "2026-08-27T00:00:00.000Z",
       "updatedAt": "2026-08-27T13:40:50.535Z",
       "state": "Running",
       "intentBrief": {
-        "intent": "Ship-ready fork release identity without publishing 0.0.35.",
-        "desiredOutcome": "A collision-free release pipeline and a desktop profile isolated from official T3 Code.",
+        "intent": "Ship-ready fork release identity and Clerk-free local desktop operation without publishing 0.0.35.",
+        "desiredOutcome": "A collision-free release pipeline and a local desktop profile isolated from both official T3 Code state and upstream Clerk.",
         "acceptanceCriteria": [
           "Fork tags use orchestrator-v*.",
           "Desktop technical identity is fork-specific.",
-          "A non-publishing six-platform release build passes."
+          "A non-publishing six-platform release build passes.",
+          "Packaged local desktop initializes no Clerk and contains no upstream Clerk production fallback."
         ],
         "constraints": [
           "Do not publish 0.0.35.",

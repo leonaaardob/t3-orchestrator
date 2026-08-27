@@ -6,11 +6,11 @@ Slice: `docs/agents/slices/orchestrator-release-identity.md`
 
 ## Owner Intent
 
-Repair the 0.0.35 candidate's three desktop regressions without publishing it:
-Clerk must accept the isolated protocol, a fresh isolated profile must load
-projects, and useful legacy Orchestrator saved connections must have a safe
-migration or recovery path. Preserve collision-free release tags and side-by-
-side desktop identity isolation.
+Repair the 0.0.35 candidate's desktop regressions without publishing it:
+the packaged fork must use a Clerk-free local desktop mode, a fresh isolated
+profile must load projects, and useful legacy Orchestrator saved connections
+must have a safe migration or recovery path. Preserve collision-free release
+tags and side-by-side desktop identity isolation.
 
 ## Scope Guard
 
@@ -24,9 +24,10 @@ identity isolation, or migrate official T3 Code user data wholesale.
 - Upstream 0.0.35 merges without renumbering shipped fork migrations.
 - Desktop bundle, protocol, user-data, and integration identifiers are fork-specific.
 - The updater continues to use `leonaaardob/t3-orchestrator`.
-- Packaged Clerk authentication accepts `t3orchestrator://`; development
-  accepts `t3orchestrator-dev://`; Orchestrator runtime never falls back to
-  `t3code://`.
+- Packaged T3 Orchestrator uses `desktop-managed-local`: it initializes no
+  Clerk provider or Electron bridge, has no sign-in gate, and has no upstream
+  Clerk key/host in its active build configuration. Hosted web/cloud flows may
+  opt into Clerk only with explicit configuration.
 - A fresh Orchestrator Electron profile starts/pairs its backend and renders
   existing projects without legacy browser/profile state.
 - When no new connection catalog exists, legacy saved-environment metadata may
@@ -61,9 +62,14 @@ Allowed write scopes:
 
 ## Remediation Design
 
-- The allowed desktop origins must be an identity-specific allow-list shared by
-  desktop Clerk setup and server-side desktop-origin authorization. It must not
-  weaken generic origin checks.
+- Renderer/server CORS retains the identity-specific `t3orchestrator://app`
+  and `t3orchestrator-dev://app` allow-list. This is unrelated to Clerk origin
+  authorization and must not weaken generic origin checks.
+- `vp run build:desktop` explicitly supplies
+  `T3ORCHESTRATOR_DESKTOP_MANAGED_LOCAL=1`; the web and server bundle paths
+  blank relay/Clerk public configuration in this mode. Electron also refuses
+  Clerk at runtime, so a leaked environment key cannot create a desktop auth
+  path.
 - First-run session/bootstrap must derive its own local backend endpoint and
   pairing credentials in the isolated profile; project hydration may not be
   gated on an old cached connection.
@@ -78,9 +84,10 @@ Allowed write scopes:
 - Retagged the existing 0.0.34 release without re-uploading its assets.
 - Merged upstream 0.0.35 preparation normally.
 - Added fork-specific release tag and desktop technical identities.
-- 0.0.35 regression repair: Clerk's Electron provider and server CORS now
-  allow only `t3orchestrator://app` / `t3orchestrator-dev://app`; connection
-  catalogs are isolated under the Electron profile, so legacy ciphertext can
+- 0.0.35 regression repair: packaged desktop is Clerk-free; server CORS
+  allows only `t3orchestrator://app` / `t3orchestrator-dev://app` for the
+  Electron renderer; connection catalogs are isolated under the Electron
+  profile, so legacy ciphertext can
   no longer block environment-registry hydration. Legacy endpoint metadata is
   recovered without importing unreadable secrets.
 - Independent review: pass after recovery handling was extended for both

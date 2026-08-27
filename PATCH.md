@@ -21,6 +21,25 @@ upstream T3 Code changes.
 - Keep the fork's desktop identity isolated from official T3 Code while
   preserving an explicit, one-time migration path for the fork's own legacy
   encrypted saved-connection catalog across the 0.0.34 → 0.0.35 boundary.
+- Keep packaged T3 Orchestrator in `desktop-managed-local` auth mode: local
+  projects, providers, Planning, orchestration, and saved environments never
+  initialize Clerk or inherit upstream T3 cloud credentials. Clerk remains an
+  explicitly configured hosted-web/T3 Connect concern only.
+
+### Desktop local auth attachment points
+
+- `package.json` sets `T3ORCHESTRATOR_DESKTOP_MANAGED_LOCAL=1` for every
+  `build:desktop`; `apps/web/vite.config.ts` and `apps/server/vite.config.ts`
+  clear cloud/Clerk public values in that build, including when an upstream
+  `.env` is present.
+- `apps/desktop/src/{main.ts,preload.ts,app/DesktopApp.ts}` contains no Clerk
+  bridge or preload integration. `apps/web/src/main.tsx` also declines Clerk
+  at runtime for Electron, providing defense in depth against accidental
+  configuration leakage.
+- Keep the `t3orchestrator://` CORS handling in the server separate from
+  Clerk's own origin policy. Upstream changes that reintroduce an Electron
+  Clerk bridge, desktop public-config injection, or a desktop sign-in button
+  must be removed when repairing this patch.
 
 ## Source Of Truth Files
 

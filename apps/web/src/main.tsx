@@ -9,7 +9,7 @@ import "./index.css";
 
 import { isElectron } from "./env";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { shouldEnableClerk } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
@@ -30,12 +30,17 @@ if (isElectron) {
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 const desktopClerkAllowedRedirectProtocols = ["t3orchestrator:", "t3orchestrator-dev:"];
+const clerkEnabled =
+  Boolean(clerkPublishableKey) &&
+  shouldEnableClerk({
+    isDesktopManagedLocal: isElectron,
+  });
 
 const app = <AppRoot router={router} />;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {clerkPublishableKey && hasCloudPublicConfig() ? (
+    {clerkPublishableKey && clerkEnabled ? (
       isElectron ? (
         <ElectronClerkProvider
           appearance={clerkAppearance}
