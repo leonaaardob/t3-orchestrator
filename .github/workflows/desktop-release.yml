@@ -67,7 +67,7 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "tag=orchestrator-v$version" >> "$GITHUB_OUTPUT"
           echo "release_name=T3 Orchestrator $version" >> "$GITHUB_OUTPUT"
           echo "publish_release=${PUBLISH_RELEASE:-false}" >> "$GITHUB_OUTPUT"
 
@@ -143,42 +143,42 @@ jobs:
       matrix:
         include:
           - label: macOS arm64
-            artifact: t3-planning-macos-arm64
+            artifact: t3-orchestrator-macos-arm64
             runner: macos-15
             platform: mac
             target: dmg
             arch: arm64
             rust_target: aarch64-apple-darwin
           - label: macOS x64
-            artifact: t3-planning-macos-x64
+            artifact: t3-orchestrator-macos-x64
             runner: macos-15
             platform: mac
             target: dmg
             arch: x64
             rust_target: x86_64-apple-darwin
           - label: Windows x64
-            artifact: t3-planning-windows-x64
+            artifact: t3-orchestrator-windows-x64
             runner: windows-2025
             platform: win
             target: nsis
             arch: x64
             rust_target: x86_64-pc-windows-msvc
           - label: Windows arm64
-            artifact: t3-planning-windows-arm64
+            artifact: t3-orchestrator-windows-arm64
             runner: windows-11-arm
             platform: win
             target: nsis
             arch: arm64
             rust_target: aarch64-pc-windows-msvc
           - label: Linux x64
-            artifact: t3-planning-linux-x64
+            artifact: t3-orchestrator-linux-x64
             runner: ubuntu-24.04
             platform: linux
             target: AppImage
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
           - label: Linux arm64
-            artifact: t3-planning-linux-arm64
+            artifact: t3-orchestrator-linux-arm64
             runner: ubuntu-24.04-arm
             platform: linux
             target: AppImage
@@ -398,7 +398,7 @@ jobs:
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: t3-planning-*
+          pattern: t3-orchestrator-*
           merge-multiple: true
           path: release-assets
 

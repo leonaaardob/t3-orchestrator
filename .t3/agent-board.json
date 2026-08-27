@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "projectRoot": "/home/kyle/work/t3code-planning-fork",
+  "defaultView": "kanban",
+  "runner": {
+    "maxConcurrentCards": 1,
+    "repairCycles": 3
+  },
+  "cards": [
+    {
+      "id": "ORCH-035-release-identity",
+      "title": "Prepare 0.0.35 release and isolate desktop identity",
+      "priority": 1,
+      "area": "Release Engineering",
+      "slice": "Orchestrator Release and Desktop Identity",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260827-orchestrator-release-identity.md",
+      "slicePlanPath": "docs/agents/slices/orchestrator-release-identity.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Tag remediation, upstream merge, and desktop identity share public release and versioning state.",
+        "conflictsWith": [],
+        "allowedWriteScopes": [
+          ".github/workflows/desktop-release.yml",
+          "apps/desktop/**",
+          "scripts/**",
+          "packages/**",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 2,
+        "lastHeartbeatAt": "2026-08-27T13:40:50.535Z",
+        "currentError": "claimed card has no implementationRunId; the launch never completed"
+      },
+      "createdAt": "2026-08-27T00:00:00.000Z",
+      "updatedAt": "2026-08-27T13:40:50.535Z",
+      "state": "Running",
+      "intentBrief": {
+        "intent": "Ship-ready fork release identity without publishing 0.0.35.",
+        "desiredOutcome": "A collision-free release pipeline and a desktop profile isolated from official T3 Code.",
+        "acceptanceCriteria": [
+          "Fork tags use orchestrator-v*.",
+          "Desktop technical identity is fork-specific.",
+          "A non-publishing six-platform release build passes."
+        ],
+        "constraints": ["Do not publish 0.0.35.", "Do not involve the Mac agent."],
+        "nonGoals": ["Signing or notarization.", "Migrating official T3 Code state."],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "DEMO-008-worker-handoff",
+      "title": "Worker handoff packet generator",
+      "priority": 3,
+      "area": "Supervisor",
+      "slice": "Handoffs",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Supervisor-only planning work.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["docs/agents/**"]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T00:00:00.000Z",
+      "state": "Draft",
+      "intentBrief": {
+        "intent": "Shape rough requests into bounded worker packets.",
+        "desiredOutcome": "Ready cards launch with clear scope.",
+        "acceptanceCriteria": ["Intent and proof-of-done are documented."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "DEMO-005-kanban-editor",
+      "title": "Kanban card editor and quick add",
+      "priority": 2,
+      "area": "Frontend",
+      "slice": "Planning UI",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": ["DEMO-003-board-rpc"],
+      "parallelism": {
+        "safe": "true",
+        "reason": "UI-only slice with isolated write scopes.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["apps/web/src/components/AgentBoardPanel.tsx"]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T00:00:00.000Z",
+      "state": "Ready",
+      "intentBrief": {
+        "intent": "Edit cards and move work to Ready from the board.",
+        "desiredOutcome": "Operators can run or schedule cards without chat.",
+        "acceptanceCriteria": ["Ready cards expose Run.", "Card detail edits persist."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "DEMO-006-planning-table",
+      "title": "Accordion planning table",
+      "priority": 3,
+      "area": "Frontend",
+      "slice": "Planning UI",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": ["DEMO-003-board-rpc"],
+      "parallelism": {
+        "safe": "true",
+        "reason": "Read-mostly view layer.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["apps/web/src/components/AgentBoardPanel.tsx"]
+      },
+      "runtime": {
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-26T22:35:42.810Z",
+        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-08-26T22:35:42.810Z",
+      "state": "Needs Decision",
+      "intentBrief": {
+        "intent": "Dense table view over the same board cards.",
+        "desiredOutcome": "Area/slice grouping is scannable.",
+        "acceptanceCriteria": ["Table reads the same board file as Kanban."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "DEMO-003-board-rpc",
+      "title": "Server board load/save APIs",
+      "priority": 2,
+      "area": "Backend",
+      "slice": "Board service",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Touches contracts and server wiring.",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["packages/contracts/**", "apps/server/src/agentBoard/**"]
+      },
+      "runtime": {
+        "attemptCount": 1,
+        "lastHeartbeatAt": "2026-05-05T11:00:00.000Z"
+      },
+      "createdAt": "2026-05-05T00:00:00.000Z",
+      "updatedAt": "2026-05-05T11:00:00.000Z",
+      "state": "Review",
+      "intentBrief": {
+        "intent": "Persist board state through typed RPC.",
+        "desiredOutcome": "Web and scheduler share one board file.",
+        "acceptanceCriteria": ["Load/save round-trip passes contract tests."],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      }
+    }
+  ],
+  "graphLinks": [],
+  "createdAt": "2026-05-05T00:00:00.000Z",
+  "updatedAt": "2026-08-27T13:40:50.541Z"
+}
