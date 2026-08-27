@@ -1,4 +1,4 @@
-# T3 Code Planning Patch
+# T3 Orchestrator Patch
 
 Status: Active — synced onto upstream T3 Code **v0.0.33** (tag `planning-fork-upstream-sync-0.0.33`).
 

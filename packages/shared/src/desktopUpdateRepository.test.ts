@@ -25,9 +25,9 @@ describe("desktopUpdateRepository", () => {
   });
 
   it("parses owner/repo slugs", () => {
-    assert.deepStrictEqual(parseDesktopUpdateRepository("leonaaardob/t3code-planning-fork"), {
+    assert.deepStrictEqual(parseDesktopUpdateRepository("leonaaardob/t3-orchestrator"), {
       owner: "leonaaardob",
-      repo: "t3code-planning-fork",
+      repo: "t3-orchestrator",
     });
     assert.equal(parseDesktopUpdateRepository("invalid"), undefined);
     assert.equal(parseDesktopUpdateRepository("too/many/slashes"), undefined);
@@ -36,7 +36,7 @@ describe("desktopUpdateRepository", () => {
   it("builds release tag URLs from the resolved repository", () => {
     assert.equal(
       getDesktopUpdateReleaseTagUrlBase(),
-      "https://github.com/leonaaardob/t3code-planning-fork/releases/tag",
+      "https://github.com/leonaaardob/t3-orchestrator/releases/tag",
     );
     assert.equal(
       getDesktopUpdateReleaseTagUrlBase("example/custom-repo"),

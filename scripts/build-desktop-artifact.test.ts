@@ -194,13 +194,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
         owner: "leonaaardob",
-        repo: "t3code-planning-fork",
+        repo: "t3-orchestrator",
         releaseType: "release",
       });
       assert.deepStrictEqual(nightlyConfig, {
         provider: "github",
         owner: "leonaaardob",
-        repo: "t3code-planning-fork",
+        repo: "t3-orchestrator",
         releaseType: "prerelease",
         channel: "nightly",
       });
@@ -258,7 +258,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         {
           provider: "github",
           owner: "leonaaardob",
-          repo: "t3code-planning-fork",
+          repo: "t3-orchestrator",
           releaseType: "release",
         },
       ]);

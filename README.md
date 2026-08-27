@@ -1,6 +1,6 @@
-# T3 Code Planning Fork
+# T3 Orchestrator
 
-### Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code)
+Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code).
 
 [![Planning](https://img.shields.io/badge/Planning-Agent%20Board-6366f1?style=flat-square)](#agent-board)
 [![Cross-provider](https://img.shields.io/badge/Execution-Cross--provider-0ea5e9?style=flat-square)](#cross-provider-execution)
@@ -161,8 +161,8 @@ After implementation completes:
 Keep this checkout separate from a normal T3 Code install:
 
 ```bash
-git clone https://github.com/leonaaardob/t3code-planning-fork.git
-cd t3code-planning-fork
+git clone https://github.com/leonaaardob/t3-orchestrator.git
+cd t3-orchestrator
 vp i
 vp run dev
 ```
@@ -277,7 +277,7 @@ When changing planning behavior, update [`PATCH.md`](./PATCH.md) in the same cha
 
 - [T3 Code](https://github.com/pingdotgg/t3code) by [T3 Tools](https://t3.gg) — upstream GUI, server, and provider stack (MIT).
 - [OpenAI Symphony](https://github.com/openai/symphony) — conceptual inspiration for tracked work, workspaces, and autonomous scheduling (not affiliated).
-- Planning fork maintenance: [leonaaardob/t3code-planning-fork](https://github.com/leonaaardob/t3code-planning-fork).
+- Orchestrator maintenance: [leonaaardob/t3-orchestrator](https://github.com/leonaaardob/t3-orchestrator).
 
 ## License
 
