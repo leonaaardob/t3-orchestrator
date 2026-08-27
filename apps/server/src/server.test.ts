@@ -3564,7 +3564,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+  for (const desktopOrigin of ["t3orchestrator://app", "t3orchestrator-dev://app"]) {
     it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
@@ -3586,6 +3586,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           origin: desktopOrigin,
           credentials: true,
         });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+    it.effect(`does not credential-authorize ${desktopOrigin} in development`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: { devUrl: new URL(crossOriginClientOrigin) },
+        });
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: desktopOrigin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+          },
+        });
+
+        // The middleware emits its generic credentials flag for development,
+        // but without an allowed origin browsers cannot credential-authorize
+        // this response.
+        assert.equal(response.headers["access-control-allow-origin"], undefined);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
     );
   }

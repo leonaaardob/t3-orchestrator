@@ -18,6 +18,9 @@ upstream T3 Code changes.
   to bounded worker agents and reviewed before `Done`.
 - Keep the planning stack portable and installable instead of spreading hidden
   behavior throughout the repo.
+- Keep the fork's desktop identity isolated from official T3 Code while
+  preserving an explicit, one-time migration path for the fork's own legacy
+  encrypted saved-connection catalog across the 0.0.34 → 0.0.35 boundary.
 
 ## Source Of Truth Files
 

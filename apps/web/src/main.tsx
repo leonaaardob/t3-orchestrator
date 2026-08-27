@@ -29,6 +29,7 @@ if (isElectron) {
 }
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
+const desktopClerkAllowedRedirectProtocols = ["t3orchestrator:", "t3orchestrator-dev:"];
 
 const app = <AppRoot router={router} />;
 
@@ -38,6 +39,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       isElectron ? (
         <ElectronClerkProvider
           appearance={clerkAppearance}
+          allowedRedirectProtocols={desktopClerkAllowedRedirectProtocols}
           publishableKey={clerkPublishableKey}
           passkeys={passkeys}
         >

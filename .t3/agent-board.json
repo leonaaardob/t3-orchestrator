@@ -9,7 +9,7 @@
   "cards": [
     {
       "id": "ORCH-035-release-identity",
-      "title": "Prepare 0.0.35 release and isolate desktop identity",
+      "title": "Repair 0.0.35 isolated-desktop release blockers",
       "priority": 1,
       "area": "Release Engineering",
       "slice": "Orchestrator Release and Desktop Identity",
@@ -46,8 +46,11 @@
           "Desktop technical identity is fork-specific.",
           "A non-publishing six-platform release build passes."
         ],
-        "constraints": ["Do not publish 0.0.35.", "Do not involve the Mac agent."],
-        "nonGoals": ["Signing or notarization.", "Migrating official T3 Code state."],
+        "constraints": [
+          "Do not publish 0.0.35.",
+          "Preserve the isolated bundle ID, protocols, profiles, ports, credential namespaces, and updater repository."
+        ],
+        "nonGoals": ["Signing or notarization.", "Migrating official T3 Code state wholesale."],
         "openDecisions": []
       }
     },

@@ -57,6 +57,10 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
       assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
       assert.equal(
+        environment.connectionCatalogPath,
+        "/Users/alice/Library/Application Support/T3 Orchestrator (Dev)/connection-catalog.json",
+      );
+      assert.equal(
         environment.savedEnvironmentRegistryPath,
         "/tmp/t3/userdata/saved-environments.json",
       );

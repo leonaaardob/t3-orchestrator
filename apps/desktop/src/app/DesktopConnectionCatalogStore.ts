@@ -348,6 +348,22 @@ const migrateSavedEnvironmentRecords = Effect.fn(
       }),
     );
     const token = yield* savedEnvironments.getSecret(record.environmentId).pipe(
+      // The legacy registry was protected by the shared T3 Code identity. A
+      // new Orchestrator profile cannot decrypt those credentials, but its
+      // target/profile metadata remains useful and can be safely migrated.
+      Effect.catchIf(
+        (
+          error,
+        ): error is
+          | DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError
+          | DesktopSavedEnvironments.DesktopSavedEnvironmentSecretDecodeError =>
+          (Schema.is(DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError)(
+            error,
+          ) &&
+            error.operation === "decrypt-secret") ||
+          Schema.is(DesktopSavedEnvironments.DesktopSavedEnvironmentSecretDecodeError)(error),
+        () => Effect.succeed(Option.none<string>()),
+      ),
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreMigrationError({
@@ -382,7 +398,10 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-  const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  // The backend state directory remains shared with the environment server.
+  // The renderer's encrypted connection catalog belongs to this app's
+  // isolated Electron profile, never the legacy shared state directory.
+  const catalogPath = environment.connectionCatalogPath;
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
