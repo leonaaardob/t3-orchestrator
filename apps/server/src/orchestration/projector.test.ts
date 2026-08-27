@@ -77,6 +77,7 @@ describe("orchestration projector", () => {
         id: "thread-1",
         projectId: "project-1",
         title: "demo",
+        role: "standard",
         modelSelection: {
           instanceId: "codex",
           model: "gpt-5-codex",
@@ -102,6 +103,126 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("preserves the Supervisor role when a turn auto-titles the thread", async () => {
+    const createdAt = "2026-08-28T00:00:00.000Z";
+    const titledAt = "2026-08-28T00:00:01.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "supervisor-thread",
+          occurredAt: createdAt,
+          commandId: "cmd-create-supervisor",
+          payload: {
+            threadId: "supervisor-thread",
+            projectId: "project-1",
+            title: "Project Supervisor",
+            role: "project-supervisor",
+            modelSelection: { provider: ProviderDriverKind.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterFirstSend = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "supervisor-thread",
+          occurredAt: titledAt,
+          commandId: "cmd-auto-title",
+          payload: {
+            threadId: "supervisor-thread",
+            title: "Plan release work",
+            updatedAt: titledAt,
+          },
+        }),
+      ),
+    );
+
+    expect(afterFirstSend.threads[0]).toMatchObject({
+      id: "supervisor-thread",
+      title: "Plan release work",
+      role: "project-supervisor",
+    });
+
+    const running = await Effect.runPromise(
+      projectEvent(
+        afterFirstSend,
+        makeEvent({
+          sequence: 3,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "supervisor-thread",
+          occurredAt: "2026-08-28T00:00:02.000Z",
+          commandId: "cmd-turn-start",
+          payload: {
+            threadId: "supervisor-thread",
+            session: {
+              threadId: "supervisor-thread",
+              status: "running",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "full-access",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: "2026-08-28T00:00:02.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    const completed = await Effect.runPromise(
+      projectEvent(
+        running,
+        makeEvent({
+          sequence: 4,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "supervisor-thread",
+          occurredAt: "2026-08-28T00:00:03.000Z",
+          commandId: "cmd-turn-complete",
+          payload: {
+            threadId: "supervisor-thread",
+            session: {
+              threadId: "supervisor-thread",
+              status: "ready",
+              providerName: "codex",
+              providerSessionId: "session-1",
+              providerThreadId: "provider-thread-1",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-08-28T00:00:03.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(running.threads[0]).toMatchObject({
+      id: "supervisor-thread",
+      role: "project-supervisor",
+      session: { status: "running" },
+    });
+    expect(completed.threads[0]).toMatchObject({
+      id: "supervisor-thread",
+      role: "project-supervisor",
+      session: { status: "ready" },
+    });
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

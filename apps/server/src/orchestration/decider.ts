@@ -376,6 +376,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
+          role: command.role ?? "standard",
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
@@ -833,6 +834,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.role !== undefined ? { role: command.role } : {}),
           ...(command.regenerateTitle === true
             ? {
                 regenerateTitle: true as const,

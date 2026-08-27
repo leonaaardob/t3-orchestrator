@@ -12,22 +12,41 @@ Make the project Supervisor thread visibly identifiable using only existing T3 t
 
 `Tested`
 
-## Design Decisions (locked)
+## Confirmed Regression (2026-08-28)
+
+The original title-only designation is not durable enough. `ChatView` auto-titles
+any existing thread on its first message, including a created Supervisor. That
+overwrites `Project Supervisor`, which is currently both the identity and the
+badge predicate. The thread is not replaced; its semantic designation is lost
+because it was never represented independently of its mutable title.
+
+Legacy events are recognized by their creation title exactly once during replay
+and converted into the durable role; normal title updates never infer or clear
+that role.
+
+## Design Decisions (superseded)
 
 - No new Supervisor service, runtime, or orchestration state in .t3/agent-board.json.
-- Use existing thread title + pinning (pinnedAt/pinOrderKey) + badge/label in thread list.
+- Persist an explicit thread role; `project-supervisor` is independent from the
+  mutable display title and is the sole badge predicate.
+- Retain title and pinning as presentation choices, not identity.
 - The UX should show "Project Supervisor" (star/badge) at the top of the thread list for the project's main supervisor thread.
 - Implementation chooses smallest consistent change: likely thread list/sidebar component + optional helper to create/ensure supervisor thread exists (or just UI affordance to pin/rename existing thread).
 
 ## Scope Guard
 
-Do not create supervisor execution backend, do not store supervisor state in board file, do not create parallel thread system.
+Do not create a separate supervisor execution backend, store supervisor state
+in the board file, or create a parallel thread system. The Supervisor remains
+one normal thread with a durable role on its normal thread record.
 
 ## Acceptance Criteria
 
-- A normal thread can be designated as Project Supervisor (renamed to "Project Supervisor", pinned, shows Supervisor badge in thread list).
+- A normal thread can be designated as Project Supervisor (role set to
+  `project-supervisor`, title optionally set to "Project Supervisor", pinned,
+  and shows Supervisor badge in thread list).
 - Badge/label is visible without opening the thread.
-- Thread remains a normal T3 thread (no special execution path).
+- Thread remains a normal T3 thread (no special execution path); sends and
+  execution preserve the same thread ID and role.
 - No new RPC methods unless required for badge; prefer existing pin/title APIs.
 
 ## Implementation Plan
@@ -45,8 +64,12 @@ Do not create supervisor execution backend, do not store supervisor state in boa
 
 ## Completion
 
-- Normal threads can be made Supervisor through existing title and pin commands.
-- Sidebar/search/header presentation exposes the Supervisor label without a new runtime or RPC.
+- Supervisor role is persisted on the normal thread record and survives title
+  mutation, turn execution, projection hydration, and restart.
+- Normal workers/reviewers default to `standard`; no execution path creates or
+  rebinds a Supervisor thread.
+- Sidebar/search/header presentation exposes the durable role without a new
+  Supervisor runtime or RPC.
 
 ## Parallelism Plan
 

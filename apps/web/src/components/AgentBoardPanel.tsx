@@ -1442,6 +1442,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           threadId,
           projectId: supervisorProject.id,
           title: SUPERVISOR_THREAD_TITLE,
+          role: "project-supervisor",
           modelSelection,
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_INTERACTION_MODE,

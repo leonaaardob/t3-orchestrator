@@ -2227,6 +2227,7 @@ export default function Sidebar() {
           threadId,
           projectId: supervisorCreateProjectRef.projectId,
           title: SUPERVISOR_THREAD_TITLE,
+          role: "project-supervisor",
           modelSelection,
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_INTERACTION_MODE,
@@ -2817,10 +2818,18 @@ export default function Sidebar() {
   const attemptMakeSupervisor = useCallback(
     (threadRef: ScopedThreadRef, currentTitle: string) => {
       void (async () => {
-        if (currentTitle.trim() !== SUPERVISOR_THREAD_TITLE) {
+        const shell = readThreadShell(threadRef);
+        if (
+          currentTitle.trim() !== SUPERVISOR_THREAD_TITLE ||
+          shell?.role !== "project-supervisor"
+        ) {
           const result = await updateThreadMetadata({
             environmentId: threadRef.environmentId,
-            input: { threadId: threadRef.threadId, title: SUPERVISOR_THREAD_TITLE },
+            input: {
+              threadId: threadRef.threadId,
+              title: SUPERVISOR_THREAD_TITLE,
+              role: "project-supervisor",
+            },
           });
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
@@ -2834,7 +2843,6 @@ export default function Sidebar() {
             return;
           }
         }
-        const shell = readThreadShell(threadRef);
         if (shell?.pinnedAt == null) {
           const pinResult = await pinThread(threadRef);
           if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
@@ -2869,22 +2877,23 @@ export default function Sidebar() {
             );
           }
         }
-        if (currentTitle.trim() === SUPERVISOR_THREAD_TITLE) {
-          const nextTitle = "Thread";
-          const result = await updateThreadMetadata({
-            environmentId: threadRef.environmentId,
-            input: { threadId: threadRef.threadId, title: nextTitle },
-          });
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to remove Supervisor",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
+        const result = await updateThreadMetadata({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            role: "standard",
+            ...(currentTitle.trim() === SUPERVISOR_THREAD_TITLE ? { title: "Thread" } : {}),
+          },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to remove Supervisor",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
         }
       })();
     },

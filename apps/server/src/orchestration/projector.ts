@@ -296,6 +296,12 @@ export function projectEvent(
             id: payload.threadId,
             projectId: payload.projectId,
             title: payload.title,
+            // Compatibility only: legacy events designated a Supervisor by
+            // its creation title. Once projected, every subsequent decision
+            // reads the durable role rather than title text.
+            role:
+              payload.role ??
+              (payload.title.trim() === "Project Supervisor" ? "project-supervisor" : "standard"),
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
@@ -464,6 +470,7 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.role !== undefined ? { role: payload.role } : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
               : {}),

@@ -216,11 +216,19 @@ The current patch attaches to upstream T3 Code through these areas:
     returned board is rendered directly.
   - Slice 7 (2026-08-25): `AgentBoardLocalView` `graph` → `execution-path` (contract `AgentBoardView: kanban|table|execution-path`, `AgentBoardFile.defaultView`) with back-compat mapping for legacy `?view=graph`; view state ↔ `board.defaultView` persistence via existing `agentBoardEnvironment.save` (persisted as `kanban` for the `expanded` presentation variant) plus `?view=kanban|table|execution-path|expanded` URL sync (`history.replaceState` + `popstate`); dead canvas guard `graphModel.width < 0` removed so the pan/zoom/grid canvas (`L625-656`, `L1005-1085`, `L948`, `0.5–1.8`) is the interactive Execution-path view alongside the dependency tree; expanded mode is a Kanban-only `?view=expanded` CSS variant (`260px → 320px`, full-bleed) toggled by an Expand/Exit button — no new component, no new RPC, monolith kept under 500 lines/view.
 - `src/lib/supervisorThread.ts`
-  - `SUPERVISOR_THREAD_TITLE = "Project Supervisor"` and `isSupervisorThread` helper — pure title check, no board state.
+  - `SUPERVISOR_THREAD_TITLE = "Project Supervisor"` plus an
+    `isSupervisorThread` helper that reads the durable thread role, never the
+    mutable title.
+- `packages/contracts/src/orchestration.ts`, `apps/server/src/orchestration/`,
+  and `apps/server/src/persistence/`
+  - Fork-local `project-supervisor` thread role, carried through the normal
+    thread create/meta-update events and the durable projection. Migration 045
+    backfills the former exact-title designation once. It keeps the normal
+    thread runtime intact, so auto-titling and turns cannot clear identity.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
 - `src/components/Sidebar.tsx`
-  - Supervisor badge (violet `Crown` pill, `data-testid="supervisor-badge"`) in card, slim, and search rows; pin indicator retained. Context menu wires `Make Supervisor` / `Remove Supervisor` (rename to title + pin/unpin via existing `thread.pin` / `thread.meta.update` APIs). Placeholder `Create Project Supervisor` dashed button when no supervisor thread exists for the current scope (creates normal thread with `Project Supervisor` title and pins it at top via `pinOrderKeyBetween`).
+  - Supervisor badge (violet `Crown` pill, `data-testid="supervisor-badge"`) in card, slim, and search rows; pin indicator retained. Context menu wires `Make Supervisor` / `Remove Supervisor` (set/clear durable role, set presentation title, and pin/unpin via existing APIs). Placeholder `Create Project Supervisor` creates a normal thread with the Supervisor role and pins it at top.
 - `src/components/ChatView.tsx`
   - Planning tab strip + persisted `Break` safety control. Board runs no
     longer launch from the client: the previous

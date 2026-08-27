@@ -633,6 +633,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             title: event.payload.title,
+            // Replay legacy title-designated events into the durable role.
+            // This compatibility branch only runs at creation; updates never
+            // infer or clear the role from a title change.
+            role:
+              event.payload.role ??
+              (event.payload.title.trim() === "Project Supervisor"
+                ? "project-supervisor"
+                : "standard"),
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
@@ -823,6 +831,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(event.payload.role !== undefined ? { role: event.payload.role } : {}),
             ...(event.payload.titleRegeneration !== undefined
               ? {
                   titleRegenerationRequestId: event.payload.titleRegeneration?.requestId ?? null,

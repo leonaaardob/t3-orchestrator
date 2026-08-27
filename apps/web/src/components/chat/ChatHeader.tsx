@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type OrchestrationThread,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -45,13 +46,13 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
-import { SUPERVISOR_THREAD_TITLE } from "~/lib/supervisorThread";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
+  activeThreadRole: OrchestrationThread["role"] | undefined;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   /** PR feeding the settled classification, resolved by ChatView. */
@@ -123,6 +124,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   draftId,
   activeThreadTitle,
+  activeThreadRole,
   isServerThread,
   changeRequest,
   activeProjectName,
@@ -361,7 +363,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipTrigger>
                 <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
               </Tooltip>
-              {activeThreadTitle.trim() === SUPERVISOR_THREAD_TITLE ? (
+              {activeThreadRole === "project-supervisor" ? (
                 <span
                   data-testid="supervisor-badge"
                   className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-400/30 dark:bg-violet-400/15 dark:text-violet-300"

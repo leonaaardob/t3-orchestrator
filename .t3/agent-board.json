@@ -8,6 +8,47 @@
   },
   "cards": [
     {
+      "id": "ORCH-037-supervisor-role-persistence",
+      "title": "Persist Project Supervisor thread identity",
+      "priority": 1,
+      "area": "Supervisor",
+      "slice": "Supervisor thread identity",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260826-supervisor-thread-badge.md",
+      "slicePlanPath": "docs/agents/slices/authoritative-agent-board.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Thread contract, event projection, database persistence, and all badge entry points must change together.",
+        "conflictsWith": [],
+        "allowedWriteScopes": [
+          "packages/contracts/src/orchestration.ts",
+          "apps/server/src/orchestration/**",
+          "apps/server/src/persistence/**",
+          "apps/web/src/components/**",
+          "apps/web/src/lib/supervisorThread.ts",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": { "attemptCount": 1 },
+      "createdAt": "2026-08-28T00:00:00.000Z",
+      "updatedAt": "2026-08-28T01:35:00.000Z",
+      "state": "Done",
+      "intentBrief": {
+        "intent": "Make Project Supervisor identity durable independently of title and execution state.",
+        "desiredOutcome": "A supervisor role survives send, turn execution, hydration, and restart without altering normal workers.",
+        "acceptanceCriteria": [
+          "Role is persisted on the thread projection and surfaced in hydration.",
+          "Auto-title may change the title but cannot clear Supervisor identity.",
+          "Existing title-designated Supervisors migrate to the durable role."
+        ],
+        "constraints": ["No separate Supervisor runtime or board-owned thread state."],
+        "nonGoals": ["Provider update behavior changes."],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-036-unsigned-macos-updates",
       "title": "Make unsigned macOS updates manual and safe",
       "priority": 1,
