@@ -742,6 +742,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3AutoUpdateInstallSupported: boolean;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -2676,6 +2677,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    t3AutoUpdateInstallSupported: options.platform === "mac" && options.signed,
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "T3 Orchestrator desktop build",

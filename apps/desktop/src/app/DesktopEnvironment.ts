@@ -26,6 +26,7 @@ export interface MakeDesktopEnvironmentInput {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  readonly automaticInstallAvailable?: boolean;
 }
 
 export class DesktopEnvironment extends Context.Service<
@@ -71,6 +72,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpTracesUrl: Option.Option<string>;
     readonly otlpExportIntervalMs: number;
     readonly branding: DesktopAppBranding;
+    readonly automaticInstallAvailable: boolean;
     readonly displayName: string;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
@@ -244,6 +246,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
       processArch: input.processArch,
       runningUnderArm64Translation: input.runningUnderArm64Translation,
     }),
+    automaticInstallAvailable: input.automaticInstallAvailable ?? false,
     resolvePickFolderDefaultPath: (rawOptions) => {
       if (typeof rawOptions !== "object" || rawOptions === null) {
         return Option.none();

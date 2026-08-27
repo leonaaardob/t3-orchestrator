@@ -12,6 +12,7 @@ export interface ElectronAppMetadata {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  readonly automaticInstallAvailable: boolean;
 }
 
 export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<ElectronAppMetadataReadError>()(
@@ -123,6 +124,9 @@ export const make = ElectronApp.of({
       isPackaged: Electron.app.isPackaged,
       resourcesPath: process.resourcesPath,
       runningUnderArm64Translation: Electron.app.runningUnderARM64Translation === true,
+      automaticInstallAvailable:
+        Electron.app.isPackaged &&
+        (process.platform !== "darwin" || readUpdaterCapability(appPath)),
     };
   }),
   name: Effect.sync(() => Electron.app.name),
@@ -209,5 +213,20 @@ export const make = ElectronApp.of({
     }),
   on: addScopedAppListener,
 });
+
+function readUpdaterCapability(appPath: string): boolean {
+  try {
+    const nodeFileSystem = process.getBuiltinModule?.("fs") as
+      | { readFileSync: (path: string, encoding: "utf8") => string }
+      | undefined;
+    if (!nodeFileSystem) return false;
+    const packageJson = JSON.parse(
+      nodeFileSystem.readFileSync(`${appPath}/package.json`, "utf8"),
+    ) as { t3AutoUpdateInstallSupported?: unknown };
+    return packageJson.t3AutoUpdateInstallSupported === true;
+  } catch {
+    return false;
+  }
+}
 
 export const layer = Layer.succeed(ElectronApp, make);

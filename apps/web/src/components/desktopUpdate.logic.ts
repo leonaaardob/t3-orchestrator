@@ -1,5 +1,8 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
-import { getDesktopUpdateReleaseTagUrlBase } from "@t3tools/shared/desktopUpdateRepository";
+import {
+  getDesktopUpdateDmgUrl,
+  getDesktopUpdateReleaseTagUrlBase,
+} from "@t3tools/shared/desktopUpdateRepository";
 
 import { APP_BASE_NAME } from "../branding";
 
@@ -23,10 +26,25 @@ export function getDesktopUpdateReleaseUrl(version: string | null): string | nul
   return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
 }
 
+export function getDesktopUpdateManualDownloadUrl(state: DesktopUpdateState): string | null {
+  return (
+    getDesktopUpdateDmgUrl(state.availableVersion, state.appArch) ??
+    getDesktopUpdateReleaseUrl(state.availableVersion)
+  );
+}
+
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
 ): DesktopUpdateButtonAction {
   if (
+    !state.automaticInstallAvailable &&
+    state.downloadedVersion &&
+    (state.status === "downloaded" || state.status === "error")
+  ) {
+    return "download";
+  }
+  if (
+    state.automaticInstallAvailable &&
     state.downloadedVersion &&
     (state.status === "downloaded" ||
       (state.status === "error" &&
@@ -80,7 +98,9 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
   if (state.status === "available") {
-    return `Update ${state.availableVersion ?? "available"} ready to download`;
+    return state.automaticInstallAvailable
+      ? `Update ${state.availableVersion ?? "available"} ready to download`
+      : `Download T3 Orchestrator ${state.availableVersion ?? "update"} to install manually. Automatic installation is unavailable on unsigned macOS builds.`;
   }
   if (state.status === "downloading") {
     const progress =
@@ -88,7 +108,9 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {
-    return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
+    return state.automaticInstallAvailable
+      ? `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`
+      : `Download T3 Orchestrator ${state.availableVersion ?? "update"} to install manually.`;
   }
   if (state.status === "error") {
     if (state.errorContext === "download" && state.availableVersion) {
@@ -98,7 +120,9 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
       return `Install failed for ${state.downloadedVersion}. Click to retry.`;
     }
     if (state.downloadedVersion) {
-      return `Update ${state.downloadedVersion} downloaded. Click to restart and install.`;
+      return state.automaticInstallAvailable
+        ? `Update ${state.downloadedVersion} downloaded. Click to restart and install.`
+        : `Download T3 Orchestrator ${state.availableVersion ?? state.downloadedVersion} to install manually.`;
     }
     return state.message ?? "Update failed";
   }

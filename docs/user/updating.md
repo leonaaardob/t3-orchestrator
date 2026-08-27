@@ -72,6 +72,13 @@ If a step fails:
 
 ## The Mobile App
 
+### macOS desktop updates
+
+Unsigned macOS desktop releases can check for updates, but cannot install them
+automatically. When an update is available, choose **Download update**, then
+open the downloaded DMG and replace the app in Applications. Signed and
+notarized macOS releases support automatic installation.
+
 The mobile app keeps itself current on its own. When it finds a new version, it downloads it in the
 background and installs it automatically the next time you leave the app. Unsent drafts and queued
 messages are saved before the restart. Only if the app stays open long enough that the update never

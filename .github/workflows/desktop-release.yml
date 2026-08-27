@@ -3,8 +3,8 @@ name: Desktop Release
 # Fork-owned T3 Orchestrator desktop builds for leonaaardob/t3-orchestrator.
 # Intentionally omits upstream release.yml concerns: npm OIDC, Vercel, Azure
 # Trusted Signing, relay production secrets, and AUR. macOS Developer ID
-# signing and notarization are fork-owned because they are required for the
-# updater ZIP to install on customer Macs.
+# signing and notarization are optional: unsigned macOS artifacts are valid
+# manual-install dry runs, while signed builds enable automatic installation.
 
 on:
   workflow_dispatch:
@@ -313,15 +313,14 @@ jobs:
               fi
             done
             if (( ${#missing[@]} > 0 )); then
-              echo "Signed macOS validation is required; missing GitHub secrets: ${missing[*]}" >&2
-              exit 1
+              echo "Building unsigned ${{ matrix.label }}; signing secrets are not configured: ${missing[*]}"
+            else
+              key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+              printf '%s' "$APPLE_API_KEY" > "$key_path"
+              export APPLE_API_KEY="$key_path"
+              echo "Building signed/notarized ${{ matrix.label }}."
+              args+=(--signed)
             fi
-
-            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY" > "$key_path"
-            export APPLE_API_KEY="$key_path"
-            echo "Building signed/notarized ${{ matrix.label }}."
-            args+=(--signed)
           else
             echo "Building unsigned ${{ matrix.label }} (macOS signing does not affect this target)."
           fi
@@ -333,8 +332,13 @@ jobs:
         env:
           EXPECTED_TEAM_ID: ${{ secrets.T3_ORCHESTRATOR_APPLE_TEAM_ID }}
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+          SIGNED_MACOS: ${{ secrets.T3_ORCHESTRATOR_CSC_LINK != '' && secrets.T3_ORCHESTRATOR_CSC_KEY_PASSWORD != '' && secrets.T3_ORCHESTRATOR_APPLE_API_KEY != '' && secrets.T3_ORCHESTRATOR_APPLE_API_KEY_ID != '' && secrets.T3_ORCHESTRATOR_APPLE_API_ISSUER != '' && secrets.T3_ORCHESTRATOR_APPLE_TEAM_ID != '' }}
         run: |
           set -euo pipefail
+          if [[ "$SIGNED_MACOS" != "true" ]]; then
+            echo "Skipping signed macOS verification for an unsigned dry run."
+            exit 0
+          fi
           zip_path="release/T3-Orchestrator-${EXPECTED_VERSION}-${{ matrix.arch }}.zip"
           dmg_path="release/T3-Orchestrator-${EXPECTED_VERSION}-${{ matrix.arch }}.dmg"
           test -f "$zip_path"

@@ -21,8 +21,11 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 
 interface UpdatesHarnessOptions {
+  readonly automaticInstallAvailable?: boolean;
+  readonly openExternal?: (url: unknown) => Effect.Effect<boolean>;
   readonly checkForUpdates?: Effect.Effect<
     void,
     ElectronUpdater.ElectronUpdaterCheckForUpdatesError
@@ -43,6 +46,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
+  let quitAndInstallCount = 0;
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -84,7 +88,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -140,6 +147,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
+    automaticInstallAvailable: options.automaticInstallAvailable ?? true,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -206,6 +214,12 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     ),
     Layer.provideMerge(environmentLayer),
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(
+      Layer.succeed(ElectronShell.ElectronShell, {
+        openExternal: (url) => options.openExternal?.(url) ?? Effect.succeed(true),
+        copyText: () => Effect.void,
+      }),
+    ),
   );
 
   return {
@@ -219,6 +233,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         0,
       ),
     sentStates,
+    quitAndInstallCount: () => quitAndInstallCount,
     emit: (eventName: string, payload?: unknown) => {
       for (const listener of listeners.get(eventName) ?? []) {
         listener(payload);
@@ -228,6 +243,40 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 describe("DesktopUpdates", () => {
+  it.effect("uses the manual architecture-specific DMG for unsigned macOS", () => {
+    let openedUrl: unknown;
+    const harness = makeHarness({
+      automaticInstallAvailable: false,
+      openExternal: (url) =>
+        Effect.sync(() => {
+          openedUrl = url;
+          return true;
+        }),
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* Effect.yieldNow;
+          const result = yield* updates.download;
+          assert.equal(result.completed, true);
+          assert.equal(result.state.automaticInstallAvailable, false);
+          assert.equal(result.state.status, "available");
+          assert.equal(
+            openedUrl,
+            "https://github.com/leonaaardob/t3-orchestrator/releases/download/v1.2.4/T3-Orchestrator-1.2.4-x64.dmg",
+          );
+          const installResult = yield* updates.install;
+          assert.equal(installResult.accepted, false);
+          assert.equal(harness.quitAndInstallCount(), 0);
+        }),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
       Cause.fail(new Error("updater failed")),
@@ -244,6 +293,10 @@ describe("DesktopUpdates", () => {
     const reportedError = new DesktopUpdates.DesktopUpdaterReportedError({
       operation: "download",
       cause,
+      phase: "download",
+      platform: "darwin",
+      currentVersion: "1.2.3",
+      targetVersion: "1.2.4",
     });
     const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
       action: "install",

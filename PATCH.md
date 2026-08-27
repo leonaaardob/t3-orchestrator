@@ -25,6 +25,9 @@ upstream T3 Code changes.
   projects, providers, Planning, orchestration, and saved environments never
   initialize Clerk or inherit upstream T3 cloud credentials. Clerk remains an
   explicitly configured hosted-web/T3 Connect concern only.
+- Keep unsigned macOS updater installs manual while retaining feed discovery;
+  packaged metadata marks signed macOS builds as eligible for automatic
+  installation and the UI selects the matching public DMG for unsigned builds.
 
 ### Desktop local auth attachment points
 

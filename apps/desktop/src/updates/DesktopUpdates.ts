@@ -24,11 +24,16 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import {
+  getDesktopUpdateDmgUrl,
+  getDesktopUpdateReleaseTagUrl,
+} from "@t3tools/shared/desktopUpdateRepository";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -120,6 +125,10 @@ export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<Desktop
   {
     operation: Schema.Literals(["check", "download", "install", "channel", "background"]),
     cause: Schema.Defect(),
+    phase: Schema.String,
+    platform: Schema.String,
+    currentVersion: Schema.String,
+    targetVersion: Schema.NullOr(Schema.String),
   },
 ) {
   override get message(): string {
@@ -193,6 +202,7 @@ function createBaseUpdateState(
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
     enabled,
+    automaticInstallAvailable: environment.automaticInstallAvailable,
     status: enabled ? "idle" : "disabled",
   };
 }
@@ -251,6 +261,7 @@ export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
+  const electronShell = yield* ElectronShell.ElectronShell;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -401,7 +412,15 @@ export const make = Effect.gen(function* () {
 
   const downloadAvailableUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
-    if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
+    if (
+      !(yield* Ref.get(updaterConfiguredRef)) ||
+      (state.status !== "available" &&
+        !(
+          environment.platform === "darwin" &&
+          !environment.automaticInstallAvailable &&
+          state.status === "downloaded"
+        ))
+    ) {
       return { accepted: false, completed: false };
     }
 
@@ -410,6 +429,33 @@ export const make = Effect.gen(function* () {
     }
 
     return yield* Effect.gen(function* () {
+      if (environment.platform === "darwin" && !environment.automaticInstallAvailable) {
+        const targetUrl =
+          getDesktopUpdateDmgUrl(
+            state.downloadedVersion ?? state.availableVersion,
+            state.appArch,
+          ) ?? getDesktopUpdateReleaseTagUrl(state.downloadedVersion ?? state.availableVersion);
+        const opened = yield* electronShell.openExternal(targetUrl);
+        if (!opened) {
+          const message = "Unable to open the macOS release download.";
+          yield* updateState((current) =>
+            reduceDesktopUpdateStateOnDownloadFailure(current, message),
+          );
+          yield* logUpdaterError(message, {
+            phase: "manual-download",
+            platform: environment.platform,
+            currentVersion: state.currentVersion,
+            targetVersion: state.availableVersion,
+          });
+          return { accepted: true, completed: false };
+        }
+        yield* logUpdaterInfo("opened manual macOS update download", {
+          version: state.availableVersion,
+          architecture: state.appArch,
+        });
+        yield* updateState((current) => ({ ...current, message: null }));
+        return { accepted: true, completed: true };
+      }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -465,6 +511,7 @@ export const make = Effect.gen(function* () {
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     const hasInstallableDownload =
+      state.automaticInstallAvailable &&
       state.downloadedVersion !== null &&
       (state.status === "downloaded" ||
         (state.status === "error" &&
@@ -632,6 +679,10 @@ export const make = Effect.gen(function* () {
     const error = new DesktopUpdaterReportedError({
       operation: Option.getOrElse(activeAction, () => "background" as const),
       cause,
+      phase: Option.getOrElse(activeAction, () => "background" as const),
+      platform: environment.platform,
+      currentVersion: (yield* Ref.get(updateStateRef)).currentVersion,
+      targetVersion: (yield* Ref.get(updateStateRef)).availableVersion,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
       yield* finishUpdateAction("install");

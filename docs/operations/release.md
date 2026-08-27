@@ -15,8 +15,9 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 - Version defaults to `apps/desktop/package.json` (aligned via
   `scripts/update-release-package-versions.ts`); optional `version` input
   overrides it.
-- Matrix: macOS / Windows / Linux × x64 + arm64. macOS is Developer ID signed
-  and notarized; Windows and Linux remain unsigned.
+- Matrix: macOS / Windows / Linux × x64 + arm64. macOS signing/notarization is
+  enabled when the fork-owned credentials are supplied; Windows and Linux
+  remain unsigned.
 - Linux x64 AppImages keep electron-builder's native `x86_64` arch token in the
   filename (`T3-Orchestrator-<version>-x86_64.AppImage`); arm64 stays `arm64`.
 - Updater metadata (`latest*.yml`, `*.blockmap`, macOS `.zip`) is merged and
@@ -31,12 +32,11 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 
 ### Fork signing and notarization
 
-Current public builds through **0.0.35** are unsigned. The next public macOS
-release must be Developer ID signed and notarized before it is published.
+Current public builds through **0.0.35** are unsigned. Unsigned macOS builds
+retain update detection but use manual DMG installation. Signed and notarized
+macOS builds may use automatic installation.
 
-- **macOS:** release jobs require a complete signing configuration, including
-  non-publishing dispatches. This is intentional: an unsigned dry run is not
-  proof that the updater can install a signed release. The job verifies the app
+- **macOS:** when credentials are supplied, the job verifies the app
   extracted from the updater ZIP with `codesign`, `spctl`, its bundle identity,
   version, Team ID, and the app's stapled notarization ticket. The DMG retains
   that stapled app; it is not a separately notarized updater payload.
@@ -305,7 +305,9 @@ available.
 - Update UX:
   - Background checks run on startup delay + interval.
   - No automatic download or install.
-  - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
+  - Unsigned macOS shows a manual-download action with a short explanation; it
+    opens the matching x64 or arm64 DMG. Signed macOS, Windows, and Linux keep
+    the automatic download/restart-install action.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
@@ -385,7 +387,7 @@ prerelease, desktop updater release, and hosted nightly alias, but it does not u
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
 Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing
-secrets only makes platform artifacts unsigned; it does not prevent publication.
+secrets permits unsigned macOS dry-run artifacts, but does not make publication safe by itself.
 
 ## 2) Apple signing + notarization setup (macOS)
 

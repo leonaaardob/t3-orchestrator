@@ -3,6 +3,7 @@ import { ArrowRightIcon } from "lucide-react";
 
 import {
   getDesktopUpdateDownloadedVersion,
+  getDesktopUpdateManualDownloadUrl,
   getDesktopUpdateReleaseUrl,
 } from "./desktopUpdate.logic";
 import { toastManager } from "./ui/toast";
@@ -45,6 +46,23 @@ export function showDesktopUpdateDownloadedToast(
   shell: DesktopUpdateShell,
   state: DesktopUpdateState,
 ): void {
+  if (!state.automaticInstallAvailable) {
+    const downloadUrl = getDesktopUpdateManualDownloadUrl(state);
+    toastManager.add({
+      type: "success",
+      title: `Download T3 Orchestrator ${state.availableVersion ?? "update"}`,
+      description: downloadUrl ? (
+        <>
+          Automatic installation is unavailable on unsigned macOS builds. Download and install the
+          update manually.
+          <ReleaseNotesLink releaseUrl={downloadUrl} shell={shell} />
+        </>
+      ) : (
+        "Automatic installation is unavailable on unsigned macOS builds. Download and install the update manually."
+      ),
+    });
+    return;
+  }
   const releaseUrl = getDesktopUpdateReleaseUrl(getDesktopUpdateDownloadedVersion(state));
   toastManager.add({
     type: "success",

@@ -36,3 +36,23 @@ export function getDesktopUpdateReleaseTagUrlBase(
   }
   return `https://github.com/${parsed.owner}/${parsed.repo}/releases/tag`;
 }
+
+/** Direct installer URL used by unsigned macOS builds for manual updates. */
+export function getDesktopUpdateDmgUrl(
+  version: string | null,
+  architecture: "arm64" | "x64" | "other",
+  repository: string = DEFAULT_DESKTOP_UPDATE_REPOSITORY,
+): string | null {
+  const normalizedVersion = version?.trim();
+  const parsed = parseDesktopUpdateRepository(repository);
+  if (!normalizedVersion || !parsed || architecture === "other") return null;
+  const tag = `v${encodeURIComponent(normalizedVersion)}`;
+  const asset = `T3-Orchestrator-${normalizedVersion}-${architecture}.dmg`;
+  return `https://github.com/${parsed.owner}/${parsed.repo}/releases/download/${tag}/${encodeURIComponent(asset)}`;
+}
+
+export function getDesktopUpdateReleaseTagUrl(version: string | null): string | null {
+  const normalizedVersion = version?.trim();
+  if (!normalizedVersion) return null;
+  return `${getDesktopUpdateReleaseTagUrlBase()}/v${encodeURIComponent(normalizedVersion)}`;
+}

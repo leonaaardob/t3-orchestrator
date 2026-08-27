@@ -7,6 +7,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateManualDownloadUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -17,6 +18,7 @@ import {
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  automaticInstallAvailable: true,
   status: "idle",
   channel: "latest",
   currentVersion: "1.0.0",
@@ -42,6 +44,21 @@ describe("desktop update button state", () => {
     };
     expect(shouldShowDesktopUpdateButton(state)).toBe(true);
     expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
+  });
+
+  it.each([
+    ["x64", "T3-Orchestrator-1.1.0-x64.dmg"],
+    ["arm64", "T3-Orchestrator-1.1.0-arm64.dmg"],
+  ] as const)("selects the unsigned macOS %s DMG", (appArch, asset) => {
+    expect(
+      getDesktopUpdateManualDownloadUrl({
+        ...baseState,
+        status: "available",
+        availableVersion: "1.1.0",
+        appArch,
+        automaticInstallAvailable: false,
+      }),
+    ).toContain(asset);
   });
 
   it("keeps retry action available after a download error", () => {

@@ -8,6 +8,52 @@
   },
   "cards": [
     {
+      "id": "ORCH-036-unsigned-macos-updates",
+      "title": "Make unsigned macOS updates manual and safe",
+      "priority": 1,
+      "area": "Release Engineering",
+      "slice": "Orchestrator desktop updater UX",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260828-unsigned-macos-updates.md",
+      "slicePlanPath": "docs/agents/slices/orchestrator-macos-signing.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Updater contracts, desktop packaging metadata, and release documentation share the next-release artifact contract.",
+        "conflictsWith": ["ORCH-036-macos-signing", "ORCH-035-release-identity"],
+        "allowedWriteScopes": [
+          "apps/desktop/**",
+          "apps/web/src/components/**",
+          "packages/contracts/src/ipc.ts",
+          "packages/shared/src/desktopUpdateRepository.ts",
+          "scripts/build-desktop-artifact.ts",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": { "attemptCount": 1 },
+      "createdAt": "2026-08-28T00:00:00.000Z",
+      "updatedAt": "2026-08-28T00:00:00.000Z",
+      "state": "Running",
+      "intentBrief": {
+        "intent": "Keep update discovery enabled while preventing unsigned macOS builds from invoking the broken automatic installer.",
+        "desiredOutcome": "Unsigned macOS users get a clear architecture-correct manual DMG download action; signed macOS and Windows/Linux retain automatic installation behavior.",
+        "acceptanceCriteria": [
+          "Unsigned macOS detects updates and never invokes quitAndInstall.",
+          "Manual update UX explains why installation is manual and opens the correct DMG.",
+          "Signed macOS capability remains enabled by the packaging flag.",
+          "Focused updater, desktop, packaging, and dry-run validation pass without publishing."
+        ],
+        "constraints": [
+          "Do not publish a release.",
+          "Do not mutate public 0.0.35.",
+          "No Apple credentials required for unsigned validation."
+        ],
+        "nonGoals": ["Windows/Linux updater redesign.", "Removing signing/notarization support."],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-036-macos-signing",
       "title": "Sign and notarize T3 Orchestrator macOS releases",
       "priority": 1,
