@@ -164,6 +164,7 @@ export interface CodexSessionRuntimeOptions {
 
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
+  readonly developerInstructions?: string;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
     readonly url: string;
@@ -563,6 +564,7 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean;
+  readonly developerInstructions?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -574,11 +576,11 @@ function buildCodexCollaborationMode(input: {
     settings: {
       model,
       reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(
+      developer_instructions: `${buildCodexDeveloperInstructions(
         input.interactionMode,
         { model, reasoningEffort },
         input.browserToolsAvailable ?? true,
-      ),
+      )}${input.developerInstructions ? `\n\n${input.developerInstructions}` : ""}`,
     },
   };
 }
@@ -597,6 +599,7 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  readonly developerInstructions?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -618,6 +621,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
+    ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -2109,6 +2113,9 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
+            ...(input.developerInstructions
+              ? { developerInstructions: input.developerInstructions }
+              : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),

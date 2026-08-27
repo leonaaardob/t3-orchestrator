@@ -183,6 +183,23 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it("adds provider context to Codex developer instructions", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Coordinate this task",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        developerInstructions: "You are the Project Supervisor for this project.",
+      }),
+    );
+    NodeAssert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /You are the Project Supervisor for this project\./,
+    );
+  });
+
   it("reports the same fallback model and effort in settings and instructions", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

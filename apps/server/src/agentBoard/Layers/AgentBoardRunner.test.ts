@@ -217,6 +217,7 @@ describe("AgentBoardRunnerLive", () => {
         throw new Error("Expected a thread.create followed by thread.turn.start");
       }
       expect(createCommand.threadId).toBe(result.threadId);
+      expect(createCommand.role).toBeUndefined();
       expect(createCommand.worktreePath).toBe(expectedWorktree);
       expect(createCommand.branch).toBe(`board/${CARD_ID}`);
       expect(createCommand.modelSelection).toEqual(BOARD_WORKER_SELECTION);

@@ -67,6 +67,8 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
+  /** Provider-neutral context prepended to this turn by orchestration. */
+  context: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
@@ -77,6 +79,17 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
+
+/**
+ * Joins orchestration context with user input without changing ordinary turns.
+ * Adapters use this when their native protocol has no separate developer field.
+ */
+export function providerTurnText(input: ProviderSendTurnInput): string | undefined {
+  if (input.context === undefined) {
+    return input.input;
+  }
+  return input.input === undefined ? input.context : `${input.context}\n\n${input.input}`;
+}
 
 export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,

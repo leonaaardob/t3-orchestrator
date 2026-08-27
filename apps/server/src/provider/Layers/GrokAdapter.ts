@@ -11,6 +11,7 @@ import {
   RuntimeRequestId,
   type ThreadId,
   TurnId,
+  providerTurnText,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -1503,7 +1504,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 "reasoningEffort",
               );
 
-              const text = input.input?.trim();
+              const text = providerTurnText(input)?.trim();
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>

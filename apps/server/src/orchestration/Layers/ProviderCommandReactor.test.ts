@@ -53,6 +53,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
+  PROJECT_SUPERVISOR_PROVIDER_CONTEXT,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -155,6 +156,7 @@ describe("ProviderCommandReactor", () => {
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    readonly threadRole?: "standard" | "project-supervisor";
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -455,6 +457,7 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         projectId: asProjectId("project-1"),
         title: "Thread",
+        ...(input?.threadRole !== undefined ? { role: input.threadRole } : {}),
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -566,6 +569,65 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("adds Supervisor context only for a project-supervisor thread", async () => {
+    const standard = await createHarness({ threadRole: "standard" });
+    const now = "2026-01-01T00:00:00.000Z";
+    await Effect.runPromise(
+      standard.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-standard-context"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-standard-context"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => standard.sendTurn.mock.calls.length === 1);
+    expect(standard.sendTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: ThreadId.make("thread-1"),
+      input: "hello",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    });
+
+    if (scope) await Effect.runPromise(Scope.close(scope, Exit.void));
+    scope = null;
+    if (runtime) await runtime.dispose();
+    runtime = null;
+
+    const supervisor = await createHarness({ threadRole: "project-supervisor" });
+    await Effect.runPromise(
+      supervisor.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-supervisor-context"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-supervisor-context"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => supervisor.sendTurn.mock.calls.length === 1);
+    expect(supervisor.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: "hello",
+      context: PROJECT_SUPERVISOR_PROVIDER_CONTEXT,
+    });
+    expect(
+      (await supervisor.readModel()).threads.find((thread) => thread.id === "thread-1")?.role,
+    ).toBe("project-supervisor");
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

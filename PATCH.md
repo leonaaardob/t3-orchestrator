@@ -225,6 +225,14 @@ The current patch attaches to upstream T3 Code through these areas:
     thread create/meta-update events and the durable projection. Migration 045
     backfills the former exact-title designation once. It keeps the normal
     thread runtime intact, so auto-titling and turns cannot clear identity.
+- `packages/contracts/src/provider.ts`, `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`,
+  and `apps/server/src/provider/Layers/`
+  - The durable `project-supervisor` role adds one provider-neutral turn context
+    block during normal request construction. Standard threads omit the field;
+    adapters compose it into their supported prompt channel, while Codex also
+    places it in collaboration-mode developer instructions. This attachment
+    point must be preserved if upstream changes provider turn input or adapter
+    prompt assembly.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
 - `src/components/Sidebar.tsx`

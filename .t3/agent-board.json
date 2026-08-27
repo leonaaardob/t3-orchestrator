@@ -8,6 +8,45 @@
   },
   "cards": [
     {
+      "id": "ORCH-038-supervisor-provider-context",
+      "title": "Carry Supervisor role into provider turn context",
+      "priority": 1,
+      "area": "Supervisor",
+      "slice": "Supervisor provider context",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260828-supervisor-provider-context.md",
+      "slicePlanPath": "docs/agents/slices/authoritative-agent-board.md",
+      "dependencies": ["ORCH-037-supervisor-role-persistence"],
+      "parallelism": {
+        "safe": "false",
+        "reason": "The shared provider turn contract and every provider adapter must agree on context composition.",
+        "conflictsWith": [],
+        "allowedWriteScopes": [
+          "packages/contracts/src/provider.ts",
+          "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+          "apps/server/src/provider/Layers/**",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": { "attemptCount": 1 },
+      "createdAt": "2026-08-28T00:00:00.000Z",
+      "updatedAt": "2026-08-28T00:00:00.000Z",
+      "state": "Done",
+      "intentBrief": {
+        "intent": "Make the durable Supervisor role reach provider behavior through normal turn construction.",
+        "desiredOutcome": "Supervisor threads receive concise coordination context while standard, worker, and reviewer threads are unchanged.",
+        "acceptanceCriteria": [
+          "Supervisor context reaches the provider-neutral request.",
+          "Standard requests have no Supervisor context.",
+          "Codex developer instructions include the handoff when available."
+        ],
+        "constraints": ["No architecture split and no mechanical delegation enforcement."],
+        "nonGoals": ["Title-based role logic.", "Automatic planning-file injection."],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-037-supervisor-role-persistence",
       "title": "Persist Project Supervisor thread identity",
       "priority": 1,

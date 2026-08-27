@@ -11,6 +11,7 @@ import {
   type ToolLifecycleItemType,
   TurnId,
   type UserInputQuestion,
+  providerTurnText,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -1455,7 +1456,7 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      const text = input.input?.trim();
+      const text = providerTurnText(input)?.trim();
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>

@@ -10,6 +10,7 @@ import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  providerTurnText,
 } from "./provider.ts";
 
 const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
@@ -121,6 +122,19 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("preserves standard input and prepends provider-neutral context when present", () => {
+    expect(providerTurnText({ threadId: ThreadId.make("thread-1"), input: "Implement it" })).toBe(
+      "Implement it",
+    );
+    expect(
+      providerTurnText({
+        threadId: ThreadId.make("thread-1"),
+        context: "You are the Project Supervisor.",
+        input: "Implement it",
+      }),
+    ).toBe("You are the Project Supervisor.\n\nImplement it");
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

@@ -545,6 +545,7 @@ describe("AgentBoardSchedulerLive", () => {
         const creates = harness.dispatchedCommands().filter((c) => c.type === "thread.create");
         expect(creates.length).toBe(1);
         if (creates[0]?.type === "thread.create") {
+          expect(creates[0].role).toBeUndefined();
           expect(creates[0].worktreePath).toBe(`${harness.cwd}/.t3/workspaces/c1`);
           expect(creates[0].branch).toBe("board/c1");
         }

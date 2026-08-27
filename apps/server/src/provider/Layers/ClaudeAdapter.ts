@@ -35,6 +35,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
+  providerTurnText,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
@@ -1259,7 +1260,7 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  return applyClaudePromptEffortPrefix(providerTurnText(input)?.trim() ?? "", promptEffort);
 }
 
 function buildUserMessage(input: {

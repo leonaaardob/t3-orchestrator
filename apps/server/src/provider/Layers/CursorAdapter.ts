@@ -20,6 +20,7 @@ import {
   type RuntimeMode,
   type ThreadId,
   TurnId,
+  providerTurnText,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -967,8 +968,9 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
+          const text = providerTurnText(input)?.trim();
+          if (text) {
+            promptParts.push({ type: "text", text });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
