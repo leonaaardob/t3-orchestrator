@@ -277,6 +277,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          agentExecutionPresets: null,
           faviconPath: null,
           scripts: [
             {
@@ -329,6 +330,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
@@ -403,6 +405,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
+          agentExecutionPresets: null,
           faviconPath: null,
           scripts: [
             {
@@ -454,6 +457,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
