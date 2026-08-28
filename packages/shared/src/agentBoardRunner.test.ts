@@ -128,4 +128,21 @@ describe("resolveExecutionPresetForOperation", () => {
     expect(implementation).toMatchObject({ _tag: "resolved", selection: boardSelection });
     expect(repair).toMatchObject({ _tag: "resolved", selection: boardSelection });
   });
+
+  it("uses a changed Simple model and effort for every operation", () => {
+    const simple = {
+      mode: "simple" as const,
+      selection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+    };
+
+    for (const operation of ["implementation", "review", "repair"] as const) {
+      expect(
+        resolveExecutionPresetForOperation({ globalPresets: simple, operation }),
+      ).toMatchObject({ _tag: "resolved", selection: simple.selection });
+    }
+  });
 });

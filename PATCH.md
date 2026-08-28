@@ -114,6 +114,11 @@ The current patch attaches to upstream T3 Code through these areas:
 
 ### Server (`apps/server`)
 
+- `src/serverSettings.ts` treats `agentExecutionPresets` as an atomic persisted
+  value. Because it is a tagged Simple/Advanced union, recursive default
+  stripping would otherwise remove `mode` when only a model or effort changes,
+  making the settings write fail during encoding.
+
 - `src/orchestration/{decider,projector}.ts`,
   `src/orchestration/Layers/{ProjectionPipeline,ProjectionSnapshotQuery}.ts`, and
   `src/persistence/{Services,Layers}/ProjectionProjects.ts`
@@ -199,6 +204,14 @@ The current patch attaches to upstream T3 Code through these areas:
   - Agent board layers added to the test app wiring.
 
 ### Web (`apps/web`)
+
+- `src/routes/settings.orchestration.tsx`, `src/components/settings/SettingsSidebarNav.tsx`,
+  `src/components/settings/settingsSearch.ts`, and `SettingsPanels.tsx` keep global
+  execution presets under the dedicated **Settings → Orchestration** route. The
+  project override remains in `ProjectSettingsPanel.tsx`; it is not duplicated in
+  the main project sidebar. Simple mode writes one complete tagged preset used by
+  implementation, review, and repair, while Advanced mode retains its three
+  selections.
 
 - `src/state/agentBoard.ts`
   - Atom commands for load/save/claimCard/runCard over the client-runtime

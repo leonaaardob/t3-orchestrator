@@ -38,7 +38,7 @@ Repair / Done
 Unlike Symphony's Codex-centric reference, this fork runs workers through **T3's provider runtime**. Pick different models per operation — implementation, review, and repair — globally or per project.
 
 <p align="center">
-  <img src="./docs/assets/execution-presets-advanced.png" alt="Advanced execution presets for implementation, review, and repair" width="820" />
+  <img src="./docs/assets/orchestration-settings-advanced.png" alt="Advanced orchestration settings for implementation, review, and repair" width="820" />
 </p>
 
 **Simple** uses one model for everything. **Advanced** splits implementation / review / repair; review must differ from implementation. Example intent:
@@ -118,7 +118,9 @@ The server starts a board scheduler automatically (15-second reconciler). It:
 
 ### Simple vs Advanced execution presets
 
-Configure defaults in **Settings → General → Agent execution presets**. Projects can inherit or override.
+Configure defaults in **Settings → Orchestration**. Projects can inherit or override.
+
+Use one model for the whole execution loop in Simple mode, or route implementation, review, and repair independently in Advanced mode.
 
 | Mode         | Behavior                                                   |
 | ------------ | ---------------------------------------------------------- |
@@ -216,7 +218,7 @@ Enable additional providers under **Settings → Providers** when needed.
 
 | What                     | Where                                                       |
 | ------------------------ | ----------------------------------------------------------- |
-| Global execution presets | Settings → General → Agent execution presets                |
+| Global execution presets | Settings → Orchestration                                    |
 | Project override         | Project settings → Agent execution (inherit or override)    |
 | Board file               | `.t3/agent-board.json` (per project; gitignored by default) |
 | Workflow contract        | [`WORKFLOW.md`](./WORKFLOW.md)                              |

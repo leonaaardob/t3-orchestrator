@@ -995,7 +995,7 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
-function AgentExecutionGlobalSection() {
+export function AgentExecutionGlobalSection() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -1141,8 +1141,8 @@ function AgentExecutionGlobalSection() {
       />
       {effective.mode === "simple" ? (
         <SettingsRow
-          title="Worker model"
-          description="Used for implementation, review, and repair."
+          title="Model"
+          description="This single model is used for implementation, review, and repair. Same-model self-review is allowed in Simple mode."
           control={renderPicker(effective.selection, setSimpleSelection)}
         />
       ) : (
@@ -1173,6 +1173,20 @@ function AgentExecutionGlobalSection() {
         </>
       )}
     </>
+  );
+}
+
+export function OrchestrationSettingsPanel() {
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Orchestration">
+        <SettingsRow
+          title="Execution presets"
+          description="Choose one model and effort for the whole execution loop in Simple mode, or route implementation, review, and repair independently in Advanced mode."
+        />
+        <AgentExecutionGlobalSection />
+      </SettingsSection>
+    </SettingsPageContainer>
   );
 }
 
@@ -2770,14 +2784,6 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
-      </SettingsSection>
-
-      <SettingsSection title="Agent execution">
-        <SettingsRow
-          title="Agent execution presets"
-          description="Simple uses one model for all ops; Advanced uses distinct implementation, review, repair. Global default is inherited by projects unless overridden."
-        />
-        <AgentExecutionGlobalSection />
       </SettingsSection>
 
       <SettingsSection title="About">

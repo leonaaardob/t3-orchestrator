@@ -324,6 +324,9 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  // Tagged union: preserve the mode discriminator when only a nested model or
+  // effort option changes.
+  "agentExecutionPresets",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.

@@ -4,6 +4,7 @@ import {
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
+  SETTINGS_SECTION_LABELS,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -36,6 +37,10 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("exposes Orchestration as a Settings section", () => {
+    expect(SETTINGS_SECTION_LABELS["/settings/orchestration"]).toBe("Orchestration");
+  });
+
   it("matches only setting titles", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);

@@ -159,6 +159,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }),
   );
 
+  it.effect("persists and hydrates a changed Simple model and effort", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+        { id: "reasoningEffort", value: "high" },
+      ]);
+
+      yield* serverSettings.updateSettings({
+        agentExecutionPresets: { mode: "simple", selection },
+      });
+
+      const hydrated = yield* serverSettings.getSettings;
+      assert.deepEqual(hydrated.agentExecutionPresets, {
+        mode: "simple",
+        selection,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "decodes legacy object-shaped textGenerationModelSelection.options from settings.json",
     () =>
