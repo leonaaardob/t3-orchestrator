@@ -1,4 +1,12 @@
 import {
+  formatPackageSpec,
+  linuxServiceName,
+  macServiceLabel,
+  macServicePlistFile,
+  npmPackageName,
+  productName,
+} from "@t3tools/shared/distributionIdentity";
+import {
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
@@ -29,12 +37,9 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-const BOOT_SERVICE_NAME = "t3code";
-export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-// `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+export const BOOT_SERVICE_UNIT_FILE = linuxServiceName;
+export const BOOT_SERVICE_LAUNCHD_LABEL = macServiceLabel;
+export const BOOT_SERVICE_PLIST_FILE = macServicePlistFile;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -62,7 +67,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    "Description=T3 Orchestrator server",
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",
@@ -403,7 +408,7 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not set up the T3 Code background service.";
+    return "Could not set up the T3 Orchestrator background service.";
   }
 }
 
@@ -593,7 +598,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             Effect.mapError(
               (cause) =>
                 new PinnedRuntimeInstallError({
-                  step: "verifying the pinned t3 runtime",
+                  step: `verifying the pinned ${npmPackageName} runtime`,
                   cause,
                 }),
             ),
@@ -603,7 +608,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
                 ? Effect.void
                 : Effect.fail(
                     new PinnedRuntimeInstallError({
-                      step: "verifying the pinned t3 runtime",
+                      step: `verifying the pinned ${npmPackageName} runtime`,
                       exitCode: Number(result.code),
                       stdoutLength: result.stdout.length,
                       stderrLength: result.stderr.length,

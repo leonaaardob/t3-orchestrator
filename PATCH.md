@@ -431,17 +431,42 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
-### Fork install constraint (no published `t3@0.0.36`)
+### Fork install constraint (no published `t3-orchestrator@0.0.36`)
 
-`t3@0.0.36` is **not** published to npm (only `0.0.35` and `0.0.36-nightly.*` exist).
-The standard `npx t3@latest service update` path installs an exact version from the
-registry, so it cannot install this fork build and fails with `no matching version
-found for t3@0.0.36`. For fork testing and local installs, build the server
-(`vp run --filter t3 build:bundle`) and pre-position the runtime under
-`~/.t3/runtime/versions/0.0.36/` with the built `dist` plus a pinned `node_modules`
-(for example a symlink to `apps/server/node_modules`), then run the local
-`node dist/bin.mjs service update`. Do not "fix" this by publishing `t3@0.0.36` to
-npm; that is out of scope for the migration fix.
+`t3-orchestrator@0.0.36` is **not** published to npm yet. The standard
+`npx t3-orchestrator@latest service update` path installs an exact version from the
+registry once published; until then, build the server
+(`vp run --filter t3-orchestrator build:bundle`) and pre-position the runtime under
+`~/.t3-orchestrator/runtime/versions/0.0.36/` with the built `dist` plus a pinned
+`node_modules` tree containing `t3-orchestrator`, then run
+`node dist/bin.mjs service update --base-dir ~/.t3-orchestrator`. Do not publish early
+just to satisfy local migration testing.
+
+### Distribution identity (server/CLI/npm)
+
+Fork server/CLI distribution identity is centralized in
+`packages/shared/src/distributionIdentity.ts` and exported as
+`@t3tools/shared/distributionIdentity`. Upstream merges must preserve these attachment
+points instead of reintroducing bare `t3` strings:
+
+| Concern                  | Fork value                                  | Primary attachment                                         |
+| ------------------------ | ------------------------------------------- | ---------------------------------------------------------- |
+| npm package              | `t3-orchestrator`                           | `apps/server/package.json`                                 |
+| CLI bin                  | `t3-orchestrator`                           | same + `apps/server/src/cli/invocation.ts`                 |
+| Remote home default      | `~/.t3-orchestrator`                        | `apps/server/src/os-jank.ts`, `packages/ssh/src/tunnel.ts` |
+| Pinned runtime entry     | `node_modules/t3-orchestrator/dist/bin.mjs` | `pinnedRuntime.ts`, `serviceLauncher.ts`                   |
+| Linux service            | `t3-orchestrator.service`                   | `apps/server/src/cloud/bootService.ts`                     |
+| macOS service            | `com.t3orchestrator.service`                | same                                                       |
+| Desktop SSH package spec | `t3-orchestrator@<version>`                 | `packages/ssh/src/command.ts`, `apps/desktop/src/main.ts`  |
+| SSH runner PATH          | never `command -v t3`                       | `packages/ssh/src/tunnel.ts`                               |
+| Publish filter           | `t3-orchestrator`                           | `apps/server/scripts/cli.ts`, root `package.json`          |
+
+Regression tests: `packages/shared/src/distributionIdentity.test.ts`,
+`packages/ssh/src/tunnel.test.ts` (PATH collision), `packages/ssh/src/command.test.ts`.
+
+Legacy Orchestrator installs under `~/.t3` require the explicit one-time procedure in
+`docs/operations/orchestrator-remote-home-migration.md`. Do not auto-migrate or delete
+official `~/.t3`.
 
 ## Migration Immutability
 

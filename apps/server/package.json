@@ -1,14 +1,14 @@
 {
-  "name": "t3",
+  "name": "t3-orchestrator",
   "version": "0.0.36",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/leonaaardob/t3-orchestrator",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "t3-orchestrator": "./dist/bin.mjs"
   },
   "files": [
     "dist"

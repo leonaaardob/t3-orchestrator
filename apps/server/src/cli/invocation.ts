@@ -1,6 +1,11 @@
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import {
+  cliBinName,
+  formatNpxServiceUpdateCommand,
+  suggestedPackageSpec as distributionSuggestedPackageSpec,
+} from "@t3tools/shared/distributionIdentity";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -43,7 +48,7 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
  * anything else suggests the bare package.
  */
 export function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? "t3@nightly" : "t3";
+  return distributionSuggestedPackageSpec(version);
 }
 
 /**
@@ -59,7 +64,7 @@ export function formatCliCommand(input: {
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    return `${cliBinName} ${input.subcommand}`;
   }
   return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }

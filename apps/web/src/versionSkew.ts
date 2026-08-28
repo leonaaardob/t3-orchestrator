@@ -1,3 +1,4 @@
+import { formatManualServerUpdateCommand } from "@t3tools/shared/distributionIdentity";
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
@@ -87,7 +88,7 @@ export function resolveServerSelfUpdateCapability(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return formatManualServerUpdateCommand(targetVersion);
 }
 
 /** One sentence telling the user how to resolve version skew for a server,

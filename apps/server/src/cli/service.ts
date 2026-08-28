@@ -1,4 +1,10 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  cliBinName,
+  formatNpxServiceUpdateCommand,
+  formatPackageSpec,
+  productName,
+} from "@t3tools/shared/distributionIdentity";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -49,17 +55,17 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
+    return `${productName} service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd`;
   }
   if (!status.installed) {
-    return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
+    return `${productName} service\n  Status: not installed\n  Next: Run \`${cliBinName} service install\`.`;
   }
   return [
-    "T3 Code service",
-    `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
+    `${productName} service`,
+    `  Status: ${status.current ? `installed · ${formatPackageSpec(cliVersion)}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
-    ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+    ...(status.current ? [] : [`  Next: Run \`${formatNpxServiceUpdateCommand()}\`.`]),
   ].join("\n");
 }
 
@@ -73,7 +79,7 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
 });
 
 const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe(
-  Command.withDescription("Install T3 Code as a background service for this user."),
+  Command.withDescription(`Install ${productName} as a background service for this user.`),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
@@ -81,12 +87,12 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
         const result = yield* reconcileService();
         if (!result.changed) {
           yield* Console.log(
-            `T3 Code service is already installed with t3@${packageJson.version}.`,
+            `${productName} service is already installed with ${formatPackageSpec(packageJson.version)}.`,
           );
           return;
         }
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${result.previouslyInstalled ? "Updated" : "Installed"} ${productName} service with ${formatPackageSpec(packageJson.version)}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -95,7 +101,7 @@ const serviceInstallCommand = Command.make("install", projectLocationFlags).pipe
 
 const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
   Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
+    `Update or repair the background service using this CLI version. Use \`${formatNpxServiceUpdateCommand()}\` for the latest release.`,
   ),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -103,11 +109,13 @@ const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
       Effect.gen(function* () {
         const result = yield* reconcileService();
         if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
+          yield* Console.log(
+            `${productName} service is already using ${formatPackageSpec(packageJson.version)}.`,
+          );
           return;
         }
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `${result.previouslyInstalled ? "Updated" : "Installed"} ${productName} service with ${formatPackageSpec(packageJson.version)}.\nLogs: ${result.plan.logPath}`,
         );
       }),
     ),
@@ -115,7 +123,7 @@ const serviceUpdateCommand = Command.make("update", projectLocationFlags).pipe(
 );
 
 const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).pipe(
-  Command.withDescription("Stop and remove the T3 Code background service."),
+  Command.withDescription(`Stop and remove the ${productName} background service.`),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
@@ -123,7 +131,9 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
         const service = yield* BootService.BootService;
         const removed = yield* service.uninstall;
         yield* Console.log(
-          removed ? "Removed the T3 Code service." : "T3 Code service is not installed.",
+          removed
+            ? `Removed the ${productName} service.`
+            : `${productName} service is not installed.`,
         );
       }),
     ),
@@ -131,7 +141,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
 );
 
 const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
-  Command.withDescription("Show whether the T3 Code background service is installed."),
+  Command.withDescription(`Show whether the ${productName} background service is installed.`),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,

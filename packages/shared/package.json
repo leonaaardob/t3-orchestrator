@@ -242,6 +242,10 @@
     "./desktopUpdateRepository": {
       "types": "./src/desktopUpdateRepository.ts",
       "import": "./src/desktopUpdateRepository.ts"
+    },
+    "./distributionIdentity": {
+      "types": "./src/distributionIdentity.ts",
+      "import": "./src/distributionIdentity.ts"
     }
   },
   "scripts": {
