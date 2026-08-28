@@ -431,6 +431,35 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
+### Fork install constraint (no published `t3@0.0.36`)
+
+`t3@0.0.36` is **not** published to npm (only `0.0.35` and `0.0.36-nightly.*` exist).
+The standard `npx t3@latest service update` path installs an exact version from the
+registry, so it cannot install this fork build and fails with `no matching version
+found for t3@0.0.36`. For fork testing and local installs, build the server
+(`vp run --filter t3 build:bundle`) and pre-position the runtime under
+`~/.t3/runtime/versions/0.0.36/` with the built `dist` plus a pinned `node_modules`
+(for example a symlink to `apps/server/node_modules`), then run the local
+`node dist/bin.mjs service update`. Do not "fix" this by publishing `t3@0.0.36` to
+npm; that is out of scope for the migration fix.
+
+## Migration Immutability
+
+Once a migration ID has shipped (recorded in `effect_sql_migrations` on any real
+database), its semantic effect must not be changed. The migrator keys by numeric
+migration ID, so editing an already-shipped migration's body does **not** replay it on
+databases that already recorded that ID — the change is silently skipped and the schema
+drifts. Follow-up schema changes must use a **new** migration ID.
+
+Example: the `agent_execution_presets_json` column on `projection_projects` was
+originally folded into fork migration `043`. Upstream 0.0.35 had already recorded
+migration `43` (as `ProjectionThreadsUnsettledAt`) on existing databases, so the
+modified `043` was never replayed and the server crashed with
+`no such column: agent_execution_presets_json`. The correct schema guarantee now lives
+in migration `046` (`046_ProjectionProjectAgentExecutionPresets`), which is idempotent
+and runs after the previously-recorded ids. Do not repurpose `043`/`044`/`045` for new
+schema effects.
+
 ## v0.0.33 Sync Notes (2026-08-23)
 
 Baseline: fork snapshot matched upstream `cb3211c8` (2026-05-03, between

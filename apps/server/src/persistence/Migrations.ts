@@ -6,6 +6,12 @@
  *
  * Migrations run automatically when the MigrationLayer is provided,
  * ensuring the database schema is always up-to-date before the application starts.
+ *
+ * IMMUTABILITY: a migration ID's semantic effect must never change once it has
+ * shipped (been recorded in `effect_sql_migrations` on any real database). The
+ * migrator keys by numeric id; editing a shipped migration's body does not replay
+ * it on databases that already recorded that id. Add a NEW migration id for
+ * follow-up schema changes. See PATCH.md "Migration Immutability".
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
@@ -55,9 +61,9 @@ import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMo
 import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
-import Migration0043 from "./Migrations/043_ProjectionProjectAgentExecutionPresets.ts";
 import Migration0044 from "./Migrations/044_ProjectionThreadsUnsettledAt.ts";
 import Migration0045 from "./Migrations/045_ProjectionThreadsRole.ts";
+import Migration0046 from "./Migrations/046_ProjectionProjectAgentExecutionPresets.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -112,9 +118,9 @@ export const migrationEntries = [
   [40, "ProjectionProjectFaviconPath", Migration0040],
   [41, "AuthSessionClientConnection", Migration0041],
   [42, "ProjectionThreadLinkedPullRequest", Migration0042],
-  [43, "ProjectionProjectAgentExecutionPresets", Migration0043],
   [44, "ProjectionThreadsUnsettledAt", Migration0044],
   [45, "ProjectionThreadsRole", Migration0045],
+  [46, "ProjectionProjectAgentExecutionPresets", Migration0046],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
