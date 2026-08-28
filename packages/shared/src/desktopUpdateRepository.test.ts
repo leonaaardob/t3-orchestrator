@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   DEFAULT_DESKTOP_UPDATE_REPOSITORY,
+  getDesktopReleaseTag,
   getDesktopUpdateReleaseTagUrlBase,
   getDesktopUpdateDmgUrl,
   parseDesktopUpdateRepository,
@@ -45,13 +46,17 @@ describe("desktopUpdateRepository", () => {
     );
   });
 
+  it("derives the fork release tag", () => {
+    assert.equal(getDesktopReleaseTag("0.0.36"), "orchestrator-v0.0.36");
+  });
+
   it.each([
     ["x64", "T3-Orchestrator-0.0.36-x64.dmg"],
     ["arm64", "T3-Orchestrator-0.0.36-arm64.dmg"],
   ] as const)("selects the %s DMG asset", (architecture, asset) => {
     assert.equal(
       getDesktopUpdateDmgUrl("0.0.36", architecture),
-      `https://github.com/leonaaardob/t3-orchestrator/releases/download/v0.0.36/${asset}`,
+      `https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v0.0.36/${asset}`,
     );
   });
 });

@@ -267,7 +267,7 @@ describe("DesktopUpdates", () => {
           assert.equal(result.state.status, "available");
           assert.equal(
             openedUrl,
-            "https://github.com/leonaaardob/t3-orchestrator/releases/download/v1.2.4/T3-Orchestrator-1.2.4-x64.dmg",
+            "https://github.com/leonaaardob/t3-orchestrator/releases/download/orchestrator-v1.2.4/T3-Orchestrator-1.2.4-x64.dmg",
           );
           const installResult = yield* updates.install;
           assert.equal(installResult.accepted, false);

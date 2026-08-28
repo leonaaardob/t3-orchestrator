@@ -466,7 +466,10 @@ browser pass over the Planning tab remain manual follow-ups.
   Windows remains unsigned. It must not restore upstream `release.yml`
   (npm OIDC, Vercel, Azure signing, relay production secrets).
   Fork release tags are `orchestrator-vX.Y.Z`; package and updater versions
-  remain `X.Y.Z`. The desktop app uses the independent bundle ID
+  remain `X.Y.Z`. `packages/shared/src/desktopUpdateRepository.ts` derives
+  manual macOS DMG and release-page URLs with the same `orchestrator-vX.Y.Z`
+  tag form used by the fork release workflow. The desktop app uses the
+  independent bundle ID
   `com.t3orchestrator.app`, `t3orchestrator://` protocol, and `T3 Orchestrator`
   user-data profile so it can run beside official T3 Code. Existing shared T3
   Code state is intentionally not migrated.
