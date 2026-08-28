@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { OrchestrationSettingsPanel } from "../components/settings/SettingsPanels";
+import { OrchestrationSettingsPanel } from "../components/settings/OrchestrationSettingsPanel";
 
 function SettingsOrchestrationRoute() {
   return <OrchestrationSettingsPanel />;

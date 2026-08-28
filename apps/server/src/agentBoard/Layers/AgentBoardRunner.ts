@@ -16,11 +16,12 @@ import {
 } from "@t3tools/shared/agentBoardPrompt";
 import {
   MISSING_WORKER_CONFIG_ERROR,
-  resolveEffectiveAgentExecutionPresets,
+  resolveAndValidateExecutionPresetForOperation,
   resolveExecutionPresetForOperation,
-  resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
 import {
@@ -177,13 +178,52 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         | import("@t3tools/contracts").AgentExecutionPresets
         | null
         | undefined;
-      const resolution = resolveExecutionPresetForOperation({
-        globalPresets,
-        projectPresets,
-        projectDefault,
-        boardSelection,
-        operation: "implementation",
+      // Catalog preflight is environment-local. When the registry service is
+      // absent (headless test harnesses), skip catalog proof and keep legacy
+      // resolve-only behavior. An empty live catalog still fails missing instances.
+      const providerRegistryOption = yield* Effect.serviceOption(ProviderRegistry);
+      const providers = yield* Option.match(providerRegistryOption, {
+        onNone: () =>
+          Effect.succeed(null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null),
+        onSome: (registry) =>
+          registry.getProviders.pipe(
+            Effect.map(
+              (list) => list as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+            ),
+            Effect.catch(() =>
+              Effect.succeed(
+                null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+              ),
+            ),
+          ),
       });
+      const environmentOption = yield* Effect.serviceOption(ServerEnvironment);
+      const environmentLabel = yield* Option.match(environmentOption, {
+        onNone: () => Effect.succeed("this environment"),
+        onSome: (env) =>
+          env.getDescriptor.pipe(
+            Effect.map((descriptor) => descriptor.label),
+            Effect.catch(() => Effect.succeed("this environment")),
+          ),
+      });
+      const resolution =
+        providers === null
+          ? resolveExecutionPresetForOperation({
+              globalPresets,
+              projectPresets,
+              projectDefault,
+              boardSelection,
+              operation: "implementation",
+            })
+          : resolveAndValidateExecutionPresetForOperation({
+              globalPresets,
+              projectPresets,
+              projectDefault,
+              boardSelection,
+              operation: "implementation",
+              providers,
+              environmentLabel,
+            });
       if (resolution._tag === "missing-config") {
         return yield* blockAndFail("workerModelSelection.resolve", MISSING_WORKER_CONFIG_ERROR);
       }

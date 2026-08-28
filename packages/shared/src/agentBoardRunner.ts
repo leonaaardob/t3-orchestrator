@@ -20,7 +20,13 @@
  *
  * @module agentBoardRunner
  */
-import type { AgentBoardFile, AgentExecutionPresets, ModelSelection } from "@t3tools/contracts";
+import type {
+  AgentBoardFile,
+  AgentExecutionPresets,
+  ModelSelection,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 export type WorkerModelSelectionSource = "board-runner" | "project-default";
 
@@ -186,4 +192,146 @@ export function resolveExecutionPresetForOperation(params: {
     }
   }
   return { _tag: "resolved", selection, presets: effective, operation: params.operation };
+}
+
+// ── Environment catalog preflight ────────────────────────────────
+
+export type ModelSelectionCatalogIssue =
+  | {
+      readonly kind: "missing-instance";
+      readonly instanceId: ProviderInstanceId;
+      readonly model: string;
+    }
+  | {
+      readonly kind: "unavailable-instance";
+      readonly instanceId: ProviderInstanceId;
+      readonly model: string;
+    }
+  | {
+      readonly kind: "missing-model";
+      readonly instanceId: ProviderInstanceId;
+      readonly model: string;
+    };
+
+export type ModelSelectionCatalogValidation =
+  | { readonly _tag: "ok"; readonly provider: ServerProvider }
+  | { readonly _tag: "invalid"; readonly issue: ModelSelectionCatalogIssue };
+
+/**
+ * Validate a resolved ModelSelection against one environment's provider
+ * catalog. Never invents a replacement provider or model.
+ *
+ * When the catalog is empty/unknown, model existence cannot be proven — only
+ * instance presence is checked when providers are supplied. Callers that have
+ * no live catalog should skip this check rather than treat absence as valid.
+ */
+export function validateModelSelectionAgainstProviders(
+  selection: ModelSelection,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models" | "availability">>,
+): ModelSelectionCatalogValidation {
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  if (!provider) {
+    return {
+      _tag: "invalid",
+      issue: {
+        kind: "missing-instance",
+        instanceId: selection.instanceId,
+        model: selection.model,
+      },
+    };
+  }
+  if (provider.availability === "unavailable") {
+    return {
+      _tag: "invalid",
+      issue: {
+        kind: "unavailable-instance",
+        instanceId: selection.instanceId,
+        model: selection.model,
+      },
+    };
+  }
+  // Empty model lists mean the probe has not reported models yet — do not
+  // treat that as "model missing" or we block every run during cold start.
+  if (
+    provider.models.length > 0 &&
+    !provider.models.some((model) => model.slug === selection.model)
+  ) {
+    return {
+      _tag: "invalid",
+      issue: {
+        kind: "missing-model",
+        instanceId: selection.instanceId,
+        model: selection.model,
+      },
+    };
+  }
+  return { _tag: "ok", provider: provider as ServerProvider };
+}
+
+/** Operator-facing message for a catalog validation failure. */
+export function formatModelSelectionCatalogError(input: {
+  readonly operation: AgentExecutionOperation;
+  readonly environmentLabel: string;
+  readonly issue: ModelSelectionCatalogIssue;
+}): string {
+  const opLabel =
+    input.operation === "implementation"
+      ? "Implementation"
+      : input.operation === "review"
+        ? "Review"
+        : "Repair";
+  const target = `${input.issue.instanceId} / ${input.issue.model}`;
+  if (input.issue.kind === "missing-model") {
+    return `${opLabel} model unavailable on ${input.environmentLabel}: ${target} is not available on this environment.`;
+  }
+  return `${opLabel} model unavailable on ${input.environmentLabel}: ${target} is not configured on this environment.`;
+}
+
+/**
+ * Resolve an operation's selection and validate it against the environment
+ * provider catalog. Preserves existing missing-config / needs-decision
+ * outcomes; catalog failures become `needs-decision` with a clear error.
+ */
+export function resolveAndValidateExecutionPresetForOperation(params: {
+  readonly globalPresets?: AgentExecutionPresets | null | undefined;
+  readonly projectPresets?: AgentExecutionPresets | null | undefined;
+  readonly projectDefault?: ModelSelection | null | undefined;
+  readonly boardSelection?: ModelSelection | null | undefined;
+  readonly operation: AgentExecutionOperation;
+  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models" | "availability">>;
+  readonly environmentLabel: string;
+}): ExecutionPresetResolution {
+  const resolution = resolveExecutionPresetForOperation(params);
+  if (resolution._tag !== "resolved") {
+    return resolution;
+  }
+  const catalog = validateModelSelectionAgainstProviders(resolution.selection, params.providers);
+  if (catalog._tag === "ok") {
+    return resolution;
+  }
+  return {
+    _tag: "needs-decision",
+    operation: params.operation,
+    error: formatModelSelectionCatalogError({
+      operation: params.operation,
+      environmentLabel: params.environmentLabel,
+      issue: catalog.issue,
+    }),
+  };
+}
+
+/** UI helper: whether a stored selection is absent from the live catalog. */
+export function describeStaleModelSelection(input: {
+  readonly selection: ModelSelection;
+  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models" | "availability">>;
+  readonly environmentLabel: string;
+}): string | null {
+  const catalog = validateModelSelectionAgainstProviders(input.selection, input.providers);
+  if (catalog._tag === "ok") {
+    return null;
+  }
+  if (catalog.issue.kind === "missing-model") {
+    return `Unavailable on ${input.environmentLabel}: model ${catalog.issue.model} is not reported by ${catalog.issue.instanceId}.`;
+  }
+  return `Unavailable on ${input.environmentLabel}`;
 }

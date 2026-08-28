@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 import {
   type AgentBoardFile,
   type AgentBoardRunResult,
+  EnvironmentId,
   type OrchestrationCommand,
   type OrchestrationProject,
   ProjectId,
@@ -28,6 +29,8 @@ import { OrchestrationEngineService } from "../../orchestration/Services/Orchest
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
 import * as VcsProvisioningService from "../../vcs/VcsProvisioningService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 
 const CARD_ID = "TASK-20260824-runner-card";
 
@@ -60,6 +63,11 @@ interface Harness {
 const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (options?: {
   readonly projectDefaultModelSelection?: unknown;
   readonly boardWorkerModelSelection?: unknown;
+  readonly providers?: ReadonlyArray<{
+    readonly instanceId: ReturnType<typeof ProviderInstanceId.make>;
+    readonly model: string;
+  }>;
+  readonly environmentLabel?: string;
 }) {
   const dispatched: Array<OrchestrationCommand> = [];
   const gitCalls = { count: 0 };
@@ -134,6 +142,56 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
       ),
   });
 
+  const providerRegistryLayer =
+    options?.providers === undefined
+      ? Layer.empty
+      : Layer.succeed(ProviderRegistry, {
+          getProviders: Effect.succeed(
+            options.providers.map((entry) => ({
+              instanceId: entry.instanceId,
+              driver: "codex",
+              enabled: true,
+              installed: true,
+              version: "1.0.0",
+              status: "ready",
+              auth: { status: "authenticated" },
+              checkedAt: "2026-08-29T00:00:00.000Z",
+              models: [
+                {
+                  slug: entry.model,
+                  name: entry.model,
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            })) as never,
+          ),
+          refresh: () => Effect.succeed([]),
+          refreshInstance: () => Effect.succeed([]),
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed({ canUpdate: false, updateCommand: null }),
+          setProviderMaintenanceActionState: () => Effect.succeed([]),
+          streamChanges: Stream.empty,
+        } as never);
+
+  const serverEnvironmentLayer =
+    options?.environmentLabel === undefined
+      ? Layer.empty
+      : Layer.succeed(ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env-test")),
+          getDescriptor: Effect.succeed({
+            environmentId: EnvironmentId.make("env-test"),
+            label: options.environmentLabel,
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0-test",
+            capabilities: {
+              repositoryIdentity: false,
+            },
+          }),
+        } as never);
+
   // The runner resolves its collaborators from the calling fiber, so tests
   // provide the full (fake-able) environment around each `run` invocation —
   // this doubles as the headless launch proof: no browser/client involved.
@@ -147,6 +205,8 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
     Layer.provideMerge(vcsProvisioningLayer),
     Layer.provideMerge(orchestrationEngineLayer),
     Layer.provideMerge(projectionSnapshotQueryLayer),
+    Layer.provideMerge(providerRegistryLayer),
+    Layer.provideMerge(serverEnvironmentLayer),
   );
 
   const boardFiles = yield* AgentBoardFileSystem.pipe(Effect.provide(runnerEnvironment));
@@ -316,6 +376,58 @@ describe("AgentBoardRunnerLive", () => {
       }
       expect(createCommand.modelSelection).toEqual(PROJECT_DEFAULT_SELECTION);
       expect(result.card.state).toBe("Running");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "blocks before worktree/thread when the resolved instance is absent on this environment",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          boardWorkerModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "fable-5",
+          },
+          providers: [{ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.2" }],
+          environmentLabel: "kyle-house",
+        });
+
+        const error = yield* Effect.flip(harness.runCard());
+        expect(error._tag).toBe("AgentBoardRunnerError");
+        if (error._tag === "AgentBoardRunnerError") {
+          expect(error.operation).toBe("workerModelSelection.resolve");
+          expect(error.detail).toContain("Implementation model unavailable on kyle-house");
+          expect(error.detail).toContain("claudeAgent / fable-5");
+        }
+        expect(harness.dispatchedCommands()).toEqual([]);
+        expect(harness.createWorktreeCalls()).toBe(0);
+
+        const persisted = yield* harness.boardFiles.load({
+          cwd: harness.cwd,
+          createIfMissing: false,
+        });
+        const persistedCard = persisted.board.cards.find((card) => card.id === CARD_ID);
+        expect(persistedCard?.state).toBe("Blocked");
+        expect(persistedCard?.runtime.implementationRunId).toBeUndefined();
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("launches normally when the resolved selection is valid on this environment", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        boardWorkerModelSelection: BOARD_WORKER_SELECTION,
+        providers: [
+          {
+            instanceId: BOARD_WORKER_SELECTION.instanceId,
+            model: BOARD_WORKER_SELECTION.model,
+          },
+        ],
+        environmentLabel: "kyle-house",
+      });
+
+      const result = yield* harness.runCard();
+      expect(result.card.state).toBe("Running");
+      expect(harness.dispatchedCommands()[0]?.type).toBe("thread.create");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

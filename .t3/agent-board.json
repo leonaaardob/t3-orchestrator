@@ -8,6 +8,55 @@
   },
   "cards": [
     {
+      "id": "ORCH-039-orchestration-env-scoping",
+      "title": "Environment-scoped Orchestration settings + execution preflight",
+      "priority": 1,
+      "area": "Backend",
+      "slice": "Orchestration environment scoping",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260829-orchestration-env-scoping.md",
+      "slicePlanPath": "docs/agents/slices/authoritative-agent-board.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Settings UI, shared resolver/preflight, and board runner must agree on environment-local preset validation.",
+        "conflictsWith": [],
+        "allowedWriteScopes": [
+          "packages/shared/src/agentBoardRunner.ts",
+          "packages/shared/src/agentBoardRunner.test.ts",
+          "apps/server/src/agentBoard/**",
+          "apps/web/src/components/settings/**",
+          "docs/agents/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-28T22:17:25.760Z",
+        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
+      },
+      "createdAt": "2026-08-29T00:00:00.000Z",
+      "updatedAt": "2026-08-28T22:17:25.760Z",
+      "state": "Needs Decision",
+      "intentBrief": {
+        "intent": "Scope Orchestration settings and execution preflight to the selected/owning environment without changing preset schema.",
+        "desiredOutcome": "Settings → Orchestration reads and writes per environment; invalid presets block before provider turn with no silent fallback.",
+        "acceptanceCriteria": [
+          "Environment selector routes settings and provider catalogs per environmentId.",
+          "Stale and offline states are explicit.",
+          "Execution preflight validates against the project environment catalog.",
+          "Preset schema unchanged; no migration; no publication."
+        ],
+        "constraints": [
+          "No environmentId on ModelSelection/AgentExecutionPresets.",
+          "No cross-environment execution.",
+          "Do not publish."
+        ],
+        "nonGoals": ["Cross-environment orchestration.", "Remote Link/SSH/catalog changes."],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-038-supervisor-provider-context",
       "title": "Carry Supervisor role into provider turn context",
       "priority": 1,
@@ -29,7 +78,9 @@
           ".t3/agent-board.json"
         ]
       },
-      "runtime": { "attemptCount": 1 },
+      "runtime": {
+        "attemptCount": 1
+      },
       "createdAt": "2026-08-28T00:00:00.000Z",
       "updatedAt": "2026-08-28T00:00:00.000Z",
       "state": "Done",
@@ -70,7 +121,9 @@
           ".t3/agent-board.json"
         ]
       },
-      "runtime": { "attemptCount": 1 },
+      "runtime": {
+        "attemptCount": 1
+      },
       "createdAt": "2026-08-28T00:00:00.000Z",
       "updatedAt": "2026-08-28T01:35:00.000Z",
       "state": "Done",
@@ -111,10 +164,14 @@
           ".t3/agent-board.json"
         ]
       },
-      "runtime": { "attemptCount": 1 },
+      "runtime": {
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-28T18:05:01.434Z",
+        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
+      },
       "createdAt": "2026-08-28T00:00:00.000Z",
-      "updatedAt": "2026-08-28T00:00:00.000Z",
-      "state": "Running",
+      "updatedAt": "2026-08-28T18:05:01.434Z",
+      "state": "Needs Decision",
       "intentBrief": {
         "intent": "Keep update discovery enabled while preventing unsigned macOS builds from invoking the broken automatic installer.",
         "desiredOutcome": "Unsigned macOS users get a clear architecture-correct manual DMG download action; signed macOS and Windows/Linux retain automatic installation behavior.",
@@ -158,12 +215,13 @@
         ]
       },
       "runtime": {
-        "attemptCount": 1,
-        "currentError": "Waiting for fork-owned Apple Developer certificate and App Store Connect API credentials before signed GitHub Actions validation."
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-28T18:05:01.434Z",
+        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
       },
       "createdAt": "2026-08-27T00:00:00.000Z",
-      "updatedAt": "2026-08-27T00:00:00.000Z",
-      "state": "Running",
+      "updatedAt": "2026-08-28T18:05:01.434Z",
+      "state": "Needs Decision",
       "intentBrief": {
         "intent": "Ship signed and notarized macOS updater ZIPs without changing the updater.",
         "desiredOutcome": "A physical Mac can update public unsigned 0.0.35 to signed 0.0.36.",
@@ -200,13 +258,13 @@
         ]
       },
       "runtime": {
-        "attemptCount": 2,
-        "lastHeartbeatAt": "2026-08-27T13:40:50.535Z",
-        "currentError": "desktop Clerk removal implemented locally; focused verification and non-publishing release dry run pending"
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-28T18:04:46.384Z",
+        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
       },
       "createdAt": "2026-08-27T00:00:00.000Z",
-      "updatedAt": "2026-08-27T13:40:50.535Z",
-      "state": "Running",
+      "updatedAt": "2026-08-28T18:04:46.384Z",
+      "state": "Needs Decision",
       "intentBrief": {
         "intent": "Ship-ready fork release identity and Clerk-free local desktop operation without publishing 0.0.35.",
         "desiredOutcome": "A collision-free release pipeline and a local desktop profile isolated from both official T3 Code state and upstream Clerk.",
@@ -346,5 +404,5 @@
   ],
   "graphLinks": [],
   "createdAt": "2026-05-05T00:00:00.000Z",
-  "updatedAt": "2026-08-27T13:40:50.541Z"
+  "updatedAt": "2026-08-28T22:17:25.760Z"
 }

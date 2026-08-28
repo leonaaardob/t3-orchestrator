@@ -5,8 +5,11 @@ import { ProviderInstanceId, type AgentBoardFile } from "@t3tools/contracts";
 import {
   MISSING_WORKER_CONFIG_ERROR,
   REVIEW_INDEPENDENCE_ERROR,
+  describeStaleModelSelection,
+  resolveAndValidateExecutionPresetForOperation,
   resolveExecutionPresetForOperation,
   resolveWorkerModelSelection,
+  validateModelSelectionAgainstProviders,
 } from "./agentBoardRunner.ts";
 
 const boardWithRunner = (
@@ -144,5 +147,160 @@ describe("resolveExecutionPresetForOperation", () => {
         resolveExecutionPresetForOperation({ globalPresets: simple, operation }),
       ).toMatchObject({ _tag: "resolved", selection: simple.selection });
     }
+  });
+});
+
+describe("validateModelSelectionAgainstProviders", () => {
+  const providers = [
+    {
+      instanceId: ProviderInstanceId.make("codex"),
+      availability: "available" as const,
+      models: [{ slug: "gpt-5.2", name: "GPT-5.2", isCustom: false, capabilities: null }],
+    },
+    {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      availability: "unavailable" as const,
+      models: [{ slug: "fable-5", name: "Fable 5", isCustom: false, capabilities: null }],
+    },
+  ];
+
+  it("accepts a configured instance and model", () => {
+    expect(
+      validateModelSelectionAgainstProviders(
+        { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.2" },
+        providers,
+      )._tag,
+    ).toBe("ok");
+  });
+
+  it("rejects a missing instance without substituting another", () => {
+    const result = validateModelSelectionAgainstProviders(
+      { instanceId: ProviderInstanceId.make("opencode"), model: "opencode/grok-code" },
+      providers,
+    );
+    expect(result).toEqual({
+      _tag: "invalid",
+      issue: {
+        kind: "missing-instance",
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "opencode/grok-code",
+      },
+    });
+  });
+
+  it("rejects an unavailable instance", () => {
+    const result = validateModelSelectionAgainstProviders(
+      { instanceId: ProviderInstanceId.make("claudeAgent"), model: "fable-5" },
+      providers,
+    );
+    expect(result._tag).toBe("invalid");
+    if (result._tag === "invalid") {
+      expect(result.issue.kind).toBe("unavailable-instance");
+    }
+  });
+
+  it("rejects a missing model when the catalog lists models", () => {
+    const result = validateModelSelectionAgainstProviders(
+      { instanceId: ProviderInstanceId.make("codex"), model: "missing-model" },
+      providers,
+    );
+    expect(result).toMatchObject({
+      _tag: "invalid",
+      issue: { kind: "missing-model", model: "missing-model" },
+    });
+  });
+
+  it("does not invent a fallback when catalogs differ by environment", () => {
+    const mac = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        models: [{ slug: "gpt-5.2", name: "GPT-5.2", isCustom: false, capabilities: null }],
+      },
+    ];
+    const house = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        models: [{ slug: "house-only", name: "House", isCustom: false, capabilities: null }],
+      },
+    ];
+    expect(
+      validateModelSelectionAgainstProviders(
+        { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.2" },
+        mac,
+      )._tag,
+    ).toBe("ok");
+    expect(
+      validateModelSelectionAgainstProviders(
+        { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.2" },
+        house,
+      ),
+    ).toMatchObject({ _tag: "invalid", issue: { kind: "missing-model" } });
+  });
+});
+
+describe("resolveAndValidateExecutionPresetForOperation", () => {
+  it("blocks execution when the resolved instance is absent on the environment", () => {
+    const resolution = resolveAndValidateExecutionPresetForOperation({
+      globalPresets: {
+        mode: "simple",
+        selection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "fable-5",
+        },
+      },
+      operation: "review",
+      providers: [
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          models: [{ slug: "gpt-5.2", name: "GPT-5.2", isCustom: false, capabilities: null }],
+        },
+      ],
+      environmentLabel: "kyle-house",
+    });
+    expect(resolution._tag).toBe("needs-decision");
+    if (resolution._tag === "needs-decision") {
+      expect(resolution.error).toContain("Review model unavailable on kyle-house");
+      expect(resolution.error).toContain("claudeAgent / fable-5");
+      expect(resolution.error).toContain("not configured on this environment");
+    }
+  });
+
+  it("allows a valid selection for the environment catalog", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.2",
+    };
+    const resolution = resolveAndValidateExecutionPresetForOperation({
+      globalPresets: { mode: "simple", selection },
+      operation: "implementation",
+      providers: [
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          models: [{ slug: "gpt-5.2", name: "GPT-5.2", isCustom: false, capabilities: null }],
+        },
+      ],
+      environmentLabel: "This Mac",
+    });
+    expect(resolution).toMatchObject({ _tag: "resolved", selection });
+  });
+});
+
+describe("describeStaleModelSelection", () => {
+  it("returns an explicit unavailable warning without suggesting a replacement", () => {
+    expect(
+      describeStaleModelSelection({
+        selection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "fable-5",
+        },
+        providers: [
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            models: [],
+          },
+        ],
+        environmentLabel: "kyle-house",
+      }),
+    ).toBe("Unavailable on kyle-house");
   });
 });

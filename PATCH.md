@@ -155,12 +155,15 @@ The current patch attaches to upstream T3 Code through these areas:
     `defaultModelSelection` / `runner.workerModelSelection` as synthetic
     Simple) through `@t3tools/shared/agentBoardRunner`
     (`resolveEffectiveAgentExecutionPresets`,
-    `resolveExecutionPresetForOperation`) BEFORE any thread is created;
-    every failure path marks the card `Blocked` with
-    `runtime.currentError`, and a failed turn start deletes the created
-    thread. Review independence is not checked for implementation; repair
-    passes `repair` preset when Advanced. Tested headless with fake
-    engine/git layers in `Layers/AgentBoardRunner.test.ts`.
+    `resolveExecutionPresetForOperation`,
+    `resolveAndValidateExecutionPresetForOperation`) BEFORE worktree/thread
+    creation. When `ProviderRegistry` is present, the resolved selection is
+    validated against this environment's provider catalog with no silent
+    fallback to another provider/model/environment. Every failure path marks
+    the card `Blocked` with `runtime.currentError`, and a failed turn start
+    deletes the created thread. Review independence is not checked for
+    implementation; repair passes `repair` preset when Advanced. Tested
+    headless with fake engine/git layers in `Layers/AgentBoardRunner.test.ts`.
 - `src/agentBoard/Services/AgentBoardScheduler.ts` +
   `src/agentBoard/Layers/AgentBoardScheduler.ts`
   - Always-on 15-second reconciler: reads project shells from the durable
@@ -263,9 +266,20 @@ The current patch attaches to upstream T3 Code through these areas:
 - `src/components/AgentBoardPanel.tsx`
   - Supervisor affordance banner (violet accent) — shows whether the current project's Supervisor thread exists; `Create Supervisor` button creates a normal thread with `SUPERVISOR_THREAD_TITLE` and pins it via existing commands. No board file state.
 - `src/components/settings/SettingsPanels.tsx`
-  - Global Agent Execution section: Simple (single `ProviderModelPicker` + `TraitsPicker`) vs Advanced (three pickers for implementation / review / repair) over `ServerSettings.agentExecutionPresets`; mode `Select` with validation that review must differ from implementation; reset to `DEFAULT_AGENT_EXECUTION_PRESETS`.
+  - Global Agent Execution section moved to
+    `OrchestrationSettingsPanel.tsx` (environment-scoped).
+- `src/components/settings/OrchestrationSettingsPanel.tsx`
+  - Environment selector at top of Settings → Orchestration; read/write
+    `agentExecutionPresets` and provider/model catalogs via
+    `useEnvironmentSettings(environmentId)` +
+    `providersValueAtom(environmentId)`. Stale selections warn
+    (`Unavailable on <label>`) without silent rewrite. Offline known
+    environments show cached settings read-only or an explicit unavailable
+    state. Preset schema remains environment-agnostic.
 - `src/components/settings/ProjectSettingsPanel.tsx`
   - Project Agent Execution row: inherit (null) vs override (Simple/Advanced) over `OrchestrationProject.agentExecutionPresets` via `projectEnvironment.update`; shows inherited effective label; same pickers and same-model validation.
+  - Informational `Runs on <label>` from the project's owning environment;
+    project override pickers/settings use that environment's catalog.
 
 ### Client runtime (`packages/client-runtime`)
 
@@ -287,6 +301,11 @@ The current patch attaches to upstream T3 Code through these areas:
     `REVIEW_INDEPENDENCE_ERROR`, and `resolveExecutionPresetForOperation`
     (operation-aware + Needs Decision on same impl/review). Keeps legacy
     `resolveWorkerModelSelection` for back-compat decode.
+    Environment catalog preflight:
+    `validateModelSelectionAgainstProviders`,
+    `resolveAndValidateExecutionPresetForOperation`,
+    `formatModelSelectionCatalogError`, `describeStaleModelSelection` —
+    no silent provider/model/environment fallback.
     Consumed by both the server runner service and the web Planning UI picker.
 - `src/agentBoardPrompt.ts` (subpath export
   `@t3tools/shared/agentBoardPrompt`)

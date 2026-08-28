@@ -27,12 +27,15 @@ import {
 import {
   MISSING_WORKER_CONFIG_ERROR,
   REVIEW_INDEPENDENCE_ERROR,
+  resolveAndValidateExecutionPresetForOperation,
   resolveEffectiveAgentExecutionPresets,
   resolveExecutionPresetForOperation,
   resolveModelSelectionForOperation,
 } from "@t3tools/shared/agentBoardRunner";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -320,12 +323,52 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           | import("@t3tools/contracts").AgentExecutionPresets
           | null
           | undefined;
-        const resolution = resolveExecutionPresetForOperation({
-          globalPresets,
-          projectPresets,
-          projectDefault,
-          boardSelection,
-          operation: "review",
+        const resolution = yield* Effect.gen(function* () {
+          const providerRegistryOption = yield* Effect.serviceOption(ProviderRegistry);
+          const providers = yield* Option.match(providerRegistryOption, {
+            onNone: () =>
+              Effect.succeed(
+                null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+              ),
+            onSome: (registry) =>
+              registry.getProviders.pipe(
+                Effect.map(
+                  (list) =>
+                    list as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+                ),
+                Effect.catch(() =>
+                  Effect.succeed(
+                    null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+                  ),
+                ),
+              ),
+          });
+          const environmentOption = yield* Effect.serviceOption(ServerEnvironment);
+          const environmentLabel = yield* Option.match(environmentOption, {
+            onNone: () => Effect.succeed("this environment"),
+            onSome: (env) =>
+              env.getDescriptor.pipe(
+                Effect.map((descriptor) => descriptor.label),
+                Effect.catch(() => Effect.succeed("this environment")),
+              ),
+          });
+          return providers === null
+            ? resolveExecutionPresetForOperation({
+                globalPresets,
+                projectPresets,
+                projectDefault,
+                boardSelection,
+                operation: "review",
+              })
+            : resolveAndValidateExecutionPresetForOperation({
+                globalPresets,
+                projectPresets,
+                projectDefault,
+                boardSelection,
+                operation: "review",
+                providers,
+                environmentLabel,
+              });
         });
         if (resolution._tag === "missing-config") {
           return {
@@ -462,7 +505,70 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             boardSelection: input.board.runner.workerModelSelection ?? null,
           });
           const repairSelection = resolveModelSelectionForOperation(effectiveForRepair, "repair");
-          if (repairSelection) repairModelSelection = repairSelection;
+          if (repairSelection) {
+            const providerRegistryOption = yield* Effect.serviceOption(ProviderRegistry);
+            const providers = yield* Option.match(providerRegistryOption, {
+              onNone: () =>
+                Effect.succeed(
+                  null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+                ),
+              onSome: (registry) =>
+                registry.getProviders.pipe(
+                  Effect.map(
+                    (list) =>
+                      list as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+                  ),
+                  Effect.catch(() =>
+                    Effect.succeed(
+                      null as ReadonlyArray<import("@t3tools/contracts").ServerProvider> | null,
+                    ),
+                  ),
+                ),
+            });
+            if (providers !== null) {
+              const environmentOption = yield* Effect.serviceOption(ServerEnvironment);
+              const environmentLabel = yield* Option.match(environmentOption, {
+                onNone: () => Effect.succeed("this environment"),
+                onSome: (env) =>
+                  env.getDescriptor.pipe(
+                    Effect.map((descriptor) => descriptor.label),
+                    Effect.catch(() => Effect.succeed("this environment")),
+                  ),
+              });
+              const validated = resolveAndValidateExecutionPresetForOperation({
+                globalPresets: globalForRepair,
+                projectPresets: (projectForRepair as unknown as { agentExecutionPresets?: unknown })
+                  .agentExecutionPresets as unknown as
+                  | import("@t3tools/contracts").AgentExecutionPresets
+                  | null
+                  | undefined,
+                projectDefault: (
+                  projectForRepair as unknown as {
+                    defaultModelSelection?: unknown;
+                  }
+                ).defaultModelSelection as unknown as
+                  | import("@t3tools/contracts").ModelSelection
+                  | null,
+                boardSelection: input.board.runner.workerModelSelection ?? null,
+                operation: "repair",
+                providers,
+                environmentLabel,
+              });
+              if (validated._tag === "needs-decision") {
+                yield* Effect.logWarning("agentBoard.scheduler.repair-model-unavailable", {
+                  cwd: input.cwd,
+                  cardId: input.card.id,
+                  detail: validated.error,
+                });
+                return null;
+              }
+              if (validated._tag === "resolved") {
+                repairModelSelection = validated.selection;
+              }
+            } else {
+              repairModelSelection = repairSelection;
+            }
+          }
         }
         yield* input.collaborators.orchestrationEngine.dispatch({
           type: "thread.turn.start",
