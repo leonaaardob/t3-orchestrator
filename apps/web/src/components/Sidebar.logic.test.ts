@@ -37,6 +37,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  withoutSupervisorThreads,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -658,6 +659,15 @@ describe("getVisibleSidebarThreadIds", () => {
         },
       ]),
     ).toEqual([ThreadId.make("thread-12"), ThreadId.make("thread-11")]);
+  });
+});
+
+describe("withoutSupervisorThreads", () => {
+  it("removes the durable Supervisor from ordinary visible rows", () => {
+    const supervisor = { role: "project-supervisor" as const, id: "supervisor" };
+    const standard = { role: "standard" as const, id: "standard" };
+
+    expect(withoutSupervisorThreads([supervisor, standard])).toEqual([standard]);
   });
 });
 

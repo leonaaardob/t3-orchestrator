@@ -146,6 +146,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  withoutSupervisorThreads,
   useThreadJumpHintVisibility,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -2169,6 +2170,26 @@ export default function Sidebar() {
     () => searchableThreads.some((thread) => isSupervisorThread(thread)),
     [searchableThreads],
   );
+  const supervisorThread = useMemo(
+    () => searchableThreads.find((thread) => isSupervisorThread(thread)) ?? null,
+    [searchableThreads],
+  );
+  const visiblePinnedThreads = useMemo(
+    () => withoutSupervisorThreads(pinnedThreads),
+    [pinnedThreads],
+  );
+  const visibleActiveThreads = useMemo(
+    () => withoutSupervisorThreads(activeThreads),
+    [activeThreads],
+  );
+  const normalSnoozedThreads = useMemo(
+    () => withoutSupervisorThreads(snoozedThreads),
+    [snoozedThreads],
+  );
+  const normalSettledThreads = useMemo(
+    () => withoutSupervisorThreads(settledThreads),
+    [settledThreads],
+  );
   const supervisorCreateProjectRef = useMemo(() => {
     if (scopedProjectGroup) {
       const first = scopedProjectGroup.memberProjects[0];
@@ -2182,10 +2203,13 @@ export default function Sidebar() {
     if (fallback) return scopeProjectRef(fallback.environmentId, fallback.id);
     return null;
   }, [projects, projectGroups, scopedProjectGroup]);
+  const [isCreatingSupervisor, setIsCreatingSupervisor] = useState(false);
+  const supervisorCreationInFlightRef = useRef(false);
   const createThreadCommand = useAtomCommand(threadEnvironment.create, {
     reportFailure: false,
   });
   const handleCreateSupervisorThread = useCallback(() => {
+    if (hasSupervisorThread || supervisorCreationInFlightRef.current) return;
     if (!supervisorCreateProjectRef) {
       toastManager.add({
         type: "error",
@@ -2220,50 +2244,58 @@ export default function Sidebar() {
       return;
     }
     const threadId = newThreadId();
+    supervisorCreationInFlightRef.current = true;
+    setIsCreatingSupervisor(true);
     void (async () => {
-      const result = await createThreadCommand({
-        environmentId: supervisorCreateProjectRef.environmentId,
-        input: {
-          threadId,
-          projectId: supervisorCreateProjectRef.projectId,
-          title: SUPERVISOR_THREAD_TITLE,
-          role: "project-supervisor",
-          modelSelection,
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-          interactionMode: DEFAULT_INTERACTION_MODE,
-          branch: null,
-          worktreePath: null,
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
+      try {
+        const result = await createThreadCommand({
+          environmentId: supervisorCreateProjectRef.environmentId,
+          input: {
+            threadId,
+            projectId: supervisorCreateProjectRef.projectId,
+            title: SUPERVISOR_THREAD_TITLE,
+            role: "project-supervisor",
+            modelSelection,
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            interactionMode: DEFAULT_INTERACTION_MODE,
+            branch: null,
+            worktreePath: null,
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to create Supervisor thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+        const pinResult = await pinThread(
+          scopeThreadRef(supervisorCreateProjectRef.environmentId, threadId),
+        );
+        if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
+          const error = squashAtomCommandFailure(pinResult);
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to create Supervisor thread",
+              title: "Supervisor created, but pin failed",
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
         }
-        return;
-      }
-      const pinResult = await pinThread(
-        scopeThreadRef(supervisorCreateProjectRef.environmentId, threadId),
-      );
-      if (pinResult._tag === "Failure" && !isAtomCommandInterrupted(pinResult)) {
-        const error = squashAtomCommandFailure(pinResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Supervisor created, but pin failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
+      } finally {
+        supervisorCreationInFlightRef.current = false;
+        setIsCreatingSupervisor(false);
       }
     })();
   }, [
     createThreadCommand,
+    hasSupervisorThread,
     pinThread,
     projects,
     providerEntriesByEnvironment,
@@ -2318,13 +2350,13 @@ export default function Sidebar() {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
   const visibleSettledThreads = useMemo(() => {
-    if (settledThreads.length <= settledVisibleCount) return settledThreads;
-    const visible = settledThreads.slice(0, settledVisibleCount);
+    if (normalSettledThreads.length <= settledVisibleCount) return normalSettledThreads;
+    const visible = normalSettledThreads.slice(0, settledVisibleCount);
     // The open thread must never hide under "Show more": navigating into a
     // deep settled thread (search, deep link) pulls its row into the visible
     // tail so the highlight and the un-settle affordance stay reachable.
     if (routeThreadKey !== null) {
-      const routeThread = settledThreads
+      const routeThread = normalSettledThreads
         .slice(settledVisibleCount)
         .find(
           (thread) =>
@@ -2333,8 +2365,8 @@ export default function Sidebar() {
       if (routeThread !== undefined) visible.push(routeThread);
     }
     return visible;
-  }, [routeThreadKey, settledThreads, settledVisibleCount]);
-  const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
+  }, [normalSettledThreads, routeThreadKey, settledVisibleCount]);
+  const hiddenSettledCount = normalSettledThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
@@ -2371,22 +2403,27 @@ export default function Sidebar() {
     [setSnoozedShelfExpanded],
   );
   const visibleSnoozedThreads = useMemo(() => {
-    if (snoozedShelfExpanded) return snoozedThreads;
+    if (snoozedShelfExpanded) return normalSnoozedThreads;
     // The open thread must never vanish behind the collapsed shelf: a
     // snoozed thread reached by route (deep link, open before snoozing
     // elsewhere) keeps its row — with highlight and wake affordance — same
     // exception the settled tail's "Show more" makes.
     if (routeThreadKey === null) return [];
-    const routeThread = snoozedThreads.find(
+    const routeThread = normalSnoozedThreads.find(
       (thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
     );
     return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  }, [normalSnoozedThreads, routeThreadKey, snoozedShelfExpanded]);
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...visiblePinnedThreads,
+      ...visibleActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [renderedSettledThreads, visibleActiveThreads, visiblePinnedThreads, visibleSnoozedThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2730,16 +2767,16 @@ export default function Sidebar() {
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
   const orderedPinnedThreads = useMemo(() => {
-    if (optimisticPinnedOrder === null) return pinnedThreads;
+    if (optimisticPinnedOrder === null) return visiblePinnedThreads;
     return orderItemsByPreferredIds({
-      items: pinnedThreads,
+      items: visiblePinnedThreads,
       preferredIds: optimisticPinnedOrder.order,
       getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     });
-  }, [optimisticPinnedOrder, pinnedThreads]);
+  }, [optimisticPinnedOrder, visiblePinnedThreads]);
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
-    const canonical = pinnedThreads.filter((thread) =>
+    const canonical = visiblePinnedThreads.filter((thread) =>
       reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     );
     const canonicalKeys = canonical.map((thread) =>
@@ -2774,7 +2811,7 @@ export default function Sidebar() {
     if (membershipChanged || foreignKeyLanded || allAssignmentsLanded || orderConfirmed) {
       setOptimisticPinnedOrder(null);
     }
-  }, [optimisticPinnedOrder, pinnedThreads, reorderablePinnedKeys]);
+  }, [optimisticPinnedOrder, reorderablePinnedKeys, visiblePinnedThreads]);
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
@@ -3824,6 +3861,42 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             ) : null}
+            <div className="mt-1 border-t border-sidebar-border/60 pt-1">
+              {supervisorThread ? (
+                <button
+                  type="button"
+                  data-testid="supervisor-thread-entry"
+                  onClick={() =>
+                    navigateToThread(
+                      scopeThreadRef(supervisorThread.environmentId, supervisorThread.id),
+                    )
+                  }
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-row-hover"
+                >
+                  <CrownIcon className="size-3.5 shrink-0 text-violet-600 dark:text-violet-300" />
+                  <span className="min-w-0 flex-1 truncate">{SUPERVISOR_THREAD_TITLE}</span>
+                  <span
+                    data-testid="supervisor-badge"
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-700 dark:border-violet-400/30 dark:bg-violet-400/15 dark:text-violet-300"
+                    aria-label="Supervisor"
+                  >
+                    Supervisor
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="create-supervisor-thread"
+                  onClick={handleCreateSupervisorThread}
+                  disabled={isCreatingSupervisor}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 px-2.5 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-500/60 hover:bg-violet-500/10 disabled:cursor-wait disabled:opacity-60 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300 dark:hover:border-violet-400/50"
+                >
+                  <CrownIcon className="size-3.5 shrink-0" />
+                  <span className="flex-1 truncate">Create Project Supervisor</span>
+                  <PlusIcon className="size-3 shrink-0 opacity-60" />
+                </button>
+              )}
+            </div>
           </SidebarGroup>
         }
       >
@@ -4020,7 +4093,7 @@ export default function Sidebar() {
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}
                     />,
-                    pinnedThreads.length > 0 ? (
+                    visiblePinnedThreads.length > 0 ? (
                       <li key="pinned-dnd" className="list-none">
                         <DndContext
                           sensors={pinnedDndSensors}
@@ -4060,23 +4133,7 @@ export default function Sidebar() {
                       </li>
                     ) : null,
                   ];
-                  if (!hasSupervisorThread && !isSearchingThreads) {
-                    items.push(
-                      <li key="supervisor-create" className="list-none px-1 py-1">
-                        <button
-                          type="button"
-                          data-testid="create-supervisor-thread"
-                          onClick={handleCreateSupervisorThread}
-                          className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-dashed border-violet-500/40 bg-violet-500/5 px-2.5 py-2 text-left text-xs font-medium text-violet-700 transition-colors hover:border-violet-500/60 hover:bg-violet-500/10 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-300 dark:hover:border-violet-400/50"
-                        >
-                          <CrownIcon className="size-3.5 shrink-0" />
-                          <span className="flex-1 truncate">Create Project Supervisor</span>
-                          <PlusIcon className="size-3 shrink-0 opacity-60" />
-                        </button>
-                      </li>,
-                    );
-                  }
-                  if (pinnedThreads.length > 0) {
+                  if (visiblePinnedThreads.length > 0) {
                     items.push(
                       <li
                         key="pinned-divider"
@@ -4086,7 +4143,7 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of activeThreads) {
+                  for (const thread of visibleActiveThreads) {
                     items.push(renderThreadRow(thread, "active"));
                   }
                   // Snoozed shelf: between the inbox and Settled — out of the
@@ -4094,7 +4151,7 @@ export default function Sidebar() {
                   // is snoozed (the count is the whole footprint when
                   // collapsed); rows only when expanded. Vanishes entirely at
                   // count 0.
-                  if (snoozedThreads.length > 0) {
+                  if (normalSnoozedThreads.length > 0) {
                     items.push(
                       <li
                         key="snoozed-shelf-header"
@@ -4111,7 +4168,7 @@ export default function Sidebar() {
                           <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
                             {snoozedShelfExpanded
                               ? "Snoozed"
-                              : `Snoozed (${snoozedThreads.length})`}
+                              : `Snoozed (${normalSnoozedThreads.length})`}
                           </span>
                           <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
                           <ChevronDownIcon
@@ -4128,7 +4185,7 @@ export default function Sidebar() {
                       items.push(renderThreadRow(thread, "snoozed"));
                     }
                   }
-                  if (settledThreads.length > 0) {
+                  if (normalSettledThreads.length > 0) {
                     items.push(
                       <li
                         key="settled-shelf-header"
@@ -4145,7 +4202,7 @@ export default function Sidebar() {
                           <span className="text-xs font-medium text-muted-foreground/50">
                             {settledShelfExpanded
                               ? "Settled"
-                              : `Settled (${settledThreads.length})`}
+                              : `Settled (${normalSettledThreads.length})`}
                           </span>
                           <span className="h-px flex-1 bg-sidebar-border/60" />
                           <ChevronDownIcon
@@ -4181,10 +4238,10 @@ export default function Sidebar() {
           ) : null}
           {!isSearchingThreads &&
           visibleDraftSessionCount === 0 &&
-          pinnedThreads.length +
-            activeThreads.length +
-            snoozedThreads.length +
-            settledThreads.length ===
+          visiblePinnedThreads.length +
+            visibleActiveThreads.length +
+            normalSnoozedThreads.length +
+            normalSettledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (

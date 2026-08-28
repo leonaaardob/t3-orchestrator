@@ -13,6 +13,12 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { SUPERVISOR_THREAD_TITLE, isSupervisorThread } from "../lib/supervisorThread";
 
 export { SUPERVISOR_THREAD_TITLE, isSupervisorThread };
+
+export function withoutSupervisorThreads<
+  T extends { readonly role?: "standard" | "project-supervisor" | undefined },
+>(threads: readonly T[]): T[] {
+  return threads.filter((thread) => !isSupervisorThread(thread));
+}
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
