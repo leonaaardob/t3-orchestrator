@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import {
   cliBinName,
-  formatNpxServiceUpdateCommand,
   suggestedPackageSpec as distributionSuggestedPackageSpec,
 } from "@t3tools/shared/distributionIdentity";
 
