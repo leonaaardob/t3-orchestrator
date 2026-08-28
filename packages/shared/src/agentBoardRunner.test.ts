@@ -7,6 +7,7 @@ import {
   REVIEW_INDEPENDENCE_ERROR,
   describeStaleModelSelection,
   resolveAndValidateExecutionPresetForOperation,
+  resolveEffectiveAgentExecutionPresets,
   resolveExecutionPresetForOperation,
   resolveWorkerModelSelection,
   validateModelSelectionAgainstProviders,
@@ -65,6 +66,23 @@ describe("resolveWorkerModelSelection", () => {
 });
 
 describe("resolveExecutionPresetForOperation", () => {
+  const envSimple = {
+    mode: "simple" as const,
+    selection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    },
+  };
+  const legacyBoard = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "fable-5",
+  } as const;
+  const legacyProjectDefault = {
+    instanceId: ProviderInstanceId.make("opencode"),
+    model: "opencode/grok-code",
+  } as const;
+
   it("inherits global Advanced presets and picks the requested operation", () => {
     const resolution = resolveExecutionPresetForOperation({
       globalPresets: {
@@ -87,6 +105,161 @@ describe("resolveExecutionPresetForOperation", () => {
     });
 
     expect(resolution).toMatchObject({ _tag: "resolved", selection: projectSelection });
+  });
+
+  it("with project Inherit, uses environment presets over legacy board selection", () => {
+    const effective = resolveEffectiveAgentExecutionPresets({
+      globalPresets: envSimple,
+      projectPresets: null,
+      boardSelection: legacyBoard,
+      projectDefault: legacyProjectDefault,
+    });
+    expect(effective).toEqual(envSimple);
+
+    const resolution = resolveExecutionPresetForOperation({
+      globalPresets: envSimple,
+      projectPresets: null,
+      boardSelection: legacyBoard,
+      projectDefault: legacyProjectDefault,
+      operation: "implementation",
+    });
+    expect(resolution).toMatchObject({
+      _tag: "resolved",
+      selection: envSimple.selection,
+    });
+  });
+
+  it("with project Inherit, uses environment presets over legacy project default", () => {
+    const resolution = resolveExecutionPresetForOperation({
+      globalPresets: envSimple,
+      projectPresets: undefined,
+      projectDefault: legacyProjectDefault,
+      operation: "review",
+    });
+    expect(resolution).toMatchObject({
+      _tag: "resolved",
+      selection: envSimple.selection,
+      operation: "review",
+    });
+  });
+
+  it("lets a modern project override win even when legacy fields differ", () => {
+    const projectOverride = {
+      mode: "simple" as const,
+      selection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.2",
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    };
+    const resolution = resolveExecutionPresetForOperation({
+      globalPresets: envSimple,
+      projectPresets: projectOverride,
+      boardSelection: legacyBoard,
+      projectDefault: legacyProjectDefault,
+      operation: "repair",
+    });
+    expect(resolution).toMatchObject({
+      _tag: "resolved",
+      selection: projectOverride.selection,
+    });
+  });
+
+  it("preserves pure-legacy synthesis when no modern preset exists", () => {
+    expect(
+      resolveEffectiveAgentExecutionPresets({
+        globalPresets: null,
+        projectPresets: null,
+        boardSelection: legacyBoard,
+        projectDefault: legacyProjectDefault,
+      }),
+    ).toEqual({ mode: "simple", selection: legacyBoard });
+
+    expect(
+      resolveEffectiveAgentExecutionPresets({
+        globalPresets: undefined,
+        projectPresets: undefined,
+        boardSelection: null,
+        projectDefault: legacyProjectDefault,
+      }),
+    ).toEqual({ mode: "simple", selection: legacyProjectDefault });
+
+    expect(
+      resolveExecutionPresetForOperation({
+        projectPresets: null,
+        boardSelection: legacyBoard,
+        operation: "implementation",
+      }),
+    ).toMatchObject({ _tag: "resolved", selection: legacyBoard });
+  });
+
+  it("inherits the owning environment's presets, not another environment's", () => {
+    const kyleHouse = envSimple;
+    const thisMac = {
+      mode: "simple" as const,
+      selection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.2",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    };
+
+    const onKyleHouse = resolveExecutionPresetForOperation({
+      globalPresets: kyleHouse,
+      projectPresets: null,
+      boardSelection: thisMac.selection,
+      operation: "implementation",
+    });
+    expect(onKyleHouse).toMatchObject({
+      _tag: "resolved",
+      selection: kyleHouse.selection,
+    });
+
+    const onThisMac = resolveExecutionPresetForOperation({
+      globalPresets: thisMac,
+      projectPresets: null,
+      operation: "implementation",
+    });
+    expect(onThisMac).toMatchObject({
+      _tag: "resolved",
+      selection: thisMac.selection,
+    });
+  });
+
+  it("inherits Advanced environment presets for every operation", () => {
+    const advanced = {
+      mode: "advanced" as const,
+      implementation: boardSelection,
+      review: projectSelection,
+      repair: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-terra",
+      },
+    };
+    expect(
+      resolveExecutionPresetForOperation({
+        globalPresets: advanced,
+        projectPresets: null,
+        boardSelection: legacyBoard,
+        operation: "implementation",
+      }),
+    ).toMatchObject({ _tag: "resolved", selection: advanced.implementation });
+    expect(
+      resolveExecutionPresetForOperation({
+        globalPresets: advanced,
+        projectPresets: null,
+        boardSelection: legacyBoard,
+        operation: "review",
+      }),
+    ).toMatchObject({ _tag: "resolved", selection: advanced.review });
+    expect(
+      resolveExecutionPresetForOperation({
+        globalPresets: advanced,
+        projectPresets: null,
+        boardSelection: legacyBoard,
+        operation: "repair",
+      }),
+    ).toMatchObject({ _tag: "resolved", selection: advanced.repair });
   });
 
   it("blocks Advanced review when it matches implementation", () => {

@@ -23,18 +23,19 @@ agent:
   review_agent: fresh
 provider:
   # Workers run through T3's provider-neutral runtime; no CLI or driver is
-  # pinned here. Execution presets (Global→Project) select the model per
+  # pinned here. Execution presets (environment→project) select the model per
   # operation: Simple (one ModelSelection for impl/review/repair) or Advanced
-  # ({implementation, review, repair} each ModelSelection). Global default is
-  # `ServerSettings.agentExecutionPresets` (Simple: codex/gpt-5.6-sol); a
+  # ({implementation, review, repair} each ModelSelection). Environment default
+  # is `ServerSettings.agentExecutionPresets` (Simple: codex/gpt-5.6-sol); a
   # project may override via `OrchestrationProject.agentExecutionPresets`
   # (null = inherit). Legacy `runner.workerModelSelection` and
-  # `defaultModelSelection` still decode as synthetic Simple presets. Review
-  # independence is enforced: same instanceId+model for impl and review
-  # blocks review with Needs Decision. This front matter documents intent;
-  # .t3/agent-board.json is authoritative for the legacy board override.
+  # `defaultModelSelection` synthesize Simple presets only when no modern
+  # preset exists at either level. Review independence is enforced: same
+  # instanceId+model for impl and review blocks review with Needs Decision.
+  # This front matter documents intent; .t3/agent-board.json is authoritative
+  # for the legacy board override field.
   runtime: t3-provider-neutral
-  worker_model_selection_source: ServerSettings.agentExecutionPresets -> OrchestrationProject.agentExecutionPresets (inherit) -> legacy .t3/agent-board.json#runner.workerModelSelection
+  worker_model_selection_source: ServerSettings.agentExecutionPresets -> OrchestrationProject.agentExecutionPresets (inherit) -> legacy runner.workerModelSelection / defaultModelSelection only if no modern preset
 ---
 
 # T3 Code Agent Board Workflow

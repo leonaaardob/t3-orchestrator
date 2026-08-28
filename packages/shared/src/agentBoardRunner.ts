@@ -1,22 +1,20 @@
 /**
  * Worker execution config resolution for board card runs.
  *
- * Resolution is config-only and project-central: the board's
- * `runner.workerModelSelection` wins, then the project's
- * `defaultModelSelection`, then the run is blocked with a typed
- * missing-config reason. The chat composer's live selection never
+ * Resolution is config-only. The chat composer's live selection never
  * influences a board run.
  *
- * New preset hierarchy (Global→Project) reuses the same ModelSelection
- * architecture:
- *   - Global `agentExecutionPresets` provides the default Simple/Advanced
- *     presets.
- *   - Project `agentExecutionPresets` overrides when non-null (null = inherit).
- *   - Legacy `defaultModelSelection` / board runner selection are migrated to
- *     a synthetic Simple preset when no explicit presets exist.
+ * Preset hierarchy (environment → project inherit/override):
+ *   - Project `agentExecutionPresets` overrides when non-null.
+ *   - Null / Inherit uses the owning environment's `agentExecutionPresets`.
+ *   - Legacy `runner.workerModelSelection` / `defaultModelSelection` synthesize
+ *     a Simple preset only when neither level has a modern preset.
  *   - Runtime selects by operation (implementation / review / repair).
  *   - Review independence is enforced: same instanceId+model for impl and
  *     review blocks review with Needs Decision.
+ *
+ * `resolveWorkerModelSelection` remains for legacy board UI / pure-legacy
+ * installs; orchestration runs go through `resolveExecutionPresetForOperation`.
  *
  * @module agentBoardRunner
  */
@@ -83,13 +81,17 @@ export function isReviewIndependent(
 }
 
 /**
- * Resolve the effective presets via Global→Project inheritance with legacy
- * fallbacks. Precedence:
- *   1. Project explicit presets (non-null)
- *   2. Board runner legacy selection (synthetic Simple)
- *   3. Project defaultModelSelection legacy (synthetic Simple)
- *   4. Global presets
+ * Resolve the effective presets via environment→project inheritance with
+ * legacy fallbacks. Precedence:
+ *   1. Project explicit presets (non-null override)
+ *   2. Environment / global `agentExecutionPresets` (Inherit)
+ *   3. Legacy board `workerModelSelection` (synthetic Simple) — only when no
+ *      modern preset exists at either level
+ *   4. Legacy project `defaultModelSelection` (synthetic Simple) — same gate
  * Returns null when no config exists at any level.
+ *
+ * Project UI "Inherit" means step 2: use the owning environment's presets.
+ * Hidden legacy values must not beat an explicit environment default.
  */
 export function resolveEffectiveAgentExecutionPresets(params: {
   readonly globalPresets?: AgentExecutionPresets | null | undefined;
@@ -100,14 +102,15 @@ export function resolveEffectiveAgentExecutionPresets(params: {
   if (params.projectPresets !== null && params.projectPresets !== undefined) {
     return params.projectPresets;
   }
+  if (params.globalPresets) {
+    return params.globalPresets;
+  }
+  // Pure-legacy installs: no modern preset at project or environment level.
   if (params.boardSelection) {
     return { mode: "simple", selection: params.boardSelection } as AgentExecutionPresets;
   }
   if (params.projectDefault) {
     return { mode: "simple", selection: params.projectDefault } as AgentExecutionPresets;
-  }
-  if (params.globalPresets) {
-    return params.globalPresets;
   }
   return null;
 }

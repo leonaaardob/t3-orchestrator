@@ -92,10 +92,10 @@ The current patch attaches to upstream T3 Code through these areas:
     contract (run result carries `board`, `card`, optional `threadId`, and the
     absolute card `workspacePath`), and the `AgentBoardFileError` RPC error.
     Runner settings carry an optional `workerModelSelection`
-    (`ModelSelection` imported from `./orchestration.ts`) — the
-    project-central worker execution config for board card runs (deprecated;
-    new code reads Global→Project presets but the field still decodes for
-    back-compat).
+    (`ModelSelection` imported from `./orchestration.ts`) — legacy board
+    worker pin for installs without modern execution presets (deprecated;
+    new code reads environment→project presets; the field still decodes for
+    back-compat and pure-legacy synthesis).
 - `src/agentBoard.test.ts`
   - Contract coverage for the board file shape plus the run input/result
     schemas (runner: `vite-plus/test`).
@@ -149,11 +149,12 @@ The current patch attaches to upstream T3 Code through these areas:
 .dispatch(thread.create)` with the resolved model selection and
     `runtimeMode: "full-access"` -> `dispatch(thread.turn.start)` with the
     shared prompt -> persist `runtime.implementationRunId` + heartbeat.
-    Model selection resolves via Global→Project presets
-    (`ServerSettings.agentExecutionPresets` →
-    `OrchestrationProject.agentExecutionPresets`, legacy
-    `defaultModelSelection` / `runner.workerModelSelection` as synthetic
-    Simple) through `@t3tools/shared/agentBoardRunner`
+    Model selection resolves via environment→project presets
+    (`OrchestrationProject.agentExecutionPresets` override →
+    `ServerSettings.agentExecutionPresets` on Inherit; legacy
+    `defaultModelSelection` / `runner.workerModelSelection` synthesize
+    Simple only when no modern preset exists at either level) through
+    `@t3tools/shared/agentBoardRunner`
     (`resolveEffectiveAgentExecutionPresets`,
     `resolveExecutionPresetForOperation`,
     `resolveAndValidateExecutionPresetForOperation`) BEFORE worktree/thread
@@ -176,7 +177,7 @@ The current patch attaches to upstream T3 Code through these areas:
     Review handoff is `Running` completed → `Reviewing` with a fresh review
     thread (same worktree, new thread via `buildAgentBoardReviewPrompt` +
     `resolveEffectiveAgentExecutionPresets` /
-    `resolveExecutionPresetForOperation` (Global→Project + legacy fallback,
+    `resolveExecutionPresetForOperation` (environment→project; legacy only if no modern preset,
     review `needs-decision` on same instanceId+model); `Reviewing` polls
     `getThreadShellById` +
     `getThreadDetailById` and parses `REVIEW: PASS`/`REVIEW: FAIL`/
@@ -293,8 +294,9 @@ The current patch attaches to upstream T3 Code through these areas:
     override -> project default -> typed missing-config) plus the shared
     missing-config error text; unit-tested in `src/agentBoardRunner.test.ts`.
     Extended for presets: `AgentExecutionOperation`,
-    `resolveEffectiveAgentExecutionPresets` (Global→Project + legacy board /
-    project-default fallback), `resolveModelSelectionForOperation` /
+    `resolveEffectiveAgentExecutionPresets` (project override → environment
+    presets on Inherit; legacy board / project-default only when no modern
+    preset exists), `resolveModelSelectionForOperation` /
     `resolveImplementationModelSelection` /
     `resolveReviewModelSelection` / `resolveRepairModelSelection`,
     `isSameModelSelection` / `isReviewIndependent` /

@@ -158,9 +158,9 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         );
       }
       const project = projectOption.value;
-      // Worker execution via Global→Project presets (new) with legacy board /
-      // project-default fallbacks. Missing config blocks the card before any
-      // thread exists.
+      // Worker execution via environment→project presets with legacy board /
+      // project-default fallbacks only when no modern preset exists. Missing
+      // config blocks the card before any thread exists.
       const settingsOption = yield* Effect.serviceOption(ServerSettingsService);
       const globalPresets = yield* Option.match(settingsOption, {
         onNone: () => Effect.succeed(undefined),
