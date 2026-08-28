@@ -1,6 +1,6 @@
 # TASK-20260829-orchestration-env-scoping
 
-Status: `Running`
+Status: `Tested`
 Agent eligible: yes
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 
