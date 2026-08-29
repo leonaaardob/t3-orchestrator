@@ -6,11 +6,13 @@
 
 **Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code).**
 
-T3 Orchestrator is a **fork** of T3 Code. It is not an official T3 Code feature or plugin. It adds a project-level planning and execution layer on top of the same agent GUI, providers, and remote model.
+T3 Orchestrator is a fork of T3 Code and keeps T3 Code as its technical foundation. It is not an official T3 Code feature or plugin.
+
+The planning/orchestration layer started from ideas and implementation work in [RyHale/t3code-planning-fork](https://github.com/RyHale/t3code-planning-fork). T3 Orchestrator has since extended that layer substantially — for example Project Supervisor, Simple / Advanced execution presets, Implementation / Review / Repair flows, and environment-scoped orchestration across local and remote environments.
 
 **Status: Alpha.** Useful for side-projects and experiments. Not a turnkey production orchestration system.
 
-> This is not the official T3 Code project. Upstream lives at [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The orchestration approach is inspired in part by [OpenAI Symphony](https://github.com/openai/symphony) — not affiliated with OpenAI.
+> This is not the official T3 Code project. Upstream technical foundation: [pingdotgg/t3code](https://github.com/pingdotgg/t3code). Planning/orchestration lineage: [RyHale/t3code-planning-fork](https://github.com/RyHale/t3code-planning-fork). Conceptual inspiration (separate): [OpenAI Symphony](https://github.com/openai/symphony) — not affiliated with OpenAI.
 
 ---
 
@@ -24,9 +26,9 @@ planning → tasks → implementation → independent review → repair → huma
 
 …plus durable project context that survives longer than a single chat thread.
 
-T3 Orchestrator adds that structure on top of T3 Code: a visible board, execution presets, an independent review step, and a designated **Project Supervisor** thread for planning context.
+T3 Orchestrator builds on that planning lineage on top of T3 Code: a visible board, execution presets, an independent review step, and a designated **Project Supervisor** thread for planning context.
 
-The orchestration approach is inspired in part by OpenAI Symphony. This project adapts those ideas pragmatically for an interactive desktop / side-project workflow. It is not endorsed by OpenAI and does not claim Symphony compatibility certification.
+Separately, the orchestration approach is inspired in part by OpenAI Symphony. This project adapts those ideas pragmatically for an interactive desktop / side-project workflow. It is not endorsed by OpenAI and does not claim Symphony compatibility certification.
 
 I currently use T3 Orchestrator for my side-projects. It is not yet the orchestration system I use for production work.
 
@@ -189,12 +191,17 @@ Please keep changes scoped. Discuss large ideas before opening a big PR. Do not 
 
 ---
 
-## Upstream & inspiration
+## Upstream
 
-| Project                                               | Role                                                                                                             |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| [T3 Code](https://github.com/pingdotgg/t3code)        | Upstream GUI, server, and provider stack. T3 Orchestrator is a fork and is **not** the official T3 Code project. |
-| [OpenAI Symphony](https://github.com/openai/symphony) | Conceptual inspiration for tracked work, isolated workspaces, and structured agent loops. Not affiliated.        |
+T3 Orchestrator is built on top of [T3 Code](https://github.com/pingdotgg/t3code). That repository remains the upstream technical foundation (desktop/runtime GUI, server, providers). This project is a fork of T3 Code and is **not** the official T3 Code project.
+
+## Planning & orchestration lineage
+
+The planning/orchestration layer originally grew from [RyHale/t3code-planning-fork](https://github.com/RyHale/t3code-planning-fork) and has since been substantially extended inside T3 Orchestrator. Credit that fork for the planning starting point — not as the upstream T3 Code parent.
+
+## Inspiration
+
+[OpenAI Symphony](https://github.com/openai/symphony) is conceptual inspiration for tracked work, isolated workspaces, and structured agent loops. That relationship is separate from both the T3 Code upstream and the RyHale planning lineage. Not affiliated with OpenAI.
 
 Maintained at [leonaaardob/t3-orchestrator](https://github.com/leonaaardob/t3-orchestrator).
 
