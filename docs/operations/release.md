@@ -71,10 +71,11 @@ do not replace or mutate them in place.
 
 Keep package versions aligned with upstream's `X.Y.Z` via
 `scripts/update-release-package-versions.ts` after syncing — do not invent a
-parallel scheme. Upstream has already prepared **0.0.35**; the normal next
-fork desktop release is **0.0.36** / `orchestrator-v0.0.36`: upstream stable
-remains 0.0.35 while its nightly line has begun 0.0.36. Advance package
-versions deliberately and publish only after both signed macOS dry runs pass.
+parallel scheme. Current synchronized candidate is **0.0.37** /
+`orchestrator-v0.0.37` (npm `t3-orchestrator@0.0.37` + matching desktop).
+`0.0.36` was published to npm before the environment-scoping fixes and is
+superseded by `0.0.37` for desktop↔remote sync. Advance package versions
+deliberately and publish only after macOS dry runs pass.
 
 ### Fork next-release backlog
 

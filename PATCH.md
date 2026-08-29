@@ -1,7 +1,8 @@
 # T3 Orchestrator Patch
 
-Status: Active — synced through upstream T3 Code **v0.0.35**; first public desktop
-Release is **T3 Orchestrator 0.0.34** on `leonaaardob/t3-orchestrator`.
+Status: Active — synced through upstream T3 Code **v0.0.35**; synchronized
+candidate is **T3 Orchestrator 0.0.37** on `leonaaardob/t3-orchestrator`
+(`t3-orchestrator@0.0.37`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -452,16 +453,17 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
-### Fork install constraint (no published `t3-orchestrator@0.0.36`)
+### Fork install note (`t3-orchestrator@0.0.37`)
 
-`t3-orchestrator@0.0.36` is **not** published to npm yet. The standard
-`npx t3-orchestrator@latest service update` path installs an exact version from the
-registry once published; until then, build the server
-(`vp run --filter t3-orchestrator build:bundle`) and pre-position the runtime under
-`~/.t3-orchestrator/runtime/versions/0.0.36/` with the built `dist` plus a pinned
-`node_modules` tree containing `t3-orchestrator`, then run
-`node dist/bin.mjs service update --base-dir ~/.t3-orchestrator`. Do not publish early
-just to satisfy local migration testing.
+Publish and install exact versions from npm:
+
+```text
+npx t3-orchestrator@0.0.37 service update --base-dir ~/.t3-orchestrator
+```
+
+`0.0.36` remains on the registry but predates the environment-scoping fixes;
+prefer `0.0.37` for desktop↔remote synchronization. Do not overwrite published
+npm versions.
 
 ### Distribution identity (server/CLI/npm)
 
