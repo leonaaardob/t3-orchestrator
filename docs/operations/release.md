@@ -32,9 +32,12 @@ fork-owned workflow `.github/workflows/desktop-release.yml` to
 
 ### Fork signing and notarization
 
-Current public builds through **0.0.35** are unsigned. Unsigned macOS builds
-retain update detection but use manual DMG installation. Signed and notarized
-macOS builds may use automatic installation.
+Current public builds through **0.0.38** are unsigned. Unsigned macOS builds
+retain update detection/download but use the manual DMG install flow (no
+`quitAndInstall` auto-install). When fork Apple credentials are supplied,
+future builds may be Developer ID signed and notarized; those builds can
+re-enable automatic installation. GitHub Release notes are generated from that
+same signing state so unsigned publishes never claim notarization.
 
 - **macOS:** when credentials are supplied, the job verifies the app
   extracted from the updater ZIP with `codesign`, `spctl`, its bundle identity,
@@ -63,8 +66,8 @@ provisioning profile is needed for this Clerk-free app. The minimal hardened
 runtime entitlements are in `apps/desktop/entitlements.mac*.plist`; do not add
 Associated Domains, sandbox, or other app capabilities without a product need.
 
-Current public Release: **0.0.35** at `orchestrator-v0.0.35`, built from
-`20ffedd28b271e1631ac583875cbb7fc5751029e`. Its macOS assets are unsigned;
+Current public Release: **0.0.38** at `orchestrator-v0.0.38`, built from
+`8db22b2fe9255aa4a020942c1c87910f905015a5`. Its macOS assets are unsigned;
 do not replace or mutate them in place.
 
 ### Fork versioning (next release)

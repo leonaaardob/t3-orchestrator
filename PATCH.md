@@ -553,15 +553,19 @@ browser pass over the Planning tab remain manual follow-ups.
   `.github/workflows/desktop-release.yml` builds T3 Orchestrator for macOS /
   Windows / Linux (x64 + arm64), uploads Actions artifacts, and optionally
   publishes a GitHub Release to `leonaaardob/t3-orchestrator` with
-  electron-updater metadata. macOS uses fork-owned Developer ID and App Store
-  Connect API secrets to sign, notarize, staple, and verify the updater ZIP;
-  Windows remains unsigned. It must not restore upstream `release.yml`
-  (npm OIDC, Vercel, Azure signing, relay production secrets).
-  Fork release tags are `orchestrator-vX.Y.Z`; package and updater versions
-  remain `X.Y.Z`. `packages/shared/src/desktopUpdateRepository.ts` derives
-  manual macOS DMG and release-page URLs with the same `orchestrator-vX.Y.Z`
-  tag form used by the fork release workflow. The desktop app uses the
-  independent bundle ID
+  electron-updater metadata. macOS signing is optional: when fork-owned
+  Developer ID + App Store Connect secrets are present the job signs,
+  notarizes, staples, and verifies the updater ZIP; otherwise macOS stays
+  unsigned and the updater uses manual install. Release-note copy is produced
+  by `scripts/lib/desktop-release-notes.ts` /
+  `scripts/write-desktop-release-notes.ts` from that same secret presence so
+  unsigned publishes never claim notarization. Windows remains unsigned. It
+  must not restore upstream `release.yml` (npm OIDC, Vercel, Azure signing,
+  relay production secrets). Fork release tags are `orchestrator-vX.Y.Z`;
+  package and updater versions remain `X.Y.Z`.
+  `packages/shared/src/desktopUpdateRepository.ts` derives manual macOS DMG
+  and release-page URLs with the same `orchestrator-vX.Y.Z` tag form used by
+  the fork release workflow. The desktop app uses the independent bundle ID
   `com.t3orchestrator.app`, `t3orchestrator://` protocol, and `T3 Orchestrator`
   user-data profile so it can run beside official T3 Code. Existing shared T3
   Code state is intentionally not migrated.

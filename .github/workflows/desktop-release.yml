@@ -616,6 +616,25 @@ jobs:
             exit 1
           fi
 
+      # Release copy must match the macOS build path: secrets present ⇒ --signed
+      # + notarize; otherwise unsigned + manual install. Never hardcode signed.
+      - name: Write release notes
+        if: ${{ needs.preflight.outputs.publish_release == 'true' }}
+        shell: bash
+        env:
+          SIGNED_MACOS: ${{ secrets.T3_ORCHESTRATOR_CSC_LINK != '' && secrets.T3_ORCHESTRATOR_CSC_KEY_PASSWORD != '' && secrets.T3_ORCHESTRATOR_APPLE_API_KEY != '' && secrets.T3_ORCHESTRATOR_APPLE_API_KEY_ID != '' && secrets.T3_ORCHESTRATOR_APPLE_API_ISSUER != '' && secrets.T3_ORCHESTRATOR_APPLE_TEAM_ID != '' }}
+        run: |
+          set -euo pipefail
+          args=(scripts/write-desktop-release-notes.ts --out release-notes.md)
+          if [[ "$SIGNED_MACOS" == "true" ]]; then
+            args+=(--macos-signed)
+            echo "Release notes: signed/notarized macOS copy"
+          else
+            echo "Release notes: unsigned macOS / manual-install copy"
+          fi
+          node "${args[@]}"
+          cat release-notes.md
+
       - name: Publish release
         if: ${{ needs.preflight.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@v3
@@ -623,30 +642,7 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          body: |
-            T3 Orchestrator desktop release.
-
-            Project-level orchestration for T3 Code.
-
-            Includes:
-            - Project Supervisor
-            - Agent Board
-            - autonomous scheduler/reconciler
-            - cross-provider implementation/review/repair presets
-            - independent review
-            - bounded repair cycles
-            - macOS, Windows and Linux desktop builds
-
-            Status:
-            Experimental.
-
-            macOS builds are Developer ID signed and notarized. The updater
-            install path is pending physical Mac-agent validation.
-            Windows may show a SmartScreen warning. Do not disable system-wide
-            protections.
-
-            This is not the official T3 Code project.
-            Upstream lives at https://github.com/pingdotgg/t3code.
+          body_path: release-notes.md
           generate_release_notes: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
