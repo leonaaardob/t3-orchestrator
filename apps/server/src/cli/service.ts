@@ -22,6 +22,7 @@ export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
+    nodeEngineRange: packageJson.engines.node,
   }).pipe(Layer.provide(ProcessRunner.layer));
 
 export type ServiceReconcileResult =
@@ -203,6 +204,8 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServiceInstallError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceUpdatePendingError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      BootServiceNodeError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
     }),
   );

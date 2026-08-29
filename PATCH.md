@@ -1,8 +1,8 @@
 # T3 Orchestrator Patch
 
 Status: Active — synced through upstream T3 Code **v0.0.35**; synchronized
-candidate is **T3 Orchestrator 0.0.37** on `leonaaardob/t3-orchestrator`
-(`t3-orchestrator@0.0.37`).
+candidate is **T3 Orchestrator 0.0.38** on `leonaaardob/t3-orchestrator`
+(`t3-orchestrator@0.0.38`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -453,17 +453,18 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
-### Fork install note (`t3-orchestrator@0.0.37`)
+### Fork install note (`t3-orchestrator@0.0.38`)
 
 Publish and install exact versions from npm:
 
 ```text
-npx t3-orchestrator@0.0.37 service update --base-dir ~/.t3-orchestrator
+npx t3-orchestrator@0.0.38 service update --base-dir ~/.t3-orchestrator
 ```
 
-`0.0.36` remains on the registry but predates the environment-scoping fixes;
-prefer `0.0.37` for desktop↔remote synchronization. Do not overwrite published
-npm versions.
+`0.0.37` remains on the registry but can rewrite `ExecStart` to an editor-owned
+Node when `service update` runs from Cursor/agent environments; prefer `0.0.38`
+for durable service Node resolution and desktop↔remote synchronization. Do not
+overwrite published npm versions.
 
 ### Distribution identity (server/CLI/npm)
 
@@ -480,6 +481,7 @@ points instead of reintroducing bare `t3` strings:
 | Pinned runtime entry     | `node_modules/t3-orchestrator/dist/bin.mjs` | `pinnedRuntime.ts`, `serviceLauncher.ts`                   |
 | Linux service            | `t3-orchestrator.service`                   | `apps/server/src/cloud/bootService.ts`                     |
 | macOS service            | `com.t3orchestrator.service`                | same                                                       |
+| Service Node runtime     | durable Node only (never editor/agent)      | `apps/server/src/cloud/durableServiceNode.ts`              |
 | Desktop SSH package spec | `t3-orchestrator@<version>`                 | `packages/ssh/src/command.ts`, `apps/desktop/src/main.ts`  |
 | SSH runner PATH          | never `command -v t3`                       | `packages/ssh/src/tunnel.ts`                               |
 | Publish filter           | `t3-orchestrator`                           | `apps/server/scripts/cli.ts`, root `package.json`          |

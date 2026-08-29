@@ -151,8 +151,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       baseDir,
       logsDir: path.join(baseDir, "userdata", "logs"),
       cliVersion: "1.2.3",
+      nodeEngineRange: "^22.16 || ^23.11 || >=24.10",
       host: {
         execPath: "/usr/bin/node",
+        nodePath: "/usr/bin/node",
         ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
       },
     }).pipe(

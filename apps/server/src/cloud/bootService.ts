@@ -24,6 +24,11 @@ import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  BootServiceNodeError,
+  isEphemeralPathDirectory,
+  resolveDurableServiceNode,
+} from "./durableServiceNode.ts";
+import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -36,6 +41,8 @@ import {
   serviceStateHasPendingUpdate,
   type ServiceState,
 } from "./serviceProtocol.ts";
+
+export { BootServiceNodeError } from "./durableServiceNode.ts";
 
 export const BOOT_SERVICE_UNIT_FILE = linuxServiceName;
 export const BOOT_SERVICE_LAUNCHD_LABEL = macServiceLabel;
@@ -425,7 +432,8 @@ export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
-  | BootServiceUpdatePendingError;
+  | BootServiceUpdatePendingError
+  | BootServiceNodeError;
 
 export interface BootServiceStatus {
   readonly supported: boolean;
@@ -445,7 +453,15 @@ export class BootService extends Context.Service<
 >()("t3/cloud/bootService") {}
 
 export interface BootServiceHost {
+  /** Invoking process Node; never persisted when ephemeral/editor-owned. */
   readonly execPath: string;
+  /**
+   * Explicit service Node override. When set, skips durable discovery (tests /
+   * rare operator pins). Still must not be used to pass editor runtimes.
+   */
+  readonly nodePath?: string;
+  /** Test seam forwarded to durable Node discovery. */
+  readonly candidatePaths?: ReadonlyArray<string>;
   readonly launcherSourcePath?: string;
 }
 
@@ -453,6 +469,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
+  readonly nodeEngineRange: string;
   readonly host?: BootServiceHost;
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
@@ -467,30 +484,42 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
+      !isEphemeralPathDirectory(directory) &&
       Array.from(directory).every((character) => {
         const code = character.charCodeAt(0);
         return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
       }),
   );
-  const environmentPath = Array.from(
-    new Set([
-      ...xmlSafeInstallerDirectories,
-      path.dirname(host.execPath),
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]),
-  ).join(":");
+  const environmentPathFor = (nodePath: string) =>
+    Array.from(
+      new Set([
+        ...xmlSafeInstallerDirectories,
+        path.dirname(nodePath),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ]),
+    ).join(":");
 
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
     uid,
     path,
-    environmentPath,
+    environmentPath: Array.from(
+      new Set([
+        ...xmlSafeInstallerDirectories,
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ]),
+    ).join(":"),
   });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
@@ -512,13 +541,38 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* (yield* fs.open(directory, { flag: "r" })).sync;
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  const plan: BootServicePlan = {
-    nodePath: host.execPath,
+
+  const resolveServiceNode = Effect.suspend(() => {
+    if (host.nodePath !== undefined) {
+      return Effect.succeed(host.nodePath);
+    }
+    return resolveDurableServiceNode({
+      platform,
+      homeDir,
+      pathEnv: installerPath,
+      execPath: host.execPath,
+      nodeEngineRange: input.nodeEngineRange,
+      candidatePaths: host.candidatePaths,
+      runner,
+    });
+  });
+
+  const planFor = (nodePath: string): BootServicePlan => ({
+    nodePath,
     launcherPath,
     baseDir: input.baseDir,
     logPath,
     unitPath,
-  };
+  });
+
+  const managerForNode = (nodePath: string) =>
+    selectBootServiceManager({
+      platform,
+      homeDir,
+      uid,
+      path,
+      environmentPath: environmentPathFor(nodePath),
+    }) ?? detectedManager;
 
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
@@ -575,7 +629,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
 
   const install: BootService["Service"]["install"] = Effect.gen(function* () {
-    const manager = yield* requireManager;
+    const baseManager = yield* requireManager;
+    const durableNodePath = yield* resolveServiceNode;
+    const plan = planFor(durableNodePath);
+    const manager = managerForNode(durableNodePath) ?? baseManager;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -590,7 +647,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       validate: (runtime) =>
         runner
           .run({
-            command: host.execPath,
+            command: durableNodePath,
             args: [runtime.entryPath, "--version"],
             timeout: Duration.seconds(30),
           })
@@ -700,6 +757,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
+    const durableNodePath = yield* resolveServiceNode.pipe(
+      Effect.catchTag("BootServiceNodeError", () => Effect.succeed(undefined)),
+    );
+    if (durableNodePath === undefined) {
+      return { supported: true, installed: true, current: false, unitPath, logPath };
+    }
+    const plan = planFor(durableNodePath);
+    const manager = managerForNode(durableNodePath) ?? detectedManager;
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
       yield* Effect.all([
         fs.readFileString(unitPath),
@@ -710,14 +775,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const normalizeUnit = (contents: string) =>
-      detectedManager.kind === "launchd"
+      manager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
         : contents;
     return {
       supported: true,
       installed: true,
       current:
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        normalizeUnit(unit) === normalizeUnit(manager.render(plan)) &&
         launcherExists &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
@@ -739,5 +804,6 @@ export const layer = (input: {
   readonly baseDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
+  readonly nodeEngineRange: string;
   readonly host?: BootServiceHost;
 }) => Layer.effect(BootService, make(input));
