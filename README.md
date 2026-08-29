@@ -1,303 +1,204 @@
 # T3 Orchestrator
 
-Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code).
-
-[![Planning](https://img.shields.io/badge/Planning-Agent%20Board-6366f1?style=flat-square)](#agent-board)
-[![Cross-provider](https://img.shields.io/badge/Execution-Cross--provider-0ea5e9?style=flat-square)](#cross-provider-execution)
-[![Review loop](https://img.shields.io/badge/Review-Autonomous-10b981?style=flat-square)](#review-and-repair-loop)
-[![Upstream](https://img.shields.io/badge/Upstream-v0.0.34-64748b?style=flat-square)](https://github.com/pingdotgg/t3code/releases)
-
-Talk to your **Project Supervisor**.  
-It plans the work, launches isolated agents through T3, reviews their output, and repairs routine failures automatically.
-
-> **This is not the official T3 Code project.** Upstream lives at [pingdotgg/t3code](https://github.com/pingdotgg/t3code). This repository is a separate planning/orchestration experiment inspired by [OpenAI Symphony](https://github.com/openai/symphony) — not affiliated with OpenAI.
-
 <p align="center">
-  <img src="./docs/assets/readme-hero-planning.png" alt="Planning board with Draft, Ready, Running, and Review cards plus a Run action" width="920" />
+  <img src="./docs/assets/t3-orchestrator-banner.png" alt="T3 Orchestrator" width="920" />
 </p>
 
+**Project-level orchestration for [T3 Code](https://github.com/pingdotgg/t3code).**
+
+T3 Orchestrator is a **fork** of T3 Code. It is not an official T3 Code feature or plugin. It adds a project-level planning and execution layer on top of the same agent GUI, providers, and remote model.
+
+**Status: Alpha.** Useful for side-projects and experiments. Not a turnkey production orchestration system.
+
+> This is not the official T3 Code project. Upstream lives at [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The orchestration approach is inspired in part by [OpenAI Symphony](https://github.com/openai/symphony) — not affiliated with OpenAI.
+
+---
+
+## Why this fork?
+
+Coding agents are useful one session at a time. Real project work needs more structure around them:
+
 ```text
-You
- ↓
-Supervisor
- ↓
-Agent Board
- ↓
-Scheduler
- ├─ Cursor
- ├─ Codex
- └─ OpenCode
- ↓
-Independent Review
- ↓
-Repair / Done
+planning → tasks → implementation → independent review → repair → human decisions
 ```
 
-## Cross-provider execution
+…plus durable project context that survives longer than a single chat thread.
 
-Unlike Symphony's Codex-centric reference, this fork runs workers through **T3's provider runtime**. Pick different models per operation — implementation, review, and repair — globally or per project.
+T3 Orchestrator adds that structure on top of T3 Code: a visible board, execution presets, an independent review step, and a designated **Project Supervisor** thread for planning context.
+
+The orchestration approach is inspired in part by OpenAI Symphony. This project adapts those ideas pragmatically for an interactive desktop / side-project workflow. It is not endorsed by OpenAI and does not claim Symphony compatibility certification.
+
+I currently use T3 Orchestrator for my side-projects. It is not yet the orchestration system I use for production work.
+
+A private orchestrator can be optimized around one specific way of building software. A public one needs to work across many different repositories, stacks, and workflows — so this layer stays deliberately basic and evolves more slowly.
+
+Feedback, bug reports, and contributions are welcome.
+
+---
+
+## Key features
+
+### Planning & Board
+
+A project-level planning surface (Kanban, Planning table, Execution path) backed by real work cards.
+
+<p align="center">
+  <img src="./docs/assets/readme-hero-planning.png" alt="Planning board with Draft, Ready, Running, and Review cards" width="920" />
+</p>
+
+### Project Supervisor
+
+A designated project thread that helps maintain project context and guide planning. It is a normal T3 thread — pinned and badged — not a separate autonomous orchestration service.
+
+<p align="center">
+  <img src="./docs/assets/project-supervisor-sidebar.png" alt="Sidebar showing a pinned Project Supervisor thread with Supervisor badge" width="420" />
+</p>
+
+### Structured execution loop
+
+```text
+Implementation
+→ Review          (separate thread / selection)
+→ Repair when needed
+→ Human decision
+```
+
+Review runs separately from Implementation. A successful automated review moves the card to **Review** — it does **not** auto-complete the work. You decide when it is **Done**.
+
+### Simple presets
+
+One execution preset across stages: the same provider/model selection for implementation, review, and repair.
+
+### Advanced presets
+
+Separate Implementation, Review, and Repair presets. In Advanced mode, Implementation and Review must use different `(provider, model)` selections.
 
 <p align="center">
   <img src="./docs/assets/orchestration-settings-advanced.png" alt="Advanced orchestration settings for implementation, review, and repair" width="820" />
 </p>
 
-**Simple** uses one model for everything. **Advanced** splits implementation / review / repair; review must differ from implementation. Example intent:
+### Environment-scoped orchestration
 
-```text
-Implementation → Cursor / Composer
-Review         → Cursor / Grok
-Repair         → same as implementation (or override)
-```
+Each environment (for example **Local environment**, or a paired remote machine) has its own providers, models, and orchestration defaults. A project runs on the environment that owns it.
 
-No parallel custom provider layer. If T3 can run the provider on your machine, the scheduler can dispatch it.
+Configure defaults in **Settings → Orchestration**. Projects can inherit those defaults or override them.
 
-## Why this fork exists
+### Local + remote projects
 
-Long agent sessions lose context. Plans drift, dependencies get forgotten, and work can be marked done without enough proof.
+Start local. Pairing a remote environment so projects, files, and providers live on another machine is an advanced capability — not required for your first run.
 
-This fork adds a durable planning layer:
+---
 
-<p align="center">
-  <img src="./docs/assets/project-supervisor-sidebar.png" alt="Sidebar showing a pinned Project Supervisor thread with Supervisor badge" width="340" />
-</p>
+## Quick start
 
-<p align="center"><sub>Project Supervisor is a normal T3 thread — pinned and badged, not a separate runtime.</sub></p>
+1. Download **T3 Orchestrator** from [GitHub Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
+2. Launch it
+3. Configure a coding provider (**Settings → Providers**)
+4. Add a project (**Add project**)
+5. Configure an Orchestration preset (**Settings → Orchestration**)
+6. Open **Planning**
+7. Create a card, move it to **Ready**, and run it
+8. Inspect the result when it reaches **Review** — then mark **Done** yourself when you accept the work
 
-- **Project Supervisor** — normal T3 thread (`Project Supervisor`) guided by [`AGENTS.md`](./AGENTS.md) and [`WORKFLOW.md`](./WORKFLOW.md)
-- **Agent Board** — `.t3/agent-board.json` as the visible proof ledger
-- **Scheduler** — claims `Ready` cards every 15s, even with the Planning UI closed
-- **Independent review** — fresh thread, same workspace, not the implementation conversation
-- **Bounded repair** — routine failures retry; intent blockers stop at `Needs Decision`
+**New to T3 Code or agent orchestration?** Follow the full guide: **[Getting Started](./docs/getting-started.md)**.
 
-## How it works
+---
 
-Orchestration state lives in the board file and task records — not in chat history.
+## Desktop downloads
 
-```mermaid
-flowchart TD
-  User --> Supervisor["Project Supervisor thread"]
-  Supervisor --> Board["Agent Board (.t3/agent-board.json)"]
-  Board --> Scheduler["Scheduler / reconciler (15s tick)"]
-  Scheduler --> Runtime["T3 provider runtime"]
-  Runtime --> Workspaces["Isolated card workspaces"]
-  Workspaces --> Review["Fresh review thread"]
-  Review -->|PASS| Complete["Review / Done"]
-  Review -->|FAIL| Repair["Diagnosing / repair"]
-  Repair --> Review
-  Review -->|cap exceeded or intent| Decision["Needs Decision"]
-```
+Packaged builds are on [GitHub Releases](https://github.com/leonaaardob/t3-orchestrator/releases).
 
-Card lifecycle:
-
-```text
-Backlog / Draft → Ready → Running → Reviewing → Review / Done
-                              ↓            ↓
-                         Diagnosing    Needs Decision
-```
-
-## Key features
-
-### Agent Board
-
-Project-local board backed by [`.t3/agent-board.json`](./docs/agents/templates/agent-board.example.json):
-
-- **Kanban**, **Planning table**, and **Execution path** views over the same cards
-- Card detail editing: intent, acceptance criteria, constraints, dependencies, area/slice links
-- Task records under `docs/agents/tasks/` as the durable workpad per card
-- Manual **Run** plus autonomous pickup when cards are `Ready`
-
-### Autonomous scheduler
-
-The server starts a board scheduler automatically (15-second reconciler). It:
-
-- Reconciles `Running`, `Reviewing`, and `Diagnosing` cards before claiming new work
-- Creates or reuses isolated workspaces at `.t3/workspaces/<card-id>`
-- Dispatches implementation, review, and repair through T3's orchestration layer
-- Appends proof to linked task records when possible
-- Runs headless — the Planning tab does not need to stay open
-
-### Simple vs Advanced execution presets
-
-Configure defaults in **Settings → Orchestration**. Projects can inherit or override.
-
-Use one model for the whole execution loop in Simple mode, or route implementation, review, and repair independently in Advanced mode.
-
-| Mode         | Behavior                                                   |
-| ------------ | ---------------------------------------------------------- |
-| **Simple**   | One model selection for implementation, review, and repair |
-| **Advanced** | Separate selections for implementation, review, and repair |
-
-In Advanced mode, **review must use a different model than implementation** (same `instanceId` + model is blocked). Repair may reuse the implementation model.
-
-### Review and repair loop
-
-After implementation completes:
-
-1. Scheduler opens a **fresh review thread** in the same card workspace
-2. Review agent returns `REVIEW: PASS`, `REVIEW: FAIL`, or `NEEDS_DECISION: …`
-3. **PASS** → card moves to `Review` (human visibility) with proof appended
-4. **FAIL** (routine) → `Diagnosing` → repair turn on the implementation thread → new review
-5. Repair cycles cap at `runner.repairCycles` (default **3**) → `Needs Decision` with a summary
-6. Intent or credential questions → `Needs Decision` immediately
-
-## Visual walkthrough
-
-**Planning table** — dense grouping by area and slice:
-
-![Planning table view](./docs/assets/planning-table.png)
-
-**Execution path** — dependency tiers and sequencing (same board data):
-
-![Execution path view](./docs/assets/planning-dependency-tree.png)
-
-## Getting started
-
-### Requirements
-
-- Node.js `^24.13.1` (see upstream [install docs](./docs/user/install.md))
-- At least one provider CLI installed and authenticated (Codex, Claude, Cursor, OpenCode, …)
-- [Vite+](https://viteplus.dev/guide/) (`vp`) — the repo package manager and task runner
-
-### Desktop downloads
-
-Packaged **T3 Orchestrator** builds are published on
-[GitHub Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
-(unsigned for now — no Apple/Windows signing). macOS may show a Gatekeeper
-warning; Windows may show SmartScreen. Do not disable system-wide protections.
-
-| Platform            | Download                                       |
+| Platform            | Asset pattern                                  |
 | ------------------- | ---------------------------------------------- |
 | macOS Intel         | `T3-Orchestrator-<version>-x64.dmg` / `.zip`   |
 | macOS Apple Silicon | `T3-Orchestrator-<version>-arm64.dmg` / `.zip` |
-| Windows Intel/AMD   | `T3-Orchestrator-<version>-x64.exe`            |
-| Windows ARM         | `T3-Orchestrator-<version>-arm64.exe`          |
+| Windows x64         | `T3-Orchestrator-<version>-x64.exe`            |
+| Windows ARM64       | `T3-Orchestrator-<version>-arm64.exe`          |
 | Linux x64           | `T3-Orchestrator-<version>-x86_64.AppImage`    |
 | Linux ARM64         | `T3-Orchestrator-<version>-arm64.AppImage`     |
 
-In-app updates also read that same Releases feed (`leonaaardob/t3-orchestrator`).
+**macOS:** public builds are currently unsigned. macOS may require manual approval through Gatekeeper. Updates currently use a manual DMG install flow.
 
-### Clone and run this fork
+**Windows:** unsigned builds may trigger SmartScreen.
 
-Keep this checkout separate from a normal T3 Code install:
+Do not disable system-wide Gatekeeper or SmartScreen. Detailed first-open steps are in [Getting Started](./docs/getting-started.md).
 
-```bash
-git clone https://github.com/leonaaardob/t3-orchestrator.git
-cd t3-orchestrator
-vp i
-vp run dev
+---
+
+## How orchestration works
+
+At a high level:
+
+```text
+You shape work on the Board
+        ↓
+Ready cards are picked up for Implementation
+        ↓
+A separate Review pass inspects the result
+        ↓
+PASS → card enters Review (human gate)
+FAIL → Repair (bounded) → Review again
+or → Needs Decision
 ```
 
-Read the `[dev-runner]` line in the terminal for the actual **server port**, **web port**, and **pairing URL**. Open the full pairing URL (including `#token=…`) in your browser before using the UI.
+You stay responsible for accepting work. Automated **REVIEW: PASS** means the card is ready for your inspection — not that the product decided it is finished.
 
-Runtime state defaults to this worktree's gitignored `.t3/` directory.
+---
 
-### Using upstream T3 instead
+## Who it's for
 
-If you only want stock T3 Code without planning:
+- Developers already using coding-agent tools
+- Indie hackers and side-project builders
+- People who want a structured implementation / review loop
+- People who want a visible planning board around agents
+- Users comfortable experimenting with alpha developer tools
+- Users who may work across local and remote machines
 
-```bash
-npx t3@latest
-```
+## Who it's not for
 
-See [docs/user/install.md](./docs/user/install.md) for desktop packages and provider setup.
+- Non-technical project management
+- Turnkey production orchestration
+- Enterprise governance / compliance tooling
+- Distributed stage-by-stage worker scheduling across machines
+- Fully autonomous ship-to-production workflows
+- Anyone expecting agents to auto-mark reviewed work as **Done**
 
-### Provider setup (same as upstream)
+---
 
-Install and log in to the CLIs you plan to use on the **machine running the server**:
+## Current limitations
 
-| Provider | Login                 |
-| -------- | --------------------- |
-| Codex    | `codex login`         |
-| Claude   | `claude auth login`   |
-| Cursor   | `agent login`         |
-| OpenCode | `opencode auth login` |
+- **Alpha** — APIs, UI, and orchestration behavior may change
+- Project execution is bound to **one environment**
+- No cross-environment Implementation / Review routing
+- No automatic workspace synchronization between environments
+- Supervisor is a designated thread, not a separate autonomous service
+- Human approval remains after successful Review
+- Repair cycles are bounded and can end in **Needs Decision**
+- Provider / model must exist on the project’s environment
+- Offline remote environments cannot execute their projects
+- macOS and Windows builds are currently **unsigned**
+- Some Symphony-style workflow validation / features are not implemented yet
 
-Enable additional providers under **Settings → Providers** when needed.
-
-## Configuration
-
-| What                     | Where                                                       |
-| ------------------------ | ----------------------------------------------------------- |
-| Global execution presets | Settings → Orchestration                                    |
-| Project override         | Project settings → Agent execution (inherit or override)    |
-| Board file               | `.t3/agent-board.json` (per project; gitignored by default) |
-| Workflow contract        | [`WORKFLOW.md`](./WORKFLOW.md)                              |
-| Supervisor rules         | [`AGENTS.md`](./AGENTS.md)                                  |
-| Patch / integration map  | [`PATCH.md`](./PATCH.md)                                    |
-
-Example board shape: [`docs/agents/templates/agent-board.example.json`](./docs/agents/templates/agent-board.example.json)
-
-## Remote and headless usage
-
-Planning features follow T3 Code's remote model: run the server on a host with provider credentials, pair from another device, and use the same board/scheduler behavior. See [docs/user/remote-access.md](./docs/user/remote-access.md).
-
-The scheduler runs server-side, so autonomous `Ready` → worker → review loops do not require the Planning UI to remain open.
-
-## Project status
-
-- **Upstream sync:** this fork tracks [T3 Code v0.0.34](https://github.com/pingdotgg/t3code/releases).
-- **Experimental:** expect breakage when upstream changes routing, RPC, chat layout, or provider orchestration. Start repairs from [`PATCH.md`](./PATCH.md).
-- **Validated in this phase:** cross-provider execution, autonomous scheduler/reconciler, independent review/repair, and Advanced A/B execution presets (review model ≠ implementation model).
-- **Not production-ready:** workflow front-matter validation, hook execution, and some Symphony parity items remain backlog (see [`docs/agents/symphony-conformance.md`](./docs/agents/symphony-conformance.md)).
-
-Use the header **Break** control to disable Planning UI at runtime if a board view misbehaves during an active session (`t3code.planningFeaturesDisabled` in browser storage).
-
-## Relationship to upstream T3 Code
-
-|               | Upstream T3 Code                                            | This fork                                       |
-| ------------- | ----------------------------------------------------------- | ----------------------------------------------- |
-| Maintainer    | [T3 Tools / pingdotgg](https://github.com/pingdotgg/t3code) | Community fork                                  |
-| Focus         | Multi-surface agent GUI                                     | + Agent Board, scheduler, Supervisor workflow   |
-| Orchestration | Per-thread turns                                            | + project board, workspaces, review/repair loop |
-| License       | MIT                                                         | MIT (same; see [LICENSE](./LICENSE))            |
-
-Sync upstream with:
-
-```bash
-git fetch upstream --prune
-git log --oneline main..upstream/main
-```
-
-Do not push planning changes to upstream unless you are contributing through their process.
-
-## Symphony inspiration
-
-[OpenAI Symphony](https://github.com/openai/symphony) explores long-running, repository-owned agent orchestration: tracked work items, isolated workspaces, autonomous scheduling, reconciliation, bounded retries, and durable state outside chat.
-
-**OpenAI did not build or endorse this fork.** We borrowed the _shape_ of that workflow and mapped it onto T3 Code:
-
-| Symphony reference    | This fork                                                                                                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Linear issues         | `.t3/agent-board.json` cards                                                                                    |
-| Codex-centric workers | T3 provider-neutral runtime                                                                                     |
-| WORKFLOW.md policy    | [`WORKFLOW.md`](./WORKFLOW.md) + [`docs/agents/symphony-conformance.md`](./docs/agents/symphony-conformance.md) |
-
-## Known limitations
-
-- No official T3 plugin system — this is a modified fork, not a drop-in extension.
-- Desktop release CI is fork-owned (`.github/workflows/desktop-release.yml`); it does not use upstream signing, npm, or Vercel secrets.
-- `.t3/` runtime data, workspaces, and local board state are gitignored — seed from the example template.
-- Typed `WORKFLOW.md` front-matter validation and hook execution are not implemented yet.
-- A generic Cursor ACP fix for composite model slugs (e.g. `gemini-3.7-flash-high`) lives on `main` for validation; upstream may absorb it separately — it is not planning-specific.
-
-## Documentation
-
-- Planning workflow: [`WORKFLOW.md`](./WORKFLOW.md), [`docs/agents/project-master-plan.md`](./docs/agents/project-master-plan.md)
-- Templates: [`docs/agents/templates/`](./docs/agents/templates/)
-- User docs (upstream): [`docs/user/`](./docs/user/)
-- Internals: [`docs/internals/overview.md`](./docs/internals/overview.md)
+---
 
 ## Contributing
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md). Feature ideas for **upstream** T3 Code belong in [their Ideas discussions](https://github.com/pingdotgg/t3code/discussions/categories/ideas). For this fork, open issues or PRs here.
+Feedback and contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-When changing planning behavior, update [`PATCH.md`](./PATCH.md) in the same change.
+Please keep changes scoped. Discuss large ideas before opening a big PR. Do not submit T3 Orchestrator-specific orchestration changes to upstream T3 Code unless they are independently relevant there.
 
-## Credits
+---
 
-- [T3 Code](https://github.com/pingdotgg/t3code) by [T3 Tools](https://t3.gg) — upstream GUI, server, and provider stack (MIT).
-- [OpenAI Symphony](https://github.com/openai/symphony) — conceptual inspiration for tracked work, workspaces, and autonomous scheduling (not affiliated).
-- Orchestrator maintenance: [leonaaardob/t3-orchestrator](https://github.com/leonaaardob/t3-orchestrator).
+## Upstream & inspiration
+
+| Project                                               | Role                                                                                                             |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [T3 Code](https://github.com/pingdotgg/t3code)        | Upstream GUI, server, and provider stack. T3 Orchestrator is a fork and is **not** the official T3 Code project. |
+| [OpenAI Symphony](https://github.com/openai/symphony) | Conceptual inspiration for tracked work, isolated workspaces, and structured agent loops. Not affiliated.        |
+
+Maintained at [leonaaardob/t3-orchestrator](https://github.com/leonaaardob/t3-orchestrator).
+
+---
 
 ## License
 

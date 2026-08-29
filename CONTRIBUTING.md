@@ -1,67 +1,51 @@
 # Contributing
 
-## Read This First
+Feedback and contributions are welcome.
 
-We are not actively accepting contributions right now.
+T3 Orchestrator is an **alpha** fork of [T3 Code](https://github.com/pingdotgg/t3code). APIs, UI, and orchestration behavior may change. Please keep that in mind when proposing work.
 
-You can still report a bug or open a PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
+## Ways to help
 
-Feature requests and proposals belong in [Ideas discussions](https://github.com/pingdotgg/t3code/discussions/categories/ideas), not issues.
+### Bug reports
 
-If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
+Open an issue on [leonaaardob/t3-orchestrator](https://github.com/leonaaardob/t3-orchestrator) with:
 
-PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
+- what you expected
+- what happened
+- OS / desktop version (or server version)
+- steps to reproduce
+- relevant logs or screenshots when useful
 
-If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
+### Feature suggestions
 
-## What We Are Most Likely To Accept
+Open an issue or discussion on this fork. Say what problem you are solving, not only the UI you want.
 
-Small, focused bug fixes.
+Large ideas should be discussed **before** a big pull request.
 
-Small reliability fixes.
+### Pull requests
 
-Small performance improvements.
+PRs are welcome when they are focused and easy to review.
 
-Tightly scoped maintenance work that clearly improves the project without changing its direction.
+Please:
 
-## What We Are Least Likely To Accept
+- Keep the change scoped to one concern
+- Explain **why** the change should exist
+- Include tests for behavior changes
+- Include before/after images for UI changes (short video for motion / timing)
+- Do not mix unrelated fixes
 
-Large PRs.
+## Scope boundaries
 
-Drive-by feature work.
+This repository is a **fork** with orchestration-specific behavior on top of T3 Code.
 
-Opinionated rewrites.
+- Prefer changes that respect the fork / upstream boundary
+- Do **not** submit T3 Orchestrator-specific orchestration changes to upstream [pingdotgg/t3code](https://github.com/pingdotgg/t3code) unless the change is independently useful there
+- Upstream-only ideas for stock T3 Code belong in [their Ideas discussions](https://github.com/pingdotgg/t3code/discussions/categories/ideas)
 
-Anything that expands product scope without us asking for it first.
+## Practical expectations
 
-If you open a 1,000+ line PR full of new features, we will probably close it quickly and remember that you ignored the clearly written instructions.
+- Small bug fixes and reliability improvements are the easiest to land
+- Large rewrites and drive-by feature work are unlikely to merge without prior agreement
+- Opening a PR does not create an obligation to merge — we may ask you to shrink it, rework it, or close it
 
-## If You Still Want To Open A PR
-
-Keep it small.
-
-Explain exactly what changed.
-
-Explain exactly why the change should exist.
-
-Do not mix unrelated fixes together.
-
-If the PR makes anything resembling a UI change, include clear before/after images.
-
-If the change depends on motion, timing, transitions, or interaction details, include a short video.
-
-If we have to guess what changed, we are much less likely to review it.
-
-## Discuss Changes First
-
-If you are thinking about a non-trivial change, start a discussion first. Issues are reserved for bug reports.
-
-That still does not mean we will want the PR, but it gives you a chance to avoid wasting your time.
-
-## Be Realistic
-
-Opening a PR does not create an obligation on our side.
-
-We may close it. We may ignore it. We may ask you to shrink it. We may reimplement the idea ourselves later.
-
-If you are fine with that, proceed.
+If that tradeoff is fine with you, proceed. Thank you for helping improve an early tool.
