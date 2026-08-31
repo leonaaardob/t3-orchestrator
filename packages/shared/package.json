@@ -35,6 +35,14 @@
       "types": "./src/agentBoardRunner.ts",
       "import": "./src/agentBoardRunner.ts"
     },
+    "./orchestration/supervisorContract": {
+      "types": "./src/orchestration/supervisorContract.ts",
+      "import": "./src/orchestration/supervisorContract.ts"
+    },
+    "./orchestration/supervisorPlaybook": {
+      "types": "./src/orchestration/supervisorPlaybook.ts",
+      "import": "./src/orchestration/supervisorPlaybook.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

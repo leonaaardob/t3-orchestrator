@@ -13,6 +13,8 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { SUPERVISOR_CONTRACT } from "@t3tools/shared/orchestration/supervisorContract";
+import { SUPERVISOR_PLAYBOOK } from "@t3tools/shared/orchestration/supervisorPlaybook";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -98,13 +100,10 @@ const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
-export const PROJECT_SUPERVISOR_PROVIDER_CONTEXT = `You are the Project Supervisor for this project.
-
-Read and follow the project's AGENTS.md and WORKFLOW.md.
-
-Your responsibility is to shape and coordinate work, maintain project-level context, use the project board/workflow, and delegate implementation/review to fresh agents when the project doctrine calls for it.
-
-Do not casually perform worker implementation yourself when delegation is appropriate.`;
+/** Composed Supervisor turn context: product Contract + Playbook (not repo AGENTS/WORKFLOW). */
+export const PROJECT_SUPERVISOR_PROVIDER_CONTEXT = [SUPERVISOR_CONTRACT, SUPERVISOR_PLAYBOOK].join(
+  "\n\n",
+);
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";

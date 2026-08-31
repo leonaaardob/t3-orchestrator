@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   AgentBoardFile,
+  FAST_MODE_APPROVAL_QUESTION,
   type AgentBoardCard,
   type AgentBoardCardId,
   type AgentBoardFile as AgentBoardFileType,
@@ -641,6 +642,22 @@ function stateTone(state: AgentBoardState): string {
     default:
       return "border-border/70 bg-muted/30 text-muted-foreground";
   }
+}
+
+function FastModeBadge({ card }: { readonly card: AgentBoardCard }) {
+  if (card.reviewBypass) {
+    return (
+      <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+        Fast
+      </span>
+    );
+  }
+  if (card.workflowMode !== "fast") return null;
+  return (
+    <span className="rounded-md border border-amber-500/30 bg-amber-500/5 px-1.5 py-0.5 text-[10px] text-amber-200/80">
+      {card.fastModeApproval?.approvedAt ? "Fast" : "Fast?"}
+    </span>
+  );
 }
 
 function dependencyDraftFromCard(card: AgentBoardCard): string {
@@ -2058,7 +2075,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
             Board
           </Badge>
           <span className="truncate text-[11px] text-muted-foreground/60">
-            .t3/agent-board.json
+            t3://orchestration/agent-board
           </span>
           {mode === "page" ? (
             <div
@@ -2575,14 +2592,17 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                         </div>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-2">
-                        <span
-                          className={cn(
-                            "rounded-md border px-1.5 py-0.5 text-[10px]",
-                            stateTone(card.state),
-                          )}
-                        >
-                          {card.state}
-                        </span>
+                        <div className="flex min-w-0 items-center gap-1">
+                          <span
+                            className={cn(
+                              "rounded-md border px-1.5 py-0.5 text-[10px]",
+                              stateTone(card.state),
+                            )}
+                          >
+                            {card.state}
+                          </span>
+                          <FastModeBadge card={card} />
+                        </div>
                         <div className="flex items-center gap-1">
                           <Button
                             size="icon-xs"
@@ -3488,14 +3508,17 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                         onDoubleClick={() => openCardDetails(card)}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span
-                            className={cn(
-                              "rounded-md border px-1.5 py-0.5 text-[10px]",
-                              stateTone(card.state),
-                            )}
-                          >
-                            {card.state}
-                          </span>
+                          <div className="flex min-w-0 items-center gap-1">
+                            <span
+                              className={cn(
+                                "rounded-md border px-1.5 py-0.5 text-[10px]",
+                                stateTone(card.state),
+                              )}
+                            >
+                              {card.state}
+                            </span>
+                            <FastModeBadge card={card} />
+                          </div>
                           <span className="text-[10px] text-muted-foreground/45">
                             P{card.priority}
                           </span>
@@ -3765,6 +3788,127 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                         }}
                       />
                     </label>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-border/60 pt-4">
+                  <p className="text-[11px] font-medium text-muted-foreground">Workflow</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-foreground/80">
+                      Mode: {detailCard.workflowMode === "fast" ? "Fast" : "Standard"}
+                    </span>
+                    <FastModeBadge card={detailCard} />
+                  </div>
+                  {detailCard.runtime.currentDecisionQuestion ? (
+                    <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-100">
+                      {detailCard.runtime.currentDecisionQuestion}
+                    </p>
+                  ) : null}
+                  {detailCard.reviewBypass ? (
+                    <p className="text-[11px] text-amber-200/80">
+                      Review bypassed at {detailCard.reviewBypass.at}:{" "}
+                      {detailCard.reviewBypass.reason}
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    {detailCard.workflowMode !== "fast" ||
+                    detailCard.fastModeApproval?.approvedAt === undefined ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={saving}
+                        onClick={() => {
+                          const requestedAt = new Date().toISOString();
+                          updateDetailCard(
+                            (card) =>
+                              ({
+                                ...card,
+                                workflowMode: "fast",
+                                fastModeApproval: {
+                                  requestedAt: card.fastModeApproval?.requestedAt ?? requestedAt,
+                                  approvedAt: undefined,
+                                  approvedBy: undefined,
+                                  rejectedAt: undefined,
+                                  bypassedStages: card.fastModeApproval?.bypassedStages ?? [],
+                                },
+                                state:
+                                  card.state === "Ready" || card.state === "Needs Decision"
+                                    ? "Needs Decision"
+                                    : card.state,
+                                runtime: {
+                                  ...card.runtime,
+                                  currentDecisionQuestion: FAST_MODE_APPROVAL_QUESTION,
+                                  currentError: FAST_MODE_APPROVAL_QUESTION,
+                                },
+                              }) as AgentBoardCard,
+                          );
+                        }}
+                      >
+                        Request Fast Mode
+                      </Button>
+                    ) : null}
+                    {detailCard.workflowMode === "fast" &&
+                    detailCard.fastModeApproval?.approvedAt === undefined ? (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={saving}
+                          onClick={() => {
+                            const approvedAt = new Date().toISOString();
+                            updateDetailCard((card) => {
+                              const {
+                                currentError: _e,
+                                currentDecisionQuestion: _q,
+                                ...runtimeRest
+                              } = card.runtime;
+                              return {
+                                ...card,
+                                workflowMode: "fast",
+                                fastModeApproval: {
+                                  requestedAt: card.fastModeApproval?.requestedAt ?? approvedAt,
+                                  approvedAt,
+                                  approvedBy: "human",
+                                  bypassedStages: card.fastModeApproval?.bypassedStages ?? [],
+                                },
+                                state: card.state === "Needs Decision" ? "Ready" : card.state,
+                                runtime: runtimeRest,
+                              } as AgentBoardCard;
+                            });
+                          }}
+                        >
+                          Approve Fast Mode
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={saving}
+                          onClick={() => {
+                            const rejectedAt = new Date().toISOString();
+                            updateDetailCard((card) => {
+                              const {
+                                currentError: _e,
+                                currentDecisionQuestion: _q,
+                                ...runtimeRest
+                              } = card.runtime;
+                              return {
+                                ...card,
+                                workflowMode: "standard",
+                                fastModeApproval: {
+                                  requestedAt: card.fastModeApproval?.requestedAt ?? rejectedAt,
+                                  rejectedAt,
+                                  bypassedStages: [],
+                                },
+                                reviewBypass: undefined,
+                                state: card.state === "Needs Decision" ? "Ready" : card.state,
+                                runtime: runtimeRest,
+                              } as AgentBoardCard;
+                            });
+                          }}
+                        >
+                          Reject Fast Mode
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
 

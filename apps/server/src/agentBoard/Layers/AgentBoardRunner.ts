@@ -29,7 +29,8 @@ import {
   AgentBoardRunnerError,
   type AgentBoardRunnerShape,
 } from "../Services/AgentBoardRunner.ts";
-import { safeWorkspaceSegment } from "./AgentBoardFileSystem.ts";
+import { ServerConfig } from "../../config.ts";
+import { resolveOrchestrationWorkspacePath } from "./AgentBoardFileSystem.ts";
 import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationDispatchError } from "../../orchestration/Errors.ts";
@@ -231,35 +232,42 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
         return yield* blockAndFail("workerModelSelection.resolve", resolution.error);
       }
 
-      // 3. Card worktree: a REAL git worktree at
-      // <projectRoot>/.t3/workspaces/<safe-card-id> on branch board/<card-id>,
-      // created once from the project HEAD and reused across attempts. Claim
-      // pre-creates the plain folder, so reuse means "already contains a
-      // worktree checkout" (.git marker file).
-      const relativeWorktreePath = `.t3/workspaces/${safeWorkspaceSegment(input.cardId)}`;
-      const resolvedWorktreePath = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectRoot,
-          relativePath: relativeWorktreePath,
-        })
-        .pipe(Effect.mapError((cause) => toError("workspace.resolve", cause)));
+      // 3. Card worktree: REAL git worktree under T3 userdata
+      // (`{stateDir}/orchestration/{projectId}/workspaces/{safe-card-id}`),
+      // linked to the project repo on branch board/<card-id>. Claim sets the
+      // absolute path; reuse when the directory already has a `.git` marker.
+      const claimedWorkspacePath = claimed.workspacePath ?? claimed.card.runtime.workspacePath;
+      const serverConfig = yield* ServerConfig;
+      const absoluteWorktreePath =
+        claimedWorkspacePath !== undefined && path.isAbsolute(claimedWorkspacePath)
+          ? claimedWorkspacePath
+          : resolveOrchestrationWorkspacePath({
+              stateDir: serverConfig.stateDir,
+              projectId: project.id,
+              cardId: input.cardId,
+              join: path.join,
+            });
       const branchName = boardBranchForCard(input.cardId);
 
       yield* vcsProvisioning
         .ensureGitRepositoryReady({ cwd: projectRoot })
         .pipe(Effect.mapError((cause) => toError("git.ensureRepository", cause)));
 
+      yield* fileSystem
+        .makeDirectory(absoluteWorktreePath, { recursive: true })
+        .pipe(Effect.mapError((cause) => toError("worktree.mkdir", cause)));
+
       const hasGitMarker = yield* fileSystem
-        .exists(path.join(resolvedWorktreePath.absolutePath, ".git"))
+        .exists(path.join(absoluteWorktreePath, ".git"))
         .pipe(Effect.mapError((cause) => toError("worktree.stat", cause)));
       const worktreePath = hasGitMarker
-        ? resolvedWorktreePath.absolutePath
+        ? absoluteWorktreePath
         : yield* gitWorkflow
             .createWorktree({
               cwd: projectRoot,
               refName: "HEAD",
               newRefName: branchName,
-              path: resolvedWorktreePath.absolutePath,
+              path: absoluteWorktreePath,
             })
             .pipe(
               Effect.map((result) => result.worktree.path),

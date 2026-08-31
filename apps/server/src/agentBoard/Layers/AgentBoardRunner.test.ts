@@ -21,9 +21,16 @@ import { MISSING_WORKER_CONFIG_ERROR } from "@t3tools/shared/agentBoardRunner";
 
 import { AgentBoardRunner, type AgentBoardRunnerError } from "../Services/AgentBoardRunner.ts";
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
-import { AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
+import {
+  AgentBoardFileSystemLive,
+  pathScopedProjectId,
+  resolveOrchestrationWorkspacePath,
+} from "./AgentBoardFileSystem.ts";
 import { AgentBoardRunnerLive } from "./AgentBoardRunner.ts";
 import * as WorkspacePathsModule from "../../workspace/WorkspacePaths.ts";
+import * as ServerConfig from "../../config.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -33,6 +40,7 @@ import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 
 const CARD_ID = "TASK-20260824-runner-card";
+const PROJECT_ID = ProjectId.make("prj_runner_test");
 
 const BOARD_WORKER_SELECTION = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -47,7 +55,21 @@ const PROJECT_DEFAULT_SELECTION = {
 
 interface Harness {
   readonly cwd: string;
-  readonly boardFiles: AgentBoardFileSystem["Service"];
+  readonly baseDir: string;
+  readonly boardFiles: {
+    readonly load: (input: {
+      readonly cwd: string;
+      readonly createIfMissing?: boolean;
+    }) => Effect.Effect<
+      Awaited<ReturnType<AgentBoardFileSystem["Service"]["load"]>>,
+      unknown,
+      NodeServicesType
+    >;
+    readonly save: (input: {
+      readonly cwd: string;
+      readonly board: AgentBoardFile;
+    }) => Effect.Effect<unknown, unknown, NodeServicesType>;
+  };
   // Platform services stay in R (satisfied by the suite's NodeServices
   // provide); every domain collaborator is closed inside runCard.
   readonly runCard: () => Effect.Effect<
@@ -118,6 +140,14 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
   });
 
   const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-agent-runner-" });
+  const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+    prefix: "t3code-agent-runner-home-",
+  });
+  const pathSvc = yield* Path.Path;
+  const dbPath = pathSvc.join(baseDir, "userdata", "state.sqlite");
+  yield* fileSystem.makeDirectory(pathSvc.dirname(dbPath), { recursive: true });
+  const sqlite = NodeSqliteClient.layer({ filename: dbPath });
+  const serverConfigLayer = ServerConfig.layerTest(cwd, baseDir);
 
   const projectionSnapshotQueryLayer = Layer.mock(ProjectionSnapshotQuery)({
     getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
@@ -125,7 +155,7 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
         workspaceRoot === cwd
           ? Effect.succeed(
               Option.some({
-                id: ProjectId.make("prj_runner_test"),
+                id: PROJECT_ID,
                 title: "Runner project",
                 workspaceRoot,
                 defaultModelSelection:
@@ -197,54 +227,97 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
   // this doubles as the headless launch proof: no browser/client involved.
   // provideMerge keeps the collaborator outputs visible so they satisfy
   // `run`'s requirement channel.
-  const runnerEnvironment = AgentBoardRunnerLive.pipe(
-    Layer.provide(WorkspacePathsModule.layer),
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePathsModule.layer))),
-    Layer.provideMerge(gitWorkflowLayer),
-    Layer.provideMerge(vcsProvisioningLayer),
-    Layer.provideMerge(orchestrationEngineLayer),
-    Layer.provideMerge(projectionSnapshotQueryLayer),
-    Layer.provideMerge(providerRegistryLayer),
-    Layer.provideMerge(serverEnvironmentLayer),
+  const makeBoardFsLayer = () =>
+    AgentBoardFileSystemLive.pipe(
+      Layer.provide(WorkspacePathsModule.layer),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(Layer.fresh(sqlite)),
+    );
+
+  const makeRunnerEnvironment = () =>
+    AgentBoardRunnerLive.pipe(
+      Layer.provide(WorkspacePathsModule.layer),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(makeBoardFsLayer()),
+      Layer.provideMerge(gitWorkflowLayer),
+      Layer.provideMerge(vcsProvisioningLayer),
+      Layer.provideMerge(orchestrationEngineLayer),
+      Layer.provideMerge(projectionSnapshotQueryLayer),
+      Layer.provideMerge(providerRegistryLayer),
+      Layer.provideMerge(serverEnvironmentLayer),
+    );
+
+  const runInEnv = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(Effect.provide(makeRunnerEnvironment()));
+
+  // Migrate once against the file DB; later scopes reopen the same file.
+  yield* runMigrations().pipe(
+    Effect.provide(Layer.mergeAll(Layer.fresh(sqlite), NodeServices.layer)),
   );
 
-  const boardFiles = yield* AgentBoardFileSystem.pipe(Effect.provide(runnerEnvironment));
-
-  // Seed a Ready card carrying the requested worker execution config.
-  const created = yield* boardFiles.load({ cwd, createIfMissing: true });
-  const readyBoard = {
-    ...created.board,
-    runner: {
-      maxConcurrentCards: 1,
-      repairCycles: 3,
-      ...(options?.boardWorkerModelSelection === undefined
-        ? {}
-        : { workerModelSelection: options.boardWorkerModelSelection }),
-    },
-    cards: [
-      {
-        id: CARD_ID,
-        title: "Runner card",
-        state: "Ready" as const,
-        intentBrief: {
-          intent: "Launch this card server-side.",
-          acceptanceCriteria: ["The run starts without a web client."],
+  // Seed a Ready card.
+  yield* runInEnv(
+    Effect.gen(function* () {
+      const boardFiles = yield* AgentBoardFileSystem;
+      const created = yield* boardFiles.load({ cwd, createIfMissing: true });
+      const readyBoard = {
+        ...created.board,
+        runner: {
+          maxConcurrentCards: 1,
+          repairCycles: 3,
+          ...(options?.boardWorkerModelSelection === undefined
+            ? {}
+            : { workerModelSelection: options.boardWorkerModelSelection }),
         },
-        createdAt: "2026-05-05T12:00:00.000Z",
+        cards: [
+          {
+            id: CARD_ID,
+            title: "Runner card",
+            state: "Ready" as const,
+            intentBrief: {
+              intent: "Launch this card server-side.",
+              acceptanceCriteria: ["The run starts without a web client."],
+            },
+            createdAt: "2026-05-05T12:00:00.000Z",
+            updatedAt: "2026-05-05T12:00:00.000Z",
+          },
+        ],
         updatedAt: "2026-05-05T12:00:00.000Z",
-      },
-    ],
-    updatedAt: "2026-05-05T12:00:00.000Z",
-  } as unknown as AgentBoardFile;
-  yield* boardFiles.save({ cwd, board: readyBoard });
-
-  const runner = yield* AgentBoardRunner.pipe(Effect.provide(runnerEnvironment));
+      } as unknown as AgentBoardFile;
+      yield* boardFiles.save({ cwd, board: readyBoard });
+    }),
+  );
 
   return {
     cwd,
-    boardFiles,
-    runCard: () => runner.run({ cwd, cardId: CARD_ID }).pipe(Effect.provide(runnerEnvironment)),
+    baseDir,
+    boardFiles: {
+      load: (input: { cwd: string; createIfMissing?: boolean }) =>
+        runInEnv(
+          Effect.gen(function* () {
+            const boardFiles = yield* AgentBoardFileSystem;
+            return yield* boardFiles.load({
+              cwd: input.cwd,
+              createIfMissing: input.createIfMissing ?? false,
+            });
+          }),
+        ),
+      save: (input: { cwd: string; board: AgentBoardFile }) =>
+        runInEnv(
+          Effect.gen(function* () {
+            const boardFiles = yield* AgentBoardFileSystem;
+            return yield* boardFiles.save(input);
+          }),
+        ),
+    },
+    runCard: () =>
+      runInEnv(
+        Effect.gen(function* () {
+          const runner = yield* AgentBoardRunner;
+          return yield* runner.run({ cwd, cardId: CARD_ID });
+        }),
+      ),
     dispatchedCommands: () => dispatched,
     createWorktreeCalls: () => gitCalls.count,
     failNextTurnStartWith: (detail: string | null) => {
@@ -258,7 +331,13 @@ describe("AgentBoardRunnerLive", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness({ boardWorkerModelSelection: BOARD_WORKER_SELECTION });
       const path = yield* Path.Path;
-      const expectedWorktree = path.join(harness.cwd, ".t3", "workspaces", CARD_ID);
+      const derived = yield* ServerConfig.deriveServerPaths(harness.baseDir, undefined);
+      const expectedWorktree = resolveOrchestrationWorkspacePath({
+        stateDir: derived.stateDir,
+        projectId: pathScopedProjectId(harness.cwd),
+        cardId: CARD_ID,
+        join: path.join,
+      });
 
       const result = yield* harness.runCard();
 
@@ -302,7 +381,13 @@ describe("AgentBoardRunnerLive", () => {
       const harness = yield* makeHarness({ boardWorkerModelSelection: BOARD_WORKER_SELECTION });
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const existingWorktree = path.join(harness.cwd, ".t3", "workspaces", CARD_ID);
+      const derived = yield* ServerConfig.deriveServerPaths(harness.baseDir, undefined);
+      const existingWorktree = resolveOrchestrationWorkspacePath({
+        stateDir: derived.stateDir,
+        projectId: pathScopedProjectId(harness.cwd),
+        cardId: CARD_ID,
+        join: path.join,
+      });
       yield* fileSystem.makeDirectory(existingWorktree, { recursive: true });
       yield* fileSystem.writeFileString(path.join(existingWorktree, ".git"), "gitdir: fake\n");
 

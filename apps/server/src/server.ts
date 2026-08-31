@@ -349,6 +349,8 @@ const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
 
 const AgentBoardFileSystemLayerLive = AgentBoardFileSystemLive.pipe(
   Layer.provide(WorkspacePaths.layer),
+  // SqlClient + ServerConfig come from PersistenceLayerLive / runtime config —
+  // board rows live in state.sqlite; workspaces under stateDir/orchestration.
 );
 
 const AgentBoardRunnerLayerLive = AgentBoardRunnerLive.pipe(Layer.provide(WorkspacePaths.layer));

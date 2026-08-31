@@ -8,6 +8,243 @@
   },
   "cards": [
     {
+      "id": "ORCH-040-internal-supervisor-contract",
+      "title": "Internal Supervisor Contract + Playbook",
+      "priority": 1,
+      "area": "Orchestration",
+      "slice": "Internal Orchestration Control Plane",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260831-internal-supervisor-contract.md",
+      "slicePlanPath": "docs/agents/slices/internal-orchestration-control-plane.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Shared supervisor context string and provider reactor must agree.",
+        "conflictsWith": [
+          "ORCH-041-internal-orchestration-storage",
+          "ORCH-042-internal-worker-reviewer-packets",
+          "ORCH-043-fast-mode-runtime"
+        ],
+        "allowedWriteScopes": [
+          "packages/shared/src/orchestration/**",
+          "packages/shared/package.json",
+          "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+          "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts",
+          "docs/internals/**",
+          "docs/agents/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "workspacePath": ".t3/workspaces/ORCH-040-internal-supervisor-contract",
+        "implementationRunId": "ba45418c-01c1-4760-9323-029c088ca64e",
+        "attemptCount": 1,
+        "lastHeartbeatAt": "2026-08-31T20:15:00.000Z",
+        "reviewNote": "Independent review PASS; awaiting human Done gate."
+      },
+      "createdAt": "2026-08-31T20:00:00.000Z",
+      "updatedAt": "2026-08-31T20:15:30.000Z",
+      "state": "Review",
+      "intentBrief": {
+        "intent": "Move Supervisor orchestration doctrine into product-owned T3 modules; remove AGENTS/WORKFLOW as orchestration authority for Supervisor identity.",
+        "desiredOutcome": "Supervisor threads receive Contract+Playbook via provider context with no AGENTS/WORKFLOW orchestration mandate.",
+        "acceptanceCriteria": [
+          "supervisorContract.ts and supervisorPlaybook.ts exist and are exported.",
+          "PROJECT_SUPERVISOR_PROVIDER_CONTEXT replaced by Contract+Playbook.",
+          "No AGENTS.md/WORKFLOW.md orchestration dependency in Supervisor context.",
+          "Provider priority limitations documented.",
+          "Focused tests pass; PATCH.md updated."
+        ],
+        "constraints": [
+          "No board storage move.",
+          "No Fast Mode schema.",
+          "No filesystem write-block for Supervisor.",
+          "No distributed workers."
+        ],
+        "nonGoals": ["ORCH-041 storage", "ORCH-042 prompts", "ORCH-043 Fast Mode"],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "ORCH-041-internal-orchestration-storage",
+      "title": "Server-owned orchestration storage + workspace migration",
+      "priority": 1,
+      "area": "Orchestration",
+      "slice": "Internal Orchestration Control Plane",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260831-internal-orchestration-storage.md",
+      "slicePlanPath": "docs/agents/slices/internal-orchestration-control-plane.md",
+      "dependencies": ["ORCH-040-internal-supervisor-contract"],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Persistence, RPC, worktree paths, and proof path must move together.",
+        "conflictsWith": [
+          "ORCH-042-internal-worker-reviewer-packets",
+          "ORCH-043-fast-mode-runtime"
+        ],
+        "allowedWriteScopes": [
+          "packages/contracts/src/agentBoard.ts",
+          "packages/contracts/src/agentBoard.test.ts",
+          "apps/server/src/agentBoard/**",
+          "apps/server/src/persistence/**",
+          "apps/web/src/state/agentBoard.ts",
+          "apps/web/src/components/AgentBoardPanel.tsx",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-08-31T20:00:00.000Z",
+      "updatedAt": "2026-08-31T20:00:00.000Z",
+      "state": "Backlog",
+      "intentBrief": {
+        "intent": "Move board/cards/proof/workspaces out of the user Git repository into T3 server-owned storage.",
+        "desiredOutcome": "Opening a project never creates .t3/agent-board.json or dirties Git; restart keeps board state.",
+        "acceptanceCriteria": [
+          "SQLite (or documented T3-home) board persistence by project_id.",
+          "Workspaces under T3 home outside project root.",
+          "No proof append into repo task Markdown.",
+          "Legacy board one-shot import; no permanent dual-write.",
+          "Cleanliness + restart tests."
+        ],
+        "constraints": ["Depends on ORCH-040", "No Fast Mode", "No distributed workers"],
+        "nonGoals": ["Fast Mode UI", "Full prompt rewrite"],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "ORCH-042-internal-worker-reviewer-packets",
+      "title": "Internal worker/reviewer execution packets",
+      "priority": 1,
+      "area": "Orchestration",
+      "slice": "Internal Orchestration Control Plane",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260831-internal-worker-reviewer-packets.md",
+      "slicePlanPath": "docs/agents/slices/internal-orchestration-control-plane.md",
+      "dependencies": ["ORCH-041-internal-orchestration-storage"],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Prompt builders feed runner/scheduler.",
+        "conflictsWith": ["ORCH-043-fast-mode-runtime"],
+        "allowedWriteScopes": [
+          "packages/shared/src/agentBoardPrompt.ts",
+          "packages/shared/src/agentBoardPrompt.test.ts",
+          "packages/shared/src/orchestration/**",
+          "apps/server/src/agentBoard/**",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-08-31T20:00:00.000Z",
+      "updatedAt": "2026-08-31T20:00:00.000Z",
+      "state": "Backlog",
+      "intentBrief": {
+        "intent": "Rewrite impl/review/repair prompts to use T3 card packets and constraints, not WORKFLOW.md/.t3 board authority.",
+        "desiredOutcome": "Workers and reviewers execute from internal card state; project docs optional only.",
+        "acceptanceCriteria": [
+          "Prompts rebuilt around T3 constraints + card fields.",
+          "No WORKFLOW.md or .t3/agent-board.json as orchestration source of truth.",
+          "Focused prompt tests."
+        ],
+        "constraints": ["Depends on ORCH-041"],
+        "nonGoals": ["Fast Mode bypass"],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "ORCH-043-fast-mode-runtime",
+      "title": "Fast Mode runtime + human approval + scheduler bypass",
+      "priority": 1,
+      "area": "Orchestration",
+      "slice": "Internal Orchestration Control Plane",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260831-fast-mode-runtime.md",
+      "slicePlanPath": "docs/agents/slices/internal-orchestration-control-plane.md",
+      "dependencies": [
+        "ORCH-040-internal-supervisor-contract",
+        "ORCH-041-internal-orchestration-storage"
+      ],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Schema, scheduler, and Planning UI share Fast Mode state.",
+        "conflictsWith": ["ORCH-042-internal-worker-reviewer-packets"],
+        "allowedWriteScopes": [
+          "packages/contracts/src/agentBoard.ts",
+          "packages/contracts/src/agentBoard.test.ts",
+          "apps/server/src/agentBoard/**",
+          "apps/web/src/components/AgentBoardPanel.tsx",
+          "docs/**",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-08-31T20:00:00.000Z",
+      "updatedAt": "2026-08-31T20:00:00.000Z",
+      "state": "Backlog",
+      "intentBrief": {
+        "intent": "Add durable Fast Mode with explicit request, mandatory human approval, and structural review bypass.",
+        "desiredOutcome": "Approved Fast cards skip Reviewing via scheduler; unapproved Fast never runs; badge auditable.",
+        "acceptanceCriteria": [
+          "workflowMode + fastModeApproval + reviewBypass persisted.",
+          "Approval UI Approve/Reject.",
+          "Scheduler enforces bypass only when approved.",
+          "Focused tests."
+        ],
+        "constraints": ["Depends on ORCH-040 and ORCH-041", "Never inferred from size"],
+        "nonGoals": ["Project-wide silent Fast preference", "Supervisor implementation"],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "ORCH-044-legacy-removal-e2e-proof",
+      "title": "Legacy removal + repository independence E2E proof",
+      "priority": 1,
+      "area": "Orchestration",
+      "slice": "Internal Orchestration Control Plane",
+      "taskRecordPath": "docs/agents/tasks/TASK-20260831-legacy-removal-e2e-proof.md",
+      "slicePlanPath": "docs/agents/slices/internal-orchestration-control-plane.md",
+      "dependencies": ["ORCH-042-internal-worker-reviewer-packets", "ORCH-043-fast-mode-runtime"],
+      "parallelism": {
+        "safe": "false",
+        "reason": "Final proof and docs migration after prior cards.",
+        "conflictsWith": [],
+        "allowedWriteScopes": [
+          "apps/server/src/agentBoard/**",
+          "packages/shared/src/orchestration/**",
+          "docs/**",
+          "AGENTS.md",
+          "WORKFLOW.md",
+          "PATCH.md",
+          ".t3/agent-board.json"
+        ]
+      },
+      "runtime": {
+        "attemptCount": 0
+      },
+      "createdAt": "2026-08-31T20:00:00.000Z",
+      "updatedAt": "2026-08-31T20:00:00.000Z",
+      "state": "Backlog",
+      "intentBrief": {
+        "intent": "Prove repo independence; deprecate legacy AGENTS/WORKFLOW orchestration doctrine; deliver final report.",
+        "desiredOutcome": "Contradictory AGENTS cannot alter lifecycle; Git stays clean; restart durable; DoD checklist evidenced.",
+        "acceptanceCriteria": [
+          "Independence fixture tests (Standard + Fast + cleanliness + restart).",
+          "Legacy orchestration sections removed/deprecated.",
+          "Final report items 1-17 complete."
+        ],
+        "constraints": ["Depends on ORCH-042 and ORCH-043"],
+        "nonGoals": ["Distributed worker pivot"],
+        "openDecisions": []
+      }
+    },
+    {
       "id": "ORCH-039-orchestration-env-scoping",
       "title": "Environment-scoped Orchestration settings + execution preflight",
       "priority": 1,
@@ -31,12 +268,15 @@
         ]
       },
       "runtime": {
-        "attemptCount": 3,
-        "lastHeartbeatAt": "2026-08-28T22:17:25.760Z",
-        "currentError": "Autonomous retries exhausted after 3 attempt(s). Last failure: claimed card has no implementationRunId; the launch never completed"
+        "workspacePath": ".t3/workspaces/ORCH-039-orchestration-env-scoping",
+        "implementationRunId": "14f55e8d-8c06-4cbc-9603-680552f78808",
+        "reviewRunId": "6c79a44a-0cfb-4466-80be-18bb200ad868",
+        "attemptCount": 4,
+        "lastHeartbeatAt": "2026-08-29T12:44:59.275Z",
+        "currentError": "Autonomous review retries exhausted after 4 attempt(s). Last failure: invalid repair preflight is silently treated as a successful dispatch instead of explicitly blocking the card"
       },
       "createdAt": "2026-08-29T00:00:00.000Z",
-      "updatedAt": "2026-08-28T22:17:25.760Z",
+      "updatedAt": "2026-08-29T12:44:59.275Z",
       "state": "Needs Decision",
       "intentBrief": {
         "intent": "Scope Orchestration settings and execution preflight to the selected/owning environment without changing preset schema.",
@@ -326,11 +566,15 @@
         "allowedWriteScopes": ["apps/web/src/components/AgentBoardPanel.tsx"]
       },
       "runtime": {
-        "attemptCount": 0
+        "workspacePath": ".t3/workspaces/DEMO-005-kanban-editor",
+        "implementationRunId": "7e50a92d-9eed-45b8-95ff-754f85d69b59",
+        "reviewRunId": "5c02f059-278d-4024-9273-f5a2f5f664f4",
+        "attemptCount": 2,
+        "lastHeartbeatAt": "2026-08-29T13:07:17.765Z"
       },
       "createdAt": "2026-05-05T00:00:00.000Z",
-      "updatedAt": "2026-05-05T00:00:00.000Z",
-      "state": "Ready",
+      "updatedAt": "2026-08-29T13:07:32.805Z",
+      "state": "Review",
       "intentBrief": {
         "intent": "Edit cards and move work to Ready from the board.",
         "desiredOutcome": "Operators can run or schedule cards without chat.",
@@ -400,9 +644,82 @@
         "nonGoals": [],
         "openDecisions": []
       }
+    },
+    {
+      "id": "VAL-038-ADV-SMOKE",
+      "title": "Validation 0.0.38 Advanced routing smoke (harmless)",
+      "priority": 9,
+      "area": "Validation",
+      "slice": "orchestrator-v0.0.38-live",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "true",
+        "reason": "validation only",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["docs/agents/tasks/TEMPLATE.md"]
+      },
+      "runtime": {
+        "workspacePath": ".t3/workspaces/VAL-038-ADV-SMOKE",
+        "implementationRunId": "8ff2f2f4-57cf-4485-9af6-e672a8d5d66d",
+        "reviewRunId": "f5bc3fff-3803-411d-ba48-250719e996a8",
+        "attemptCount": 3,
+        "lastHeartbeatAt": "2026-08-29T13:52:58.731Z",
+        "currentError": "Autonomous review retries exhausted after 3 attempt(s). Last failure: missing card/task-record proof prevents validating acceptance criteria"
+      },
+      "createdAt": "2026-08-29T13:50:27.961Z",
+      "updatedAt": "2026-08-29T13:52:58.731Z",
+      "state": "Needs Decision",
+      "intentBrief": {
+        "intent": "NO-OP validation: do not change product code. Confirm Advanced routing only.",
+        "desiredOutcome": "Implementation replies READY and stops. Review replies PASS. Touch no source files.",
+        "acceptanceCriteria": [
+          "Implementation message acknowledges no-op and makes zero code changes.",
+          "Review message concludes PASS with no required repairs."
+        ],
+        "constraints": [
+          "Do not modify any tracked source files.",
+          "Do not create commits.",
+          "Keep response under 5 sentences."
+        ],
+        "nonGoals": ["Features", "Refactors"],
+        "openDecisions": []
+      }
+    },
+    {
+      "id": "VAL-038-PF-SMOKE",
+      "title": "Validation 0.0.38 preflight negative (invalid provider)",
+      "priority": 9,
+      "area": "Validation",
+      "slice": "orchestrator-v0.0.38-live",
+      "taskRecordPath": "docs/agents/tasks/TEMPLATE.md",
+      "dependencies": [],
+      "parallelism": {
+        "safe": "true",
+        "reason": "validation",
+        "conflictsWith": [],
+        "allowedWriteScopes": ["docs/agents/tasks/TEMPLATE.md"]
+      },
+      "runtime": {
+        "workspacePath": ".t3/workspaces/VAL-038-PF-SMOKE",
+        "attemptCount": 1,
+        "lastHeartbeatAt": "2026-08-29T13:55:28.744Z",
+        "currentError": "Implementation model unavailable on kyle-house: no-such-provider-instance / gpt-does-not-exist-xyz is not configured on this environment."
+      },
+      "createdAt": "2026-08-29T13:55:28.419Z",
+      "updatedAt": "2026-08-29T13:55:28.744Z",
+      "state": "Blocked",
+      "intentBrief": {
+        "intent": "Should be blocked by preflight before any work.",
+        "desiredOutcome": "Card never starts a provider turn.",
+        "acceptanceCriteria": ["Preflight blocks"],
+        "constraints": [],
+        "nonGoals": [],
+        "openDecisions": []
+      }
     }
   ],
   "graphLinks": [],
   "createdAt": "2026-05-05T00:00:00.000Z",
-  "updatedAt": "2026-08-28T22:17:25.760Z"
+  "updatedAt": "2026-08-31T20:03:26.743Z"
 }

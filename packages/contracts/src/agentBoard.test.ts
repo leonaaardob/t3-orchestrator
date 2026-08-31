@@ -165,6 +165,70 @@ describe("AgentBoardFile", () => {
     const roundTripped = decodeAgentBoardFileJsonString(encoded);
     expect(roundTripped.runner.workerModelSelection).toEqual(decoded.runner.workerModelSelection);
   });
+
+  it("defaults runtime.proofNotes to an empty array for older boards", () => {
+    const decoded = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+      cards: [
+        {
+          id: "TASK-proof-notes",
+          title: "Proof notes card",
+          state: "Backlog",
+          createdAt: "2026-05-05T12:00:00.000Z",
+          updatedAt: "2026-05-05T12:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(decoded.cards[0]?.runtime.proofNotes).toEqual([]);
+  });
+
+  it("defaults workflowMode to standard and accepts Fast Mode approval fields", () => {
+    const legacy = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+      cards: [
+        {
+          id: "TASK-fast-default",
+          title: "Legacy card",
+          state: "Backlog",
+          createdAt: "2026-05-05T12:00:00.000Z",
+          updatedAt: "2026-05-05T12:00:00.000Z",
+        },
+      ],
+    });
+    expect(legacy.cards[0]?.workflowMode).toBe("standard");
+    expect(legacy.cards[0]?.fastModeApproval).toBeUndefined();
+    expect(legacy.cards[0]?.reviewBypass).toBeUndefined();
+
+    const fast = decodeAgentBoardFile({
+      projectRoot: "/tmp/example-project",
+      createdAt: "2026-05-05T12:00:00.000Z",
+      updatedAt: "2026-05-05T12:00:00.000Z",
+      cards: [
+        {
+          id: "TASK-fast-approved",
+          title: "Fast card",
+          state: "Ready",
+          workflowMode: "fast",
+          fastModeApproval: {
+            requestedAt: "2026-05-05T12:00:00.000Z",
+            approvedAt: "2026-05-05T12:05:00.000Z",
+            approvedBy: "human",
+            bypassedStages: [],
+          },
+          intentBrief: { intent: "Ship without review after approval." },
+          createdAt: "2026-05-05T12:00:00.000Z",
+          updatedAt: "2026-05-05T12:00:00.000Z",
+        },
+      ],
+    });
+    expect(fast.cards[0]?.workflowMode).toBe("fast");
+    expect(fast.cards[0]?.fastModeApproval?.approvedBy).toBe("human");
+  });
 });
 
 describe("AgentBoardRunInput / AgentBoardRunResult", () => {
@@ -198,12 +262,13 @@ describe("AgentBoardRunInput / AgentBoardRunResult", () => {
         updatedAt: "2026-05-05T12:00:01.000Z",
       },
       threadId: "thr_01J00000000000000000000000",
-      workspacePath: "/tmp/example-project/.t3/workspaces/TASK-20260824-runner-card",
+      workspacePath:
+        "/home/me/.t3/userdata/orchestration/prj_runner_test/workspaces/TASK-20260824-runner-card",
     });
 
     expect(decoded.threadId).toBe("thr_01J00000000000000000000000");
     expect(decoded.card.state).toBe("Running");
-    expect(decoded.workspacePath.endsWith(".t3/workspaces/TASK-20260824-runner-card")).toBe(true);
+    expect(decoded.workspacePath.includes("/orchestration/")).toBe(true);
   });
 
   it("allows a run result without a thread id when the launch was blocked", () => {
@@ -221,7 +286,8 @@ describe("AgentBoardRunInput / AgentBoardRunResult", () => {
         createdAt: "2026-05-05T12:00:00.000Z",
         updatedAt: "2026-05-05T12:00:01.000Z",
       },
-      workspacePath: "/tmp/example-project/.t3/workspaces/TASK-20260824-blocked-card",
+      workspacePath:
+        "/home/me/.t3/userdata/orchestration/prj_blocked/workspaces/TASK-20260824-blocked-card",
     });
 
     expect(decoded.threadId).toBeUndefined();

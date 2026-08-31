@@ -1,5 +1,6 @@
-import { Clock, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
+import { Clock, Duration, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { describe, expect, it } from "@effect/vitest";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   type AgentBoardCard,
   type AgentBoardFile,
@@ -7,6 +8,7 @@ import {
   type AgentBoardRunInput,
   type AgentBoardRunResult,
   type OrchestrationCommand,
+  FAST_MODE_APPROVAL_QUESTION,
   ProjectId,
   ProviderInstanceId,
   RuntimeSessionId,
@@ -23,6 +25,9 @@ import { AgentBoardRunner, AgentBoardRunnerError } from "../Services/AgentBoardR
 import { AgentBoardScheduler } from "../Services/AgentBoardScheduler.ts";
 import { makeAgentBoardSchedulerLive } from "./AgentBoardScheduler.ts";
 import * as WorkspacePathsModule from "../../workspace/WorkspacePaths.ts";
+import * as ServerConfig from "../../config.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
@@ -104,18 +109,50 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const cwd = yield* fileSystem.makeTempDirectory({ prefix: "t3code-board-scheduler-" });
-  yield* Effect.addFinalizer(() => fileSystem.remove(cwd, { recursive: true }).pipe(Effect.ignore));
-
-  // Real board persistence over the temp directory; resolved outside the
-  // scheduler environment so the fake runner can drive it directly.
-  const boardFiles = yield* AgentBoardFileSystem.pipe(
-    Effect.provide(
-      AgentBoardFileSystemLive.pipe(
-        Layer.provide(WorkspacePathsModule.layer),
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
+  const baseDir = yield* fileSystem.makeTempDirectory({ prefix: "t3code-board-scheduler-home-" });
+  yield* Effect.addFinalizer(() =>
+    Effect.all(
+      [
+        fileSystem.remove(cwd, { recursive: true }).pipe(Effect.ignore),
+        fileSystem.remove(baseDir, { recursive: true }).pipe(Effect.ignore),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.asVoid),
   );
+
+  const pathSvc = yield* Path.Path;
+  const dbPath = pathSvc.join(baseDir, "userdata", "state.sqlite");
+  yield* fileSystem.makeDirectory(pathSvc.dirname(dbPath), { recursive: true });
+  const sqlite = NodeSqliteClient.layer({ filename: dbPath });
+  const serverConfigLayer = ServerConfig.layerTest(cwd, baseDir);
+
+  // Real board persistence in server SQLite. File-backed DB: migrate once,
+  // then each board op opens a fresh connection via Layer.fresh.
+  const makeBoardLayer = () =>
+    AgentBoardFileSystemLive.pipe(
+      Layer.provide(WorkspacePathsModule.layer),
+      Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(Layer.fresh(sqlite)),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+  yield* runMigrations().pipe(
+    Effect.provide(Layer.mergeAll(Layer.fresh(sqlite), NodeServices.layer)),
+  );
+
+  const withBoard = <A, E>(
+    body: (service: AgentBoardFileSystem["Service"]) => Effect.Effect<A, E>,
+  ) =>
+    Effect.gen(function* () {
+      const service = yield* AgentBoardFileSystem;
+      return yield* body(service);
+    }).pipe(Effect.provide(makeBoardLayer()));
+
+  const boardFiles: AgentBoardFileSystem["Service"] = {
+    load: (input) => withBoard((service) => service.load(input)),
+    save: (input) => withBoard((service) => service.save(input)),
+    claim: (input) => withBoard((service) => service.claim(input)),
+  };
 
   const fakeThreads = new Map<string, FakeThreadEntry>();
   const dispatched: Array<OrchestrationCommand> = [];
@@ -387,11 +424,15 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
     Layer.provideMerge(NodeServices.layer),
   );
 
-  const scheduler = yield* AgentBoardScheduler.pipe(Effect.provide(schedulerEnvironment));
-
   return {
     cwd,
-    start: () => scheduler.start().pipe(Effect.provide(schedulerEnvironment)),
+    baseDir,
+    boardFiles,
+    start: () =>
+      Effect.gen(function* () {
+        const scheduler = yield* AgentBoardScheduler;
+        return yield* scheduler.start();
+      }).pipe(Effect.provide(schedulerEnvironment)),
     seedBoard: (cards: ReadonlyArray<AgentBoardCard>) =>
       boardFiles
         .save({
@@ -1055,23 +1096,89 @@ describe("AgentBoardSchedulerLive", () => {
   it.live("survives an unreadable board and resumes once it decodes again", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
-      const fileSystem = yield* FileSystem.FileSystem;
-      // Corrupt JSON: decode failures are logged per tick but must never kill
-      // the always-on loop or launch anything.
-      yield* fileSystem.makeDirectory(`${harness.cwd}/.t3`, { recursive: true });
-      yield* fileSystem.writeFileString(
-        `${harness.cwd}/.t3/agent-board.json`,
-        "{ this is not a board",
-      );
-      yield* harness.start();
+      const pathSvc = yield* Path.Path;
+      yield* harness.seedBoard([]);
 
+      // Corrupt board_json in the server-owned SQLite row.
+      const dbPath = pathSvc.join(harness.baseDir, "userdata", "state.sqlite");
+      const corruptLayer = NodeSqliteClient.layer({ filename: dbPath });
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE agent_boards SET board_json = ${"{not-json"}`;
+      }).pipe(Effect.provide(corruptLayer), Effect.provide(NodeServices.layer));
+
+      yield* harness.start();
       yield* pause(120);
       expect(harness.runCalls().length).toBe(0);
       expect(harness.dispatchedCommands()).toEqual([]);
 
-      // Once the board becomes readable again, claiming resumes normally.
+      // Restore a valid Ready board; claiming must resume.
       yield* harness.seedBoard([makeCard({ id: "c1" })]);
       yield* waitFor(() => Effect.sync(() => harness.runCalls().length === 1));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("parks Fast Mode Ready cards without approval instead of launching", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.seedBoard([
+        makeCard({
+          id: "fast-pending",
+          workflowMode: "fast",
+          fastModeApproval: {
+            requestedAt: T0,
+            bypassedStages: [],
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Needs Decision")),
+      );
+      expect(harness.runCalls().length).toBe(0);
+      const card = (yield* harness.readBoard()).cards[0];
+      expect(card?.runtime.currentDecisionQuestion).toBe(FAST_MODE_APPROVAL_QUESTION);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("approved Fast Mode skips Reviewing and records review bypass", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      harness.threads.set("t1", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
+      yield* harness.seedBoard([
+        makeCard({
+          id: "fast-ok",
+          state: "Running",
+          workflowMode: "fast",
+          fastModeApproval: {
+            requestedAt: T0,
+            approvedAt: T0,
+            approvedBy: "human",
+            bypassedStages: [],
+          },
+          runtime: {
+            attemptCount: 1,
+            implementationRunId: RuntimeSessionId.make("t1"),
+            lastHeartbeatAt: T0,
+            workspacePath: ".t3/workspaces/fast-ok",
+          },
+        }),
+      ]);
+      yield* harness.start();
+      yield* waitFor(() =>
+        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Review")),
+      );
+      const card = (yield* harness.readBoard()).cards[0];
+      expect(card?.reviewBypass?.reason).toContain("Fast Mode");
+      expect(card?.fastModeApproval?.bypassedStages).toContain("Reviewing");
+      expect(harness.dispatchedCommands().some((command) => command.type === "thread.create")).toBe(
+        false,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

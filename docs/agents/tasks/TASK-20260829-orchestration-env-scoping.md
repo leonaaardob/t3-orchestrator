@@ -1,67 +1,81 @@
-# TASK-20260829-orchestration-env-scoping
+# ORCH-039-orchestration-env-scoping
 
-Status: `Tested`
+Status: `ready`
 Agent eligible: yes
+Area: `Backend`
+Slice group: `Orchestration environment scoping`
 Slice: `docs/agents/slices/authoritative-agent-board.md`
 
 ## Owner Intent
 
-Make Settings → Orchestration environment-aware. Presets stay environment-agnostic
-in schema. Provider/model choices are scoped to the selected environment. No
-silent fallback. Add execution preflight against the project environment's
-provider catalog before board work proceeds.
+Scope Orchestration settings and execution preflight to the selected/owning environment without changing preset schema.
 
 ## Target Status
 
-`Tested`
-
-## Design Decisions (locked)
-
-- Project = execution boundary. No cross-environment execution.
-- Do not add `environmentId` to `ModelSelection` or `AgentExecutionPresets`.
-- Reuse existing `EnvironmentId` / connection registry / `providersValueAtom`.
-- Prefer Provider Settings environment abstractions.
-- No silent provider/model fallback. Stale presets warn and stay editable.
-- Offline: show cached settings when available; otherwise explicit unavailable.
-- Project UI: informational `Runs on <label>` only — no environment dropdown.
-- Preflight validates resolved selection against the owning environment catalog
-  before worktree/thread/provider turn.
+Settings → Orchestration reads and writes per environment; invalid presets block before provider turn with no silent fallback.
 
 ## Scope Guard
 
-Do not implement cross-environment orchestration. Do not modify Remote Link,
-SSH, pairing, connection catalog, or runtime distribution. Do not change board
-execution semantics beyond preflight validation. Do not publish.
+- No environmentId on ModelSelection/AgentExecutionPresets.
+- No cross-environment execution.
+- Do not publish.
 
 ## Acceptance Criteria
 
-- Settings → Orchestration has an environment selector; read/write target the
-  selected environment's settings/providers.
-- Same `instanceId` on two environments does not bleed catalogs.
-- Stale provider/model shows warning without rewrite.
-- Offline known environments stay selectable with explicit offline/cached state.
-- Execution preflight blocks invalid selections before provider turn.
-- Focused tests cover switching, persistence, stale, offline, preflight,
-  Simple, and Advanced.
-- Preset schema unchanged; no migration; no npm/GitHub publication.
+- Environment selector routes settings and provider catalogs per environmentId.
+- Stale and offline states are explicit.
+- Execution preflight validates against the project environment catalog.
+- Preset schema unchanged; no migration; no publication.
+
+## Non Goals
+
+- Cross-environment orchestration.
+- Remote Link/SSH/catalog changes.
+
+## Open Decisions
+
+- None.
 
 ## Verification
 
-- Focused Orchestration settings / provider routing / preflight tests
-- Web build, desktop smoke, desktop build
-- Optional two-environment smoke (This Mac vs kyle-house)
-- Dry-run `0.0.36` with `publish_release=false` if clean
+- Run the smallest relevant focused checks.
+- Run broader repo checks when the implementation touches shared contracts or UI shell behavior.
 
 ## Parallelism Plan
 
 Safe: `false`
 
+Reason:
+
+Settings UI, shared resolver/preflight, and board runner must agree on environment-local preset validation.
+
 Allowed write scopes:
 
-- `packages/shared/src/agentBoardRunner.ts`
-- `packages/shared/src/agentBoardRunner.test.ts`
-- `apps/server/src/agentBoard/**`
-- `apps/web/src/components/settings/**`
-- `docs/agents/**`
-- `PATCH.md`
-- `.t3/agent-board.json`
+- packages/shared/src/agentBoardRunner.ts
+- packages/shared/src/agentBoardRunner.test.ts
+- apps/server/src/agentBoard/\*\*
+- apps/web/src/components/settings/\*\*
+- docs/agents/\*\*
+- PATCH.md
+- .t3/agent-board.json
+
+Conflicts with:
+
+- None listed.
+
+## Proof Of Done
+
+Fill before marking done.
+
+---
+
+### Scheduler 2026-08-29T12:41:43.655Z — ORCH-039-orchestration-env-scoping Running→
+
+Implementation completed (thread 14f55e8d-8c06-4cbc-9603-680552f78808); launching review thread 6c79a44a-0cfb-4466-80be-18bb200ad868.
+
+---
+
+### Scheduler 2026-08-29T12:44:59.276Z — ORCH-039-orchestration-env-scoping Reviewing→
+
+Review thread 6c79a44a-0cfb-4466-80be-18bb200ad868 → FAIL (cap exhausted 4)
+Reason: invalid repair preflight is silently treated as a successful dispatch instead of explicitly blocking the card

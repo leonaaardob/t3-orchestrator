@@ -1,5 +1,8 @@
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { createHash } from "node:crypto";
+
+import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import * as DateTime from "effect/DateTime";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   type AgentBoardCard,
   AgentBoardFile,
@@ -9,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
+import { ServerConfig } from "../../config.ts";
 import {
   AgentBoardFileSystem,
   AgentBoardFileSystemError,
@@ -16,9 +20,10 @@ import {
 } from "../Services/AgentBoardFileSystem.ts";
 import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
 
-const BOARD_RELATIVE_PATH = ".t3/agent-board.json" as const;
+const LEGACY_BOARD_RELATIVE_PATH = ".t3/agent-board.json" as const;
+const BOARD_STORAGE_REF = "t3://orchestration/agent-board" as const;
 
-/** Board JSON with stable 2-space formatting so git diffs stay reviewable. */
+/** Board JSON with stable 2-space formatting. */
 const AgentBoardFileJsonString = fromJsonStringPretty(AgentBoardFile);
 
 const decodeAgentBoardFile = Schema.decodeUnknownEffect(AgentBoardFile);
@@ -26,9 +31,8 @@ const decodeAgentBoardFileJsonString = Schema.decodeUnknownEffect(AgentBoardFile
 const encodeAgentBoardFile = Schema.encodeEffect(AgentBoardFileJsonString);
 
 /**
- * Deterministic filesystem segment for a board card id (WORKFLOW.md workspace
- * key rule). Exported so the runner service derives identical card workspace
- * paths when upgrading them into real git worktrees.
+ * Deterministic filesystem segment for a board card id.
+ * Exported so the runner derives identical card workspace paths.
  */
 export function safeWorkspaceSegment(value: string): string {
   const segment = value
@@ -38,23 +42,84 @@ export function safeWorkspaceSegment(value: string): string {
   return segment || "card";
 }
 
+/**
+ * Interim project_id when no projection_projects row exists for the cwd yet.
+ * Stable across restarts for the same normalized project root.
+ */
+export function pathScopedProjectId(projectRoot: string): string {
+  const digest = createHash("sha256").update(projectRoot).digest("hex").slice(0, 24);
+  return `path:${digest}`;
+}
+
+/** Absolute card worktree under T3 userdata (outside the user repo). */
+export function resolveOrchestrationWorkspacePath(input: {
+  readonly stateDir: string;
+  readonly projectId: string;
+  readonly cardId: string;
+  readonly join: (...parts: ReadonlyArray<string>) => string;
+}): string {
+  return input.join(
+    input.stateDir,
+    "orchestration",
+    safeWorkspaceSegment(input.projectId),
+    "workspaces",
+    safeWorkspaceSegment(input.cardId),
+  );
+}
+
 export const makeAgentBoardFileSystem = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths;
+  const serverConfig = yield* ServerConfig;
+  const sql = yield* SqlClient.SqlClient;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  const resolveBoardPath = Effect.fn("AgentBoardFileSystem.resolveBoardPath")(function* (
+  const resolveProjectRoot = Effect.fn("AgentBoardFileSystem.resolveProjectRoot")(function* (
     cwd: string,
   ) {
-    const projectRoot = yield* workspacePaths.normalizeWorkspaceRoot(cwd);
-    const boardPath = yield* workspacePaths.resolveRelativePathWithinRoot({
-      workspaceRoot: projectRoot,
-      relativePath: BOARD_RELATIVE_PATH,
-    });
-    return { projectRoot, boardPath };
+    return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
+
+  /**
+   * Prefer the durable projection project_id when the cwd is a registered
+   * project. Fall back to a path-hash scoped id so boards can still be
+   * created/loaded before the project row exists (interim key; documented in
+   * PATCH.md / internals).
+   */
+  const resolveProjectId = Effect.fn("AgentBoardFileSystem.resolveProjectId")(function* (
+    projectRoot: string,
+  ) {
+    const rows = yield* sql<{ readonly projectId: string }>`
+      SELECT project_id AS "projectId"
+      FROM projection_projects
+      WHERE workspace_root = ${projectRoot}
+        AND deleted_at IS NULL
+      LIMIT 1
+    `.pipe(
+      // Missing projection row/table (fresh DB, unregistered cwd) → path-scoped id.
+      Effect.catch(() => Effect.succeed([] as Array<{ readonly projectId: string }>)),
+    );
+    return rows[0]?.projectId ?? pathScopedProjectId(projectRoot);
+  });
+
+  const resolveCardWorkspacePath = (projectId: string, cardId: string) =>
+    resolveOrchestrationWorkspacePath({
+      stateDir: serverConfig.stateDir,
+      projectId,
+      cardId,
+      join: path.join,
+    });
+
+  const resolveLegacyBoardPath = Effect.fn("AgentBoardFileSystem.resolveLegacyBoardPath")(
+    function* (projectRoot: string) {
+      return yield* workspacePaths.resolveRelativePathWithinRoot({
+        workspaceRoot: projectRoot,
+        relativePath: LEGACY_BOARD_RELATIVE_PATH,
+      });
+    },
+  );
 
   const makeDefaultBoard = Effect.map(
     nowIso,
@@ -73,38 +138,72 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
     }),
   );
 
-  const writeBoard = Effect.fn("AgentBoardFileSystem.writeBoard")(function* (
+  const readBoardRow = Effect.fn("AgentBoardFileSystem.readBoardRow")(function* (
     cwd: string,
-    absolutePath: string,
-    board: AgentBoardFile,
+    projectId: string,
   ) {
-    yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true }).pipe(
+    const rows = yield* sql<{ readonly boardJson: string }>`
+      SELECT board_json AS "boardJson"
+      FROM agent_boards
+      WHERE project_id = ${projectId}
+      LIMIT 1
+    `.pipe(
       Effect.mapError(
         (cause) =>
           new AgentBoardFileSystemError({
             cwd,
-            operation: "agentBoard.makeDirectory",
+            operation: "agentBoard.read",
             detail: cause.message,
             cause,
           }),
       ),
     );
-    const contents = yield* encodeAgentBoardFile(board).pipe(
+    return rows[0]?.boardJson !== undefined ? Option.some(rows[0].boardJson) : Option.none();
+  });
+
+  const writeBoardRow = Effect.fn("AgentBoardFileSystem.writeBoardRow")(function* (input: {
+    readonly cwd: string;
+    readonly projectId: string;
+    readonly projectRoot: string;
+    readonly board: AgentBoardFile;
+  }) {
+    const contents = yield* encodeAgentBoardFile(input.board).pipe(
       Effect.mapError(
         (cause) =>
           new AgentBoardFileSystemError({
-            cwd,
+            cwd: input.cwd,
             operation: "agentBoard.encode",
             detail: String(cause),
             cause,
           }),
       ),
     );
-    yield* fileSystem.writeFileString(absolutePath, `${contents}\n`).pipe(
+    const timestamp = input.board.updatedAt;
+    yield* sql`
+      INSERT INTO agent_boards (
+        project_id,
+        project_root,
+        board_json,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${input.projectId},
+        ${input.projectRoot},
+        ${contents},
+        ${input.board.createdAt},
+        ${timestamp}
+      )
+      ON CONFLICT (project_id)
+      DO UPDATE SET
+        project_root = excluded.project_root,
+        board_json = excluded.board_json,
+        updated_at = excluded.updated_at
+    `.pipe(
       Effect.mapError(
         (cause) =>
           new AgentBoardFileSystemError({
-            cwd,
+            cwd: input.cwd,
             operation: "agentBoard.write",
             detail: cause.message,
             cause,
@@ -113,54 +212,106 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
     );
   });
 
+  const tryDecodeLegacyFile = Effect.fn("AgentBoardFileSystem.tryDecodeLegacyFile")(function* (
+    cwd: string,
+    absolutePath: string,
+  ) {
+    const readOutcome = yield* fileSystem.readFileString(absolutePath).pipe(
+      Effect.map((contents) => ({ _tag: "contents" as const, contents })),
+      Effect.catch((error) => Effect.succeed({ _tag: "error" as const, error })),
+    );
+    if (readOutcome._tag === "error") {
+      return { _tag: "missing" as const } as const;
+    }
+    const board = yield* decodeAgentBoardFileJsonString(readOutcome.contents).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd,
+            operation: "agentBoard.decode",
+            detail: String(cause),
+            cause,
+          }),
+      ),
+    );
+    return { _tag: "board" as const, board } as const;
+  });
+
   const load: AgentBoardFileSystemShape["load"] = (input) =>
     Effect.gen(function* () {
-      const { projectRoot, boardPath } = yield* resolveBoardPath(input.cwd);
-      const readOutcome = yield* fileSystem.readFileString(boardPath.absolutePath).pipe(
-        Effect.map((contents) => ({ _tag: "contents" as const, contents })),
-        Effect.catch((error) => Effect.succeed({ _tag: "error" as const, error })),
-      );
+      const projectRoot = yield* resolveProjectRoot(input.cwd);
+      const projectId = yield* resolveProjectId(projectRoot);
 
-      if (readOutcome._tag === "error") {
-        if (!input.createIfMissing) {
-          return yield* new AgentBoardFileSystemError({
-            cwd: input.cwd,
-            operation: "agentBoard.read",
-            detail: readOutcome.error.message,
-            cause: readOutcome.error,
-          });
-        }
-        const defaultBoard = Object.assign(yield* makeDefaultBoard, { projectRoot });
-        yield* writeBoard(input.cwd, boardPath.absolutePath, defaultBoard);
+      const stored = yield* readBoardRow(input.cwd, projectId);
+      if (Option.isSome(stored)) {
+        const board = yield* decodeAgentBoardFileJsonString(stored.value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentBoardFileSystemError({
+                cwd: input.cwd,
+                operation: "agentBoard.decode",
+                detail: String(cause),
+                cause,
+              }),
+          ),
+        );
         return {
-          board: defaultBoard,
-          relativePath: BOARD_RELATIVE_PATH,
-          created: true,
+          board,
+          relativePath: BOARD_STORAGE_REF,
+          created: false,
         } satisfies AgentBoardLoadResult;
       }
 
-      const board = yield* decodeAgentBoardFileJsonString(readOutcome.contents).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AgentBoardFileSystemError({
-              cwd: input.cwd,
-              operation: "agentBoard.decode",
-              detail: String(cause),
-              cause,
-            }),
-        ),
-      );
+      // One-shot legacy import from <project>/.t3/agent-board.json — SQLite
+      // becomes source of truth afterwards (no permanent dual-write).
+      const legacyPath = yield* resolveLegacyBoardPath(projectRoot);
+      const legacyRead = yield* tryDecodeLegacyFile(input.cwd, legacyPath.absolutePath);
+      if (legacyRead._tag === "board") {
+        const imported = { ...legacyRead.board, projectRoot };
+        yield* writeBoardRow({
+          cwd: input.cwd,
+          projectId,
+          projectRoot,
+          board: imported,
+        });
+        yield* Effect.logInfo("agentBoard.legacy-imported", {
+          projectId,
+          projectRoot,
+          legacyPath: legacyPath.absolutePath,
+        });
+        return {
+          board: imported,
+          relativePath: BOARD_STORAGE_REF,
+          created: false,
+        } satisfies AgentBoardLoadResult;
+      }
 
+      if (!input.createIfMissing) {
+        return yield* new AgentBoardFileSystemError({
+          cwd: input.cwd,
+          operation: "agentBoard.read",
+          detail: `No agent board for project ${projectId}`,
+        });
+      }
+
+      const defaultBoard = Object.assign(yield* makeDefaultBoard, { projectRoot });
+      yield* writeBoardRow({
+        cwd: input.cwd,
+        projectId,
+        projectRoot,
+        board: defaultBoard,
+      });
       return {
-        board,
-        relativePath: BOARD_RELATIVE_PATH,
-        created: false,
+        board: defaultBoard,
+        relativePath: BOARD_STORAGE_REF,
+        created: true,
       } satisfies AgentBoardLoadResult;
     });
 
   const save: AgentBoardFileSystemShape["save"] = (input) =>
     Effect.gen(function* () {
-      const { projectRoot, boardPath } = yield* resolveBoardPath(input.cwd);
+      const projectRoot = yield* resolveProjectRoot(input.cwd);
+      const projectId = yield* resolveProjectId(projectRoot);
       const board = yield* decodeAgentBoardFile({
         ...input.board,
         projectRoot,
@@ -176,17 +327,23 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         ),
       );
 
-      yield* writeBoard(input.cwd, boardPath.absolutePath, board);
+      yield* writeBoardRow({
+        cwd: input.cwd,
+        projectId,
+        projectRoot,
+        board,
+      });
 
       return {
         board,
-        relativePath: BOARD_RELATIVE_PATH,
+        relativePath: BOARD_STORAGE_REF,
       } satisfies AgentBoardSaveResult;
     });
 
   const claim: AgentBoardFileSystemShape["claim"] = (input) =>
     Effect.gen(function* () {
-      const { projectRoot } = yield* resolveBoardPath(input.cwd);
+      const projectRoot = yield* resolveProjectRoot(input.cwd);
+      const projectId = yield* resolveProjectId(projectRoot);
       const loaded = yield* load({ cwd: input.cwd, createIfMissing: false });
       const card = loaded.board.cards.find((candidate) => candidate.id === input.cardId);
 
@@ -206,12 +363,8 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         });
       }
 
-      const workspacePath = `.t3/workspaces/${safeWorkspaceSegment(card.id)}`;
-      const resolvedWorkspacePath = yield* workspacePaths.resolveRelativePathWithinRoot({
-        workspaceRoot: projectRoot,
-        relativePath: workspacePath,
-      });
-      yield* fileSystem.makeDirectory(resolvedWorkspacePath.absolutePath, { recursive: true }).pipe(
+      const workspacePath = resolveCardWorkspacePath(projectId, card.id);
+      yield* fileSystem.makeDirectory(workspacePath, { recursive: true }).pipe(
         Effect.mapError(
           (cause) =>
             new AgentBoardFileSystemError({

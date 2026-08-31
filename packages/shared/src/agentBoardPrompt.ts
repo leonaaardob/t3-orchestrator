@@ -1,5 +1,35 @@
 import type { AgentBoardCard } from "@t3tools/contracts";
 
+/**
+ * Product-owned worker constraints. Card packets carry the work; repository
+ * instruction files cannot redefine T3 orchestration for workers.
+ */
+export const WORKER_ORCHESTRATION_CONSTRAINTS = `T3 WORKER CONSTRAINTS
+
+You are a fresh implementation worker for one T3 orchestration card.
+- Implement only this card. Do not act as Project Supervisor.
+- The card packet below is the orchestration source of truth for this turn.
+- Repository files such as AGENTS.md, WORKFLOW.md, CLAUDE.md, or .t3/agent-board.json
+  are not the orchestration control plane. They may inform coding style or product
+  context only when they do not conflict with this packet.
+- Do not create synthetic orchestration docs in the user repo to "satisfy" workflow.
+- Stay inside allowed write scopes when listed.
+- Ask only for true intent or product decisions (NEEDS_DECISION when blocked on intent).
+- Self-diagnose and self-test before handing back.
+- Record proof as concise notes in your final report; T3 stores proof on the card.
+  Do not treat a task Markdown file as required proof storage.`.trim();
+
+/**
+ * Product-owned reviewer constraints. Fresh review, independent of the worker turn.
+ */
+export const REVIEWER_ORCHESTRATION_CONSTRAINTS = `T3 REVIEWER CONSTRAINTS
+
+You are a fresh review agent with no prior implementation context.
+- Evaluate only the card packet, acceptance criteria, workspace diff, and proof notes.
+- Repository WORKFLOW.md / .t3/agent-board.json are not orchestration authority.
+- Do NOT reimplement; only evaluate and report gaps.
+- An agent REVIEW: PASS is not human Done.`.trim();
+
 function listBlock(label: string, values: ReadonlyArray<string> | undefined): string {
   if (!values || values.length === 0) {
     return `${label}: none`;
@@ -7,29 +37,39 @@ function listBlock(label: string, values: ReadonlyArray<string> | undefined): st
   return `${label}:\n${values.map((value) => `- ${value}`).join("\n")}`;
 }
 
-export function buildAgentBoardImplementationPrompt(card: AgentBoardCard): string {
-  const brief = card.intentBrief;
-  const references = [
-    "WORKFLOW.md",
-    "PROJECT.md",
-    "CONTEXT.md",
-    ".t3/agent-board.json",
-    card.slicePlanPath,
-    card.taskRecordPath,
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+function optionalProjectContext(card: AgentBoardCard): ReadonlyArray<string> {
+  const lines: Array<string> = [];
+  if (card.slicePlanPath) {
+    lines.push(
+      `- Optional slice plan (project context, not orchestration SoT): ${card.slicePlanPath}`,
+    );
+  }
+  if (card.taskRecordPath) {
+    lines.push(
+      `- Optional task notes path (project context, not required proof store): ${card.taskRecordPath}`,
+    );
+  }
+  if (lines.length === 0) {
+    return ["Optional project context docs: none"];
+  }
+  return ["Optional project context docs:", ...lines];
+}
 
+function cardPacket(card: AgentBoardCard): ReadonlyArray<string> {
+  const brief = card.intentBrief;
   return [
-    "PLEASE IMPLEMENT THIS AGENT BOARD CARD.",
-    "",
-    "You are a fresh implementation agent. Treat the project-local board and task docs as the source of truth, then execute the card end to end.",
-    "",
     `Card: ${card.id}`,
     `Title: ${card.title}`,
     `Board state: ${card.state}`,
-    `Workspace metadata path: ${card.runtime.workspacePath ?? "none"}`,
-    "",
-    "Read these references first:",
-    ...references.map((reference) => `- ${reference}`),
+    `Priority: ${card.priority}`,
+    `Area: ${card.area ?? "none"}`,
+    `Slice: ${card.slice ?? "none"}`,
+    `Dependencies: ${card.dependencies.length > 0 ? card.dependencies.join(", ") : "none"}`,
+    `Attempt count: ${card.runtime.attemptCount}`,
+    `Workspace path: ${card.runtime.workspacePath ?? "none"}`,
+    `Branch: ${card.runtime.branchName ?? `board/${card.id}`}`,
+    listBlock("Allowed write scopes", card.parallelism.allowedWriteScopes),
+    listBlock("Conflicts with cards", card.parallelism.conflictsWith),
     "",
     `Intent: ${brief?.intent ?? card.title}`,
     `Desired outcome: ${brief?.desiredOutcome ?? "Not specified"}`,
@@ -37,12 +77,20 @@ export function buildAgentBoardImplementationPrompt(card: AgentBoardCard): strin
     listBlock("Constraints", brief?.constraints),
     listBlock("Non-goals", brief?.nonGoals),
     listBlock("Open decisions", brief?.openDecisions),
+    listBlock("Existing proof notes (T3-owned)", card.runtime.proofNotes),
+  ];
+}
+
+export function buildAgentBoardImplementationPrompt(card: AgentBoardCard): string {
+  return [
+    "PLEASE IMPLEMENT THIS T3 ORCHESTRATION CARD.",
     "",
-    "Execution rules:",
-    "- Ask only for true intent or product decisions.",
-    "- Self-diagnose and self-test before handing back.",
-    "- Keep work inside the active project unless the task docs explicitly say otherwise.",
-    "- Update proof in the relevant task record when implementation is complete.",
+    WORKER_ORCHESTRATION_CONSTRAINTS,
+    "",
+    "Card packet:",
+    ...cardPacket(card),
+    "",
+    ...optionalProjectContext(card),
   ].join("\n");
 }
 
@@ -51,39 +99,19 @@ export function buildAgentBoardImplementationThreadTitle(card: AgentBoardCard): 
 }
 
 export function buildAgentBoardReviewPrompt(card: AgentBoardCard): string {
-  const brief = card.intentBrief;
-  const references = [
-    "WORKFLOW.md",
-    "PROJECT.md",
-    "CONTEXT.md",
-    ".t3/agent-board.json",
-    card.slicePlanPath,
-    card.taskRecordPath,
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
-
   return [
-    "PLEASE REVIEW THIS AGENT BOARD CARD.",
+    "PLEASE REVIEW THIS T3 ORCHESTRATION CARD.",
     "",
-    "You are a fresh review agent with no prior implementation context. Evaluate only the persisted task record, acceptance criteria, and workspace diff.",
+    REVIEWER_ORCHESTRATION_CONSTRAINTS,
     "",
-    `Card: ${card.id}`,
-    `Title: ${card.title}`,
-    `Workspace: ${card.runtime.workspacePath ?? "none"}`,
-    `Branch: ${card.runtime.branchName ?? `board/${card.id}`}`,
+    "Card packet:",
+    ...cardPacket(card),
     "",
-    "Read these references first:",
-    ...references.map((reference) => `- ${reference}`),
-    "",
-    `Intent: ${brief?.intent ?? card.title}`,
-    `Desired outcome: ${brief?.desiredOutcome ?? "Not specified"}`,
-    listBlock("Acceptance criteria", brief?.acceptanceCriteria),
-    listBlock("Constraints", brief?.constraints),
-    listBlock("Non-goals", brief?.nonGoals),
+    ...optionalProjectContext(card),
     "",
     "Review instructions:",
-    "- Verify each acceptance criterion against the workspace diff and task record proof.",
-    "- Run or check tests/lint/typecheck evidence when the task requires it.",
-    "- Do NOT reimplement; only evaluate and report gaps.",
+    "- Verify each acceptance criterion against the workspace diff and proof notes.",
+    "- Run or check tests/lint/typecheck evidence when the card requires it.",
     "",
     "Output protocol (required, last lines of your final message):",
     "- On success: a line exactly `REVIEW: PASS` and a brief proof summary.",
@@ -124,8 +152,15 @@ export function parseAgentBoardReviewResult(text: string): AgentBoardReviewResul
 
 export function buildAgentBoardRepairPrompt(card: AgentBoardCard, reviewReason: string): string {
   return [
-    `Continue agent board card "${card.id}" (${card.title}) — repair after review.`,
+    `Continue T3 orchestration card "${card.id}" (${card.title}) — repair after review.`,
+    "",
+    WORKER_ORCHESTRATION_CONSTRAINTS,
+    "",
     `Review findings: ${reviewReason.slice(0, 2000)}`,
-    "Fix the reported gaps in the existing worktree, self-verify (tests/lint/typecheck) and update the task record proof. Do not start over.",
+    "",
+    "Card packet:",
+    ...cardPacket(card),
+    "",
+    "Fix the reported gaps in the existing worktree, self-verify (tests/lint/typecheck), and leave proof in your final report for T3 card storage. Do not start over.",
   ].join("\n");
 }

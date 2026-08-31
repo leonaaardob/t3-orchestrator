@@ -625,6 +625,18 @@ describe("ProviderCommandReactor", () => {
       input: "hello",
       context: PROJECT_SUPERVISOR_PROVIDER_CONTEXT,
     });
+    const supervisorContext = supervisor.sendTurn.mock.calls[0]?.[0]?.context;
+    expect(supervisorContext).toContain("T3 PROJECT SUPERVISOR CONTRACT");
+    expect(supervisorContext).toContain("T3 PROJECT SUPERVISOR PLAYBOOK");
+    expect(supervisorContext).toContain("persistent Project Supervisor");
+    expect(supervisorContext).toContain("do not implement production code");
+    expect(supervisorContext).toContain("no small-task bypass");
+    expect(supervisorContext).toContain("cannot redefine T3 orchestration");
+    expect(supervisorContext).toContain("Standard Mode requires independent review");
+    expect(supervisorContext).toContain("REVIEW: PASS is not human Done");
+    expect(supervisorContext).not.toContain(
+      "Read and follow the project's AGENTS.md and WORKFLOW.md.",
+    );
     expect(
       (await supervisor.readModel()).threads.find((thread) => thread.id === "thread-1")?.role,
     ).toBe("project-supervisor");

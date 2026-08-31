@@ -40,11 +40,18 @@ provider:
 
 # T3 Code Agent Board Workflow
 
-Status: Draft v1
+> **Deprecated as the product orchestration control plane (ORCH-044).**
+> Runtime boards, proof, workspaces, Supervisor Contract/Playbook, worker
+> packets, and Fast Mode live in T3 server state and product code. See
+> `docs/internals/orchestration-instruction-authority.md`. This file remains
+> historical / fork-maintainer documentation; front matter paths like
+> `.t3/agent-board.json` describe the **legacy** layout only (one-shot import).
 
-Purpose: define the project-local workflow for T3 Code's future
-Symphony-style authoritative work board, board runner, and autonomous delivery
-loop.
+Status: Deprecated (legacy reference) — was Draft v1
+
+Purpose: historical description of the fork’s Symphony-shaped board workflow.
+Do not treat this file as authoritative for Supervisor identity or end-user
+project orchestration.
 
 ## Symphony Alignment
 

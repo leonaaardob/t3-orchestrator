@@ -3,10 +3,8 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 
 import {
@@ -15,6 +13,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  FAST_MODE_APPROVAL_QUESTION,
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -61,6 +60,12 @@ const CARD_KEY_SEPARATOR = "\u001f";
  * the provider session reaper's default inactivity threshold.
  */
 const DEFAULT_STALE_HEARTBEAT_MS = 30 * 60 * 1000;
+
+const isFastModeApproved = (card: AgentBoardCard): boolean =>
+  card.workflowMode === "fast" && card.fastModeApproval?.approvedAt !== undefined;
+
+const requiresFastModeApproval = (card: AgentBoardCard): boolean =>
+  card.workflowMode === "fast" && card.fastModeApproval?.approvedAt === undefined;
 
 export interface AgentBoardSchedulerLiveOptions {
   readonly tickIntervalMs?: number;
@@ -134,36 +139,32 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-    const appendTaskRecord = Effect.fn("AgentBoardScheduler.appendTaskRecord")(function* (input: {
-      readonly cwd: string;
+    /**
+     * Queue scheduler proof onto the in-memory board via applyPatch.
+     * Persisted with the tick's board save — never writes repo Markdown.
+     */
+    const appendProofNotes = (input: {
+      readonly applyPatch: (
+        cardId: string,
+        mutate: (card: AgentBoardCard) => AgentBoardCard,
+      ) => void;
       readonly card: AgentBoardCard;
+      readonly timestamp: string;
       readonly lines: ReadonlyArray<string>;
-    }) {
-      const recordPath = input.card.taskRecordPath;
-      if (!recordPath) return;
-      const pathOption = yield* Effect.serviceOption(Path.Path);
-      const fsOption = yield* Effect.serviceOption(FileSystem.FileSystem);
-      if (Option.isNone(pathOption) || Option.isNone(fsOption)) return;
-      const path = pathOption.value;
-      const fs = fsOption.value;
-      const absolute = path.isAbsolute(recordPath) ? recordPath : path.join(input.cwd, recordPath);
-      const header = `\n\n---\n\n### Scheduler ${yield* nowIso} — ${input.card.id} ${input.card.state}→\n`;
-      const body = input.lines.join("\n");
-      const content = `${header}${body}\n`;
-      const existing = yield* fs
-        .readFileString(absolute)
-        .pipe(Effect.catch(() => Effect.succeed(null as string | null)));
-      if (existing === null) return;
-      yield* fs.writeFileString(absolute, `${existing}${content}`).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("agentBoard.scheduler.task-record-append-failed", {
-            cardId: input.card.id,
-            recordPath: absolute,
-            cause: String(cause),
-          }),
-        ),
+    }) => {
+      const body = input.lines.filter((line) => line.length > 0);
+      if (body.length === 0) return;
+      const note = [`### Scheduler ${input.timestamp} — ${input.card.id}`, ...body].join("\n");
+      input.applyPatch(input.card.id, (current) =>
+        Object.assign({}, current, {
+          runtime: {
+            ...current.runtime,
+            proofNotes: [...current.runtime.proofNotes, note].slice(-50),
+          },
+          updatedAt: input.timestamp,
+        }),
       );
-    });
+    };
 
     const collectReviewText = (detail: {
       readonly thread?: {
@@ -388,7 +389,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         }
         const worktreePath = projectScriptCwd({
           project: { cwd: input.cwd },
-          worktreePath: input.card.runtime.workspacePath ?? `.t3/workspaces/${input.card.id}`,
+          worktreePath: input.card.runtime.workspacePath ?? input.cwd,
         });
         const branchName = input.card.runtime.branchName ?? `board/${input.card.id}`;
         const reviewThreadId = ThreadId.make(yield* nextUuid);
@@ -693,6 +694,72 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           sessionStatus === "interrupted";
 
         if (latestTurn?.state === "completed") {
+          // Approved Fast Mode: skip Reviewing and land in Review with audit.
+          if (isFastModeApproved(card)) {
+            const timestamp = yield* nowIso;
+            yield* Effect.logInfo("agentBoard.scheduler.fast-mode-review-bypass", {
+              cwd,
+              cardId: card.id,
+              threadId: card.runtime.implementationRunId,
+            });
+            appendProofNotes({
+              applyPatch,
+              card,
+              timestamp,
+              lines: [
+                `Implementation completed (thread ${runId}); Fast Mode approved — skipping Reviewing.`,
+              ],
+            });
+            applyPatch(card.id, (current) => {
+              const {
+                currentError: _e,
+                currentDecisionQuestion: _q,
+                ...rest
+              } = current.runtime as Record<string, unknown>;
+              const approval = current.fastModeApproval;
+              return Object.assign({}, current, {
+                state: "Review" as const,
+                reviewBypass: {
+                  at: timestamp,
+                  reason: "Fast Mode approved — independent Reviewing skipped",
+                },
+                fastModeApproval: approval
+                  ? {
+                      ...approval,
+                      bypassedStages: Array.from(
+                        new Set([...(approval.bypassedStages ?? []), "Reviewing"]),
+                      ),
+                    }
+                  : approval,
+                runtime: {
+                  ...(rest as AgentBoardCard["runtime"]),
+                  implementationRunId: current.runtime.implementationRunId,
+                  lastHeartbeatAt: timestamp,
+                },
+                updatedAt: timestamp,
+              });
+            });
+            continue;
+          }
+
+          // Fast Mode requested without approval must never skip review — park.
+          if (requiresFastModeApproval(card)) {
+            const timestamp = yield* nowIso;
+            applyPatch(card.id, (current) =>
+              Object.assign({}, current, {
+                state: "Needs Decision" as const,
+                runtime: {
+                  ...current.runtime,
+                  lastHeartbeatAt: timestamp,
+                  currentError: FAST_MODE_APPROVAL_QUESTION,
+                  currentDecisionQuestion: FAST_MODE_APPROVAL_QUESTION,
+                },
+                updatedAt: timestamp,
+              }),
+            );
+            continue;
+          }
+
           const launch = yield* launchReviewThread({
             collaborators: input.collaborators,
             cwd,
@@ -706,13 +773,14 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
               cardId: card.id,
               threadId: card.runtime.implementationRunId,
             });
-            yield* appendTaskRecord({
-              cwd,
+            appendProofNotes({
+              applyPatch,
               card,
+              timestamp,
               lines: [
                 `Implementation completed (thread ${runId}); launching review thread ${launch.reviewThreadId}.`,
               ],
-            }).pipe(Effect.catch(() => Effect.void));
+            });
             applyPatch(card.id, (current) => {
               const {
                 currentError: _e,
@@ -912,14 +980,15 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             );
             const attempts = Math.max(1, card.runtime.attemptCount);
             if (attempts >= board.runner.repairCycles) {
-              yield* appendTaskRecord({
-                cwd,
+              appendProofNotes({
+                applyPatch,
                 card,
+                timestamp,
                 lines: [
                   `Review thread ${reviewRunId} completed without marker → Needs Decision (cap ${attempts}).`,
                   `Review output: ${reason}`,
                 ],
-              }).pipe(Effect.catch(() => Effect.void));
+              });
               applyPatch(card.id, (current) =>
                 Object.assign({}, current, {
                   state: "Needs Decision" as const,
@@ -936,14 +1005,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                 }),
               );
             } else {
-              yield* appendTaskRecord({
-                cwd,
+              const timestamp = yield* nowIso;
+              appendProofNotes({
+                applyPatch,
                 card,
+                timestamp,
                 lines: [
                   `Review thread ${reviewRunId} missing marker → Diagnosing`,
                   `Review output: ${reason}`,
                 ],
-              }).pipe(Effect.catch(() => Effect.void));
+              });
               const repairDispatched = yield* outcome(
                 dispatchRepairTurn({
                   collaborators: input.collaborators,
@@ -979,14 +1050,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             continue;
           }
           if (parsed._tag === "needsDecision") {
-            yield* appendTaskRecord({
-              cwd,
+            const timestamp = yield* nowIso;
+            appendProofNotes({
+              applyPatch,
               card,
+              timestamp,
               lines: [
                 `Review thread ${reviewRunId} → NEEDS_DECISION: ${parsed.question}`,
                 `Reason: ${parsed.reason}`,
               ],
-            }).pipe(Effect.catch(() => Effect.void));
+            });
             applyPatch(card.id, (current) =>
               Object.assign({}, current, {
                 state: "Needs Decision" as const,
@@ -1007,14 +1080,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
               cardId: card.id,
               reviewRunId,
             });
-            yield* appendTaskRecord({
-              cwd,
+            const timestamp = yield* nowIso;
+            appendProofNotes({
+              applyPatch,
               card,
+              timestamp,
               lines: [
                 `Review thread ${reviewRunId} → PASS`,
                 parsed.summary ? `Summary: ${parsed.summary}` : "",
               ],
-            }).pipe(Effect.catch(() => Effect.void));
+            });
             applyPatch(card.id, (current) => {
               const {
                 currentError: _e,
@@ -1032,14 +1107,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           if (parsed._tag === "fail") {
             const attempts = Math.max(1, card.runtime.attemptCount);
             if (attempts >= board.runner.repairCycles) {
-              yield* appendTaskRecord({
-                cwd,
+              const timestamp = yield* nowIso;
+              appendProofNotes({
+                applyPatch,
                 card,
+                timestamp,
                 lines: [
                   `Review thread ${reviewRunId} → FAIL (cap exhausted ${attempts})`,
                   `Reason: ${parsed.reason}`,
                 ],
-              }).pipe(Effect.catch(() => Effect.void));
+              });
               applyPatch(card.id, (current) =>
                 Object.assign({}, current, {
                   state: "Needs Decision" as const,
@@ -1056,14 +1133,16 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                 }),
               );
             } else {
-              yield* appendTaskRecord({
-                cwd,
+              const timestamp = yield* nowIso;
+              appendProofNotes({
+                applyPatch,
                 card,
+                timestamp,
                 lines: [
                   `Review thread ${reviewRunId} → FAIL: ${parsed.reason}`,
                   `Dispatching repair on ${card.runtime.implementationRunId}`,
                 ],
-              }).pipe(Effect.catch(() => Effect.void));
+              });
               const repairDispatched = yield* outcome(
                 dispatchRepairTurn({
                   collaborators: input.collaborators,
@@ -1280,13 +1359,14 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           });
           if (launch._tag === "ok") {
             const timestamp = yield* nowIso;
-            yield* appendTaskRecord({
-              cwd,
+            appendProofNotes({
+              applyPatch,
               card,
+              timestamp,
               lines: [
                 `Repair completed (thread ${implRunId}); re-launching review ${launch.reviewThreadId}.`,
               ],
-            }).pipe(Effect.catch(() => Effect.void));
+            });
             applyPatch(card.id, (current) =>
               Object.assign({}, current, {
                 state: "Reviewing" as const,
@@ -1473,6 +1553,33 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
       let launched = 0;
       for (const candidate of candidates) {
         if (launched >= capacity) break;
+
+        // Fast Mode without explicit approval must never launch a worker.
+        if (requiresFastModeApproval(candidate)) {
+          const timestamp = yield* nowIso;
+          applyPatch(candidate.id, (current) =>
+            Object.assign({}, current, {
+              state: "Needs Decision" as const,
+              runtime: {
+                ...current.runtime,
+                lastHeartbeatAt: timestamp,
+                currentError: FAST_MODE_APPROVAL_QUESTION,
+                currentDecisionQuestion: FAST_MODE_APPROVAL_QUESTION,
+              },
+              updatedAt: timestamp,
+              fastModeApproval: current.fastModeApproval ?? {
+                requestedAt: timestamp,
+                bypassedStages: [],
+              },
+            }),
+          );
+          yield* Effect.logInfo("agentBoard.scheduler.fast-mode-approval-required", {
+            cwd,
+            cardId: candidate.id,
+          });
+          continue;
+        }
+
         // A Ready card whose previous run's turn is still active (e.g. the
         // user re-queued it and the abort has yet to settle) must not get a
         // second concurrent turn on top of the old one.

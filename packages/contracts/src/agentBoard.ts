@@ -85,8 +85,43 @@ export const AgentBoardRuntime = Schema.Struct({
   lastHeartbeatAt: Schema.optionalKey(IsoDateTime),
   currentError: Schema.optionalKey(TrimmedNonEmptyString),
   currentDecisionQuestion: Schema.optionalKey(TrimmedNonEmptyString),
+  /** T3-owned scheduler/execution proof lines (not written into the user repo). */
+  proofNotes: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type AgentBoardRuntime = typeof AgentBoardRuntime.Type;
+
+/** Standard = independent review required; Fast = review skip only after explicit approval. */
+export const AgentBoardWorkflowMode = Schema.Literals(["standard", "fast"]);
+export type AgentBoardWorkflowMode = typeof AgentBoardWorkflowMode.Type;
+
+/** Explicit human Fast Mode approval evidence (never inferred from size/urgency). */
+export const AgentBoardFastModeApproval = Schema.Struct({
+  requestedAt: IsoDateTime,
+  approvedAt: Schema.optionalKey(IsoDateTime),
+  approvedBy: Schema.optionalKey(TrimmedNonEmptyString),
+  rejectedAt: Schema.optionalKey(IsoDateTime),
+  bypassedStages: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type AgentBoardFastModeApproval = typeof AgentBoardFastModeApproval.Type;
+
+/** Recorded when the scheduler skips Reviewing under approved Fast Mode. */
+export const AgentBoardReviewBypass = Schema.Struct({
+  at: IsoDateTime,
+  reason: TrimmedNonEmptyString,
+});
+export type AgentBoardReviewBypass = typeof AgentBoardReviewBypass.Type;
+
+/** Decision question the scheduler/UI use for Fast Mode approval. */
+export const FAST_MODE_APPROVAL_QUESTION =
+  "Approve Fast Mode for this card? Independent review will be skipped after implementation.";
+
+/** Stable storage ref for server-owned boards (not a path inside the user repo). */
+export const AgentBoardStorageRef = Schema.Literal("t3://orchestration/agent-board");
+export type AgentBoardStorageRef = typeof AgentBoardStorageRef.Type;
 
 export const AgentBoardGraphPosition = Schema.Struct({
   x: NonNegativeInt,
@@ -132,6 +167,11 @@ const AgentBoardCardBaseFields = {
       }),
     ),
   ),
+  workflowMode: AgentBoardWorkflowMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("standard" as const)),
+  ),
+  fastModeApproval: Schema.optionalKey(AgentBoardFastModeApproval),
+  reviewBypass: Schema.optionalKey(AgentBoardReviewBypass),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 } as const;
@@ -195,7 +235,7 @@ export type AgentBoardLoadInput = typeof AgentBoardLoadInput.Type;
 
 export const AgentBoardLoadResult = Schema.Struct({
   board: AgentBoardFile,
-  relativePath: Schema.Literal(".t3/agent-board.json"),
+  relativePath: AgentBoardStorageRef,
   created: Schema.Boolean,
 });
 export type AgentBoardLoadResult = typeof AgentBoardLoadResult.Type;
@@ -208,7 +248,7 @@ export type AgentBoardSaveInput = typeof AgentBoardSaveInput.Type;
 
 export const AgentBoardSaveResult = Schema.Struct({
   board: AgentBoardFile,
-  relativePath: Schema.Literal(".t3/agent-board.json"),
+  relativePath: AgentBoardStorageRef,
 });
 export type AgentBoardSaveResult = typeof AgentBoardSaveResult.Type;
 
@@ -221,7 +261,7 @@ export type AgentBoardClaimInput = typeof AgentBoardClaimInput.Type;
 export const AgentBoardClaimResult = Schema.Struct({
   board: AgentBoardFile,
   card: AgentBoardCard,
-  relativePath: Schema.Literal(".t3/agent-board.json"),
+  relativePath: AgentBoardStorageRef,
   workspacePath: TrimmedNonEmptyString,
 });
 export type AgentBoardClaimResult = typeof AgentBoardClaimResult.Type;

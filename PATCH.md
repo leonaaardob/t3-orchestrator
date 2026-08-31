@@ -47,11 +47,13 @@ upstream T3 Code changes.
 
 ## Source Of Truth Files
 
-These files define the planning workflow and should move together when the
-patch is installed elsewhere:
+These files define **fork maintainer** planning docs. Product orchestration
+authority is the T3 Supervisor Contract/Playbook + server-owned board storage
+(see `docs/internals/orchestration-instruction-authority.md`), not repo
+`.t3/agent-board.json`:
 
-- `AGENTS.md`
-- `WORKFLOW.md`
+- `AGENTS.md` (maintainer guidance; orchestration sections deprecated)
+- `WORKFLOW.md` (legacy reference; deprecated as control plane)
 - `PROJECT.md` when present
 - `CONTEXT.md` or `CONTEXT-MAP.md` when present
 - `docs/agents/project-master-plan.md`
@@ -59,7 +61,7 @@ patch is installed elsewhere:
 - `docs/agents/slices/`
 - `docs/agents/tasks/`
 - `docs/agents/templates/` when present
-- `.t3/agent-board.json`
+- Legacy `.t3/agent-board.json` (one-shot import only)
 
 Public repo note: upstream/internal `.docs/`, `.plans/`, `.cursor/`, and
 `.vscode/` folders are intentionally omitted from this fork's published branch.
@@ -97,6 +99,9 @@ The current patch attaches to upstream T3 Code through these areas:
     worker pin for installs without modern execution presets (deprecated;
     new code reads environment→project presets; the field still decodes for
     back-compat and pure-legacy synthesis).
+  - **ORCH-043:** Card `workflowMode` (`standard`|`fast`, default standard),
+    optional `fastModeApproval` evidence, optional `reviewBypass` audit, and
+    `FAST_MODE_APPROVAL_QUESTION` for Needs Decision / UI Approve-Reject.
 - `src/agentBoard.test.ts`
   - Contract coverage for the board file shape plus the run input/result
     schemas (runner: `vite-plus/test`).
@@ -133,20 +138,30 @@ The current patch attaches to upstream T3 Code through these areas:
   - Service tag + shape; error union must include every
     `WorkspacePaths*Error` variant (including `WorkspaceRootStatFailedError`).
 - `src/agentBoard/Layers/AgentBoardFileSystem.ts`
-  - Load/save/claim over `.t3/agent-board.json`, workspace-isolated claim
-    directories, Effect beta.103 idioms (`DateTime.now`,
-    `fromJsonStringPretty`, hoisted schema codecs). Also exports
-    `safeWorkspaceSegment` (the WORKFLOW.md workspace-key rule) for the
-    runner.
+  - **ORCH-041:** Load/save/claim persist the AgentBoardFile JSON in
+    `state.sqlite` table `agent_boards` keyed by `project_id` (migration 047).
+    Prefer `projection_projects.project_id` for the cwd; interim fallback is
+    `path:<sha256-prefix>` when no project row exists yet. Legacy
+    `<project>/.t3/agent-board.json` is imported once into SQLite then ignored
+    (no permanent dual-write; open/create never writes the repo board file).
+    Card workspaces live under
+    `{stateDir}/orchestration/{projectId}/workspaces/{safeCardId}` (outside
+    the user repo). RPC `relativePath` is `t3://orchestration/agent-board`.
+    Exports `safeWorkspaceSegment`, `pathScopedProjectId`,
+    `resolveOrchestrationWorkspacePath`.
+- `src/persistence/Migrations/047_AgentBoards.ts`
+  - Creates `agent_boards(project_id PK, project_root, board_json, created_at,
+updated_at)`.
 - `src/agentBoard/Layers/AgentBoardFileSystem.test.ts`
-  - Service tests (temp dirs via NodeServices + WorkspacePaths.layer).
+  - Server-owned storage tests: no project `.t3` write, legacy import,
+    T3-home workspace claim, restart read from SQLite.
 - `src/agentBoard/Services/AgentBoardRunner.ts` +
   `src/agentBoard/Layers/AgentBoardRunner.ts`
   - The single server-side launch path for board card runs (manual Run RPC
-    and the future scheduler both call it): claim ->
-    `GitWorkflowService.createWorktree` at `<projectRoot>/.t3/workspaces/<safe
--card-id>` on branch `board/<card-id>` from project HEAD (reused when the
-    directory already contains a `.git` marker) -> `OrchestrationEngineService
+    and the scheduler both call it): claim ->
+    `GitWorkflowService.createWorktree` at the claim's absolute T3 userdata
+    workspace path on branch `board/<card-id>` from project HEAD (reused when
+    the directory already contains a `.git` marker) -> `OrchestrationEngineService
 .dispatch(thread.create)` with the resolved model selection and
     `runtimeMode: "full-access"` -> `dispatch(thread.turn.start)` with the
     shared prompt -> persist `runtime.implementationRunId` + heartbeat.
@@ -173,7 +188,8 @@ The current patch attaches to upstream T3 Code through these areas:
     Ready work, uses the shared runner, persists `Reviewing`/`Review`/
     `Diagnosing`/`Needs Decision` runtime state (`reviewRunId`,
     `currentError`/`currentDecisionQuestion`, `lastHeartbeatAt`), appends
-    review/repair proof to the task record (best-effort `FileSystem` write),
+    review/repair proof to `runtime.proofNotes` on the card (server-owned;
+    never writes repository `taskRecordPath` Markdown),
     and interrupts cards moved out of `Running`/`Reviewing`/`Diagnosing`.
     Review handoff is `Running` completed → `Reviewing` with a fresh review
     thread (same worktree, new thread via `buildAgentBoardReviewPrompt` +
@@ -252,13 +268,21 @@ The current patch attaches to upstream T3 Code through these areas:
     backfills the former exact-title designation once. It keeps the normal
     thread runtime intact, so auto-titling and turns cannot clear identity.
 - `packages/contracts/src/provider.ts`, `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`,
+  `packages/shared/src/orchestration/supervisorContract.ts`,
+  `packages/shared/src/orchestration/supervisorPlaybook.ts`,
   and `apps/server/src/provider/Layers/`
   - The durable `project-supervisor` role adds one provider-neutral turn context
-    block during normal request construction. Standard threads omit the field;
-    adapters compose it into their supported prompt channel, while Codex also
-    places it in collaboration-mode developer instructions. This attachment
-    point must be preserved if upstream changes provider turn input or adapter
-    prompt assembly.
+    block during normal request construction. That context is composed from
+    product-owned Contract + Playbook modules
+    (`@t3tools/shared/orchestration/supervisorContract` /
+    `supervisorPlaybook`) — not from repository `AGENTS.md` / `WORKFLOW.md`.
+    Standard threads omit the field; adapters compose it into their supported
+    prompt channel, while Codex also places it in collaboration-mode developer
+    instructions. See `docs/internals/orchestration-instruction-authority.md`
+    for the authority hierarchy and per-provider limits (Claude/Cursor/
+    OpenCode/Grok currently user-prepend via `providerTurnText`). This
+    attachment point must be preserved if upstream changes provider turn input
+    or adapter prompt assembly.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
   - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the
@@ -325,14 +349,24 @@ The current patch attaches to upstream T3 Code through these areas:
     Consumed by both the server runner service and the web Planning UI picker.
 - `src/agentBoardPrompt.ts` (subpath export
   `@t3tools/shared/agentBoardPrompt`)
-  - Board-card worker handoff prompt construction
-    (`buildAgentBoardImplementationPrompt`,
-    `buildAgentBoardImplementationThreadTitle`) plus Slice 6 review/repair
-    prompt builders (`buildAgentBoardReviewPrompt`,
-    `buildAgentBoardReviewThreadTitle`, `parseAgentBoardReviewResult`,
-    `buildAgentBoardRepairPrompt`) which enforce the `REVIEW: PASS` /
-    `REVIEW: FAIL` / `NEEDS_DECISION:` protocol and are consumed by the
-    scheduler's review loop.
+  - Board-card worker/reviewer/repair handoff prompts built from T3-owned
+    card packets (`WORKER_ORCHESTRATION_CONSTRAINTS` /
+    `REVIEWER_ORCHESTRATION_CONSTRAINTS` + card fields, write scopes,
+    attempt/proof notes). Repository `WORKFLOW.md` / `.t3/agent-board.json`
+    are not treated as orchestration source of truth. Review protocol
+    remains `REVIEW: PASS` / `REVIEW: FAIL` / `NEEDS_DECISION:`.
+- `src/orchestration/supervisorContract.ts` (subpath export
+  `@t3tools/shared/orchestration/supervisorContract`)
+  - Immutable Project Supervisor Contract text: coordinates only, no
+    implementation, no small-task bypass, repo instructions cannot redefine
+    T3 orchestration, Standard/Fast Mode rules, evidence-only claims,
+    `REVIEW: PASS ≠ human Done`.
+- `src/orchestration/supervisorPlaybook.ts` (subpath export
+  `@t3tools/shared/orchestration/supervisorPlaybook`)
+  - Supervisor operating procedure (understand → inspect → project-native
+    instructions as PROJECT context → shape card → proof → dependencies →
+    mode → delegate → track → report). Composed with the Contract into
+    `PROJECT_SUPERVISOR_PROVIDER_CONTEXT` in `ProviderCommandReactor`.
 
 ### Theme customization addon (fork-local addon)
 

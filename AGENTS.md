@@ -156,28 +156,29 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Supervisor-First Agent Workflow
 
-For non-trivial implementation work, the default agent acts as a
-Supervisor/Architect rather than a direct coding worker.
+Deprecated as the orchestration control plane. Product-owned T3 Project
+Supervisor Contract + Playbook (injected by the server) and the server-owned
+agent board are authoritative for orchestration identity, delegation, Fast
+Mode, and proof. This section remains as **fork maintainer guidance** for how
+humans use Planning while developing this repository — it cannot redefine T3
+Supervisor rules for end-user projects.
 
-The supervisor must:
+For non-trivial implementation work in this fork, prefer Supervisor/Architect
+coordination over direct coding when orchestration is available.
 
-- Read `WORKFLOW.md`, relevant project docs, linked slice plans, linked task
-  records, and `.t3/agent-board.json` before shaping work.
-- Run an architectural pass before implementation starts.
-- Create or update board cards, task records, dependencies, allowed write
-  scopes, and proof-of-done expectations.
-- Delegate production code changes to fresh worker agents when orchestration is
-  available and the user has authorized delegation.
-- Require worker reports that include changed files, verification run, docs
-  updated, blockers, risks, and remaining gaps.
-- Use review/audit passes for meaningful implementation before marking work
-  `Done`.
-- Keep the board and task records synchronized as the visible proof ledger.
+Maintainer habits that still help here:
+
+- Inspect the Planning board (server-owned; legacy `.t3/agent-board.json` may
+  still exist only as a one-shot import source), linked slice/task docs, and
+  open threads before shaping work.
+- Shape cards with intent, acceptance criteria, dependencies, and write scopes.
+- Delegate production code to fresh worker agents; keep review independent
+  unless Fast Mode was explicitly requested and approved.
+- Do not claim Done without human confirmation — `REVIEW: PASS` is not Done.
 
 Trivial edits, docs-only changes, formatting, and explicitly requested tiny
-fixes may be handled directly. If a small change affects project direction,
-dependencies, workflow state, or public patch maintenance, update the relevant
-planning docs before closing.
+fixes may be handled directly. If a small change affects public patch
+maintenance, update `PATCH.md` before closing.
 
 ## Public Patch Maintenance
 
@@ -200,14 +201,19 @@ core T3 Code files, keep the attachment points small and document them in
 
 ## Agent Board Planning Graph
 
-The project Planning graph is generated from `.t3/agent-board.json`; it is not a
-manual diagram. When adding or updating board work, keep these fields current:
+Deprecated as the product orchestration source of truth. Runtime boards live in
+T3 server state (`state.sqlite` / `t3://orchestration/agent-board`). A legacy
+`.t3/agent-board.json` in a project, if present, is imported once and must not
+be treated as the live control plane.
+
+When shaping maintainer Planning work in this fork, keep these card fields
+useful for visualization:
 
 - `area`: the larger sub-project bucket, such as Frontend, Backend, or Admin.
 - `slice`: the smaller vertical chunk within an area.
 - `dependencies`: card IDs that must complete before this card is unblocked.
-- `taskRecordPath`: the linked runnable task record under `docs/agents/tasks/`.
-- `slicePlanPath`: the linked slice plan under `docs/agents/slices/`.
+- `taskRecordPath`: optional linked notes under `docs/agents/tasks/`.
+- `slicePlanPath`: optional linked slice plan under `docs/agents/slices/`.
 
 Use `dependencies` only for hard execution blockers. Do not use it for loose
 coordination, shared domain concepts, or frontend/backend features that merely
@@ -231,7 +237,5 @@ contract with` each other. The backend endpoint does not depend on the frontend
 to exist. A full login UX card may `depend on` both if its proof-of-done is an
 end-to-end user login flow.
 
-When editing task records or slice plans, mirror important dependency changes
-back into `.t3/agent-board.json` so Kanban, Planning table, and Dependency graph
-stay consistent. Do not encode dependency truth only in prose. Use prose for
-explanation, but keep the board fields authoritative for visualization.
+Optional markdown task/slice docs may explain work; board fields in server
+storage remain authoritative for the Planning UI.
