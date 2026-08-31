@@ -52,14 +52,15 @@ authority is the T3 Supervisor Contract/Playbook + server-owned board storage
 (see `docs/internals/orchestration-instruction-authority.md`), not repo
 `.t3/agent-board.json`:
 
-- `AGENTS.md` (maintainer guidance; orchestration sections deprecated)
-- `WORKFLOW.md` (legacy reference; deprecated as control plane)
+- `AGENTS.md` (points at Contract/Playbook; no tiny-fix exceptions)
+- `WORKFLOW.md` (stub only; archive at `docs/legacy/workflow-agent-board.md`)
+- `docs/internals/orchestration-instruction-authority.md`
+- `docs/internals/orchestration-storage.md`
 - `PROJECT.md` when present
 - `CONTEXT.md` or `CONTEXT-MAP.md` when present
 - `docs/agents/project-master-plan.md`
 - `docs/agents/symphony-conformance.md`
-- `docs/agents/slices/`
-- `docs/agents/tasks/`
+- `docs/agents/slices/` / `docs/agents/tasks/` (optional notes, not orchestration SoT)
 - `docs/agents/templates/` when present
 - Legacy `.t3/agent-board.json` (one-shot import only)
 
@@ -472,18 +473,18 @@ visualization.
 
 Default behavior for non-trivial implementation:
 
-1. Supervisor reads the project planning stack.
+1. Supervisor reads T3-owned board state and project context docs as subordinate.
 2. Supervisor runs an architectural pass.
-3. Supervisor creates or updates the board card and task record.
+3. Supervisor creates or updates the internal board card (and optional explicit refs).
 4. Supervisor generates a bounded worker handoff packet.
 5. Worker agent implements within allowed write scopes.
-6. Worker reports changed files, verification, docs, risks, and gaps.
-7. Reviewer or supervisor audits the result.
-8. Supervisor updates board/task docs and decides the next state.
+6. Worker reports changed files, verification, risks, and gaps; T3 stores proof on the card.
+7. Reviewer audits the result (unless approved Fast Mode bypass).
+8. Supervisor updates board/proof state and decides the next card state.
 
-The supervisor may directly perform docs, board maintenance, formatting, and
-tiny explicitly requested fixes. Production implementation should be delegated
-when orchestration is available and authorized.
+The supervisor may mutate T3 orchestration state only. Any user-repository
+modification must go through card → worker. There is no tiny-fix, docs-only,
+config-only, or non-production Supervisor exception.
 
 ## Install/Repair Shape
 

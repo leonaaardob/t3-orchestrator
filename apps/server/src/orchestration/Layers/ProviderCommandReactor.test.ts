@@ -637,6 +637,10 @@ describe("ProviderCommandReactor", () => {
     expect(supervisorContext).not.toContain(
       "Read and follow the project's AGENTS.md and WORKFLOW.md.",
     );
+    expect(supervisorContext).toContain("T3 orchestration state only");
+    expect(supervisorContext).toContain("card → worker");
+    expect(supervisorContext).not.toContain("tiny explicitly");
+    expect(supervisorContext).not.toContain("task-record proof synchronized");
     expect(
       (await supervisor.readModel()).threads.find((thread) => thread.id === "thread-1")?.role,
     ).toBe("project-supervisor");

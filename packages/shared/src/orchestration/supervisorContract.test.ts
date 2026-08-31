@@ -36,4 +36,14 @@ describe("supervisorContract", () => {
     expect(SUPERVISOR_PLAYBOOK).toContain("PROJECT context only");
     expect(SUPERVISOR_PLAYBOOK).toContain("not the T3 orchestration");
   });
+
+  it("forbids Supervisor user-repo edits and task-record proof ledger language", () => {
+    expect(SUPERVISOR_PLAYBOOK).toContain("T3 orchestration state only");
+    expect(SUPERVISOR_PLAYBOOK).toContain("card → worker");
+    expect(SUPERVISOR_PLAYBOOK).toContain("no tiny-fix");
+    expect(SUPERVISOR_PLAYBOOK).not.toContain("tiny explicitly");
+    expect(SUPERVISOR_PLAYBOOK).not.toContain("non-production fixes");
+    expect(SUPERVISOR_PLAYBOOK).not.toContain("task-record proof synchronized");
+    expect(SUPERVISOR_PLAYBOOK).toContain("Internal card proof is the authoritative ledger");
+  });
 });

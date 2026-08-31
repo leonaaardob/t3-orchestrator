@@ -55,9 +55,9 @@ import {
 import { SUPERVISOR_THREAD_TITLE, isSupervisorThread } from "../lib/supervisorThread";
 import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { agentBoardEnvironment } from "~/state/agentBoard";
-import { projectEnvironment } from "~/state/projects";
 import { primaryServerProvidersAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { prepareCardForReady } from "~/agentBoardReady";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { newThreadId } from "~/lib/utils";
@@ -193,7 +193,6 @@ const MOVABLE_STATES: readonly AgentBoardState[] = [
 ];
 
 const BOARD_REFRESH_INTERVAL_MS = 10_000;
-const DEFAULT_SLICE_PLAN_PATH = "docs/agents/slices/authoritative-agent-board.md";
 const BOARD_COLUMN_MIN_WIDTH = 260;
 const BOARD_COLUMN_MIN_WIDTH_EXPANDED = 320;
 const BOARD_COLUMN_GAP = 12;
@@ -345,15 +344,6 @@ interface DependencyTreeEdge {
   to: AgentBoardCard;
 }
 
-function slugifyTitle(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-|-$/g, "")
-    .slice(0, 48);
-  return slug || "agent-board-card";
-}
-
 function lines(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -413,83 +403,6 @@ function intentBriefFromDraft(draft: IntentDraft): AgentBoardIntentBrief | null 
     nonGoals: lines(draft.nonGoals),
     openDecisions: lines(draft.openDecisions),
   };
-}
-
-function taskRecordMarkdown(input: {
-  card: AgentBoardCard;
-  taskRecordPath: string;
-  intentBrief: AgentBoardIntentBrief;
-}): string {
-  const acceptanceCriteria = input.intentBrief.acceptanceCriteria.length
-    ? input.intentBrief.acceptanceCriteria.map((item) => `- ${item}`).join("\n")
-    : "- Clarify acceptance criteria before agent execution.";
-  const constraints = input.intentBrief.constraints.length
-    ? input.intentBrief.constraints.map((item) => `- ${item}`).join("\n")
-    : "- Stay within the board card scope.";
-  const nonGoals = input.intentBrief.nonGoals.length
-    ? input.intentBrief.nonGoals.map((item) => `- ${item}`).join("\n")
-    : "- Do not expand beyond this card without a decision.";
-  const openDecisions = input.intentBrief.openDecisions.length
-    ? input.intentBrief.openDecisions.map((item) => `- ${item}`).join("\n")
-    : "- None.";
-
-  return `# ${input.card.id}
-
-Status: \`ready\`
-Agent eligible: yes
-Area: \`${input.card.area ?? "Unassigned"}\`
-Slice group: \`${input.card.slice ?? "Unassigned"}\`
-Slice: \`${input.card.slicePlanPath ?? DEFAULT_SLICE_PLAN_PATH}\`
-
-## Owner Intent
-
-${input.intentBrief.intent}
-
-## Target Status
-
-${input.intentBrief.desiredOutcome ?? "Tested"}
-
-## Scope Guard
-
-${constraints}
-
-## Acceptance Criteria
-
-${acceptanceCriteria}
-
-## Non Goals
-
-${nonGoals}
-
-## Open Decisions
-
-${openDecisions}
-
-## Verification
-
-- Run the smallest relevant focused checks.
-- Run broader repo checks when the implementation touches shared contracts or UI shell behavior.
-
-## Parallelism Plan
-
-Safe: \`${input.card.parallelism.safe}\`
-
-Reason:
-
-${input.card.parallelism.reason ?? "Confirm dependencies before parallel execution."}
-
-Allowed write scopes:
-
-${input.card.parallelism.allowedWriteScopes.length ? input.card.parallelism.allowedWriteScopes.map((item) => `- ${item}`).join("\n") : "- To be confirmed during implementation planning."}
-
-Conflicts with:
-
-${input.card.parallelism.conflictsWith.length ? input.card.parallelism.conflictsWith.map((item) => `- ${item}`).join("\n") : "- None listed."}
-
-## Proof Of Done
-
-Fill before marking done.
-`;
 }
 
 function newDraftCard(title: string): AgentBoardCard {
@@ -1885,13 +1798,11 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     updateSelectedCard((card) => ({ ...card, intentBrief }) as AgentBoardCard);
   }, [intentDraft, reportPlanningError, updateSelectedCard]);
 
-  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile);
-
-  const createTaskRecord = useCallback(() => {
+  const markCardReady = useCallback(() => {
     const intentBrief = intentBriefFromDraft(intentDraft);
     const card = detailCard ?? selectedCard;
     if (!intentBrief) {
-      reportPlanningError("Intent is required before creating a task record.");
+      reportPlanningError("Intent is required before marking a card Ready.");
       return;
     }
     if (!workspaceRoot) {
@@ -1902,17 +1813,8 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
       reportPlanningError("Select a card before marking it Ready.");
       return;
     }
-    const taskRecordPath =
-      card.taskRecordPath ?? `docs/agents/tasks/${card.id}-${slugifyTitle(card.title)}.md`;
     const timestamp = new Date().toISOString();
-    const nextCard = {
-      ...card,
-      state: "Ready" as const,
-      taskRecordPath,
-      slicePlanPath: card.slicePlanPath ?? DEFAULT_SLICE_PLAN_PATH,
-      intentBrief,
-      updatedAt: timestamp,
-    } as AgentBoardCard;
+    const nextCard = prepareCardForReady({ card, intentBrief, timestamp });
     const nextBoard = {
       ...board,
       cards: board.cards.map((entry) => (entry.id === card.id ? nextCard : entry)),
@@ -1923,38 +1825,28 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     setIntentDraft(intentDraftFromCard(nextCard));
     setSaving(true);
     setError(null);
-    void writeProjectFile({
+    // Persist server-owned board only — never write task Markdown into the user repo.
+    void saveAgentBoardCommand({
       environmentId,
-      input: {
-        cwd: workspaceRoot,
-        relativePath: taskRecordPath,
-        contents: taskRecordMarkdown({ card: nextCard, taskRecordPath, intentBrief }),
-      },
+      input: { cwd: workspaceRoot, board: nextBoard },
     })
-      .then((outcome) => {
-        if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
-        return saveAgentBoardCommand({
-          environmentId,
-          input: { cwd: workspaceRoot, board: nextBoard },
-        });
-      })
       .then((outcome) => {
         if (outcome._tag !== "Success") throw squashAtomCommandFailure(outcome);
         setBoard(outcome.value.board);
         toastManager.add({
           type: "success",
-          title: "Task record created",
-          description: taskRecordPath,
+          title: "Card marked Ready",
+          description: nextCard.title,
         });
       })
-      .catch((taskError) => {
+      .catch((readyError) => {
         const description =
-          taskError instanceof Error ? taskError.message : "Could not create task record.";
+          readyError instanceof Error ? readyError.message : "Could not mark card Ready.";
         setError(description);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Task record failed",
+            title: "Ready failed",
             description,
           }),
         );
@@ -1972,7 +1864,6 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     saveAgentBoardCommand,
     selectedCard,
     workspaceRoot,
-    writeProjectFile,
   ]);
 
   const moveCard = useCallback(
@@ -2415,7 +2306,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                 <SaveIcon className="size-3.5" />
                 Save brief
               </Button>
-              <Button size="sm" className="h-8 flex-1" onClick={createTaskRecord} disabled={saving}>
+              <Button size="sm" className="h-8 flex-1" onClick={markCardReady} disabled={saving}>
                 Ready
               </Button>
             </div>
@@ -3662,7 +3553,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                       onKeyDown={(event) => {
                         if (event.key === "Enter") event.currentTarget.blur();
                       }}
-                      placeholder={DEFAULT_SLICE_PLAN_PATH}
+                      placeholder="Optional project path"
                       className="h-9 text-sm"
                     />
                   </label>
@@ -3916,7 +3807,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                   <p className="text-[11px] font-medium text-muted-foreground">References</p>
                   <div className="grid gap-2 text-xs sm:grid-cols-2">
                     <p className="truncate rounded-md border border-border/55 bg-muted/20 px-2 py-1.5">
-                      Task: {detailCard.taskRecordPath ?? "Not created"}
+                      Task: {detailCard.taskRecordPath ?? "None (optional)"}
                     </p>
                     <p className="truncate rounded-md border border-border/55 bg-muted/20 px-2 py-1.5">
                       Slice: {detailCard.slicePlanPath ?? "Not set"}
@@ -3967,7 +3858,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                   <SaveIcon className="size-3.5" />
                   Save brief
                 </Button>
-                <Button onClick={createTaskRecord} disabled={saving}>
+                <Button onClick={markCardReady} disabled={saving}>
                   Ready
                 </Button>
               </DialogFooter>

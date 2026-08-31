@@ -156,29 +156,19 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Supervisor-First Agent Workflow
 
-Deprecated as the orchestration control plane. Product-owned T3 Project
-Supervisor Contract + Playbook (injected by the server) and the server-owned
-agent board are authoritative for orchestration identity, delegation, Fast
-Mode, and proof. This section remains as **fork maintainer guidance** for how
-humans use Planning while developing this repository — it cannot redefine T3
-Supervisor rules for end-user projects.
+Active orchestration doctrine is **not** defined here. Authority is:
 
-For non-trivial implementation work in this fork, prefer Supervisor/Architect
-coordination over direct coding when orchestration is available.
+1. T3 Project Supervisor Contract + Playbook (server-injected)
+2. Server-owned board / card / proof state
+3. Project-native files only as subordinate coding/product context
 
-Maintainer habits that still help here:
+See `docs/internals/orchestration-instruction-authority.md`.
 
-- Inspect the Planning board (server-owned; legacy `.t3/agent-board.json` may
-  still exist only as a one-shot import source), linked slice/task docs, and
-  open threads before shaping work.
-- Shape cards with intent, acceptance criteria, dependencies, and write scopes.
-- Delegate production code to fresh worker agents; keep review independent
-  unless Fast Mode was explicitly requested and approved.
-- Do not claim Done without human confirmation — `REVIEW: PASS` is not Done.
+Supervisor may mutate T3 orchestration state only. Any change inside a user
+repository must go through card → worker. There is no tiny-fix, docs-only,
+config-only, or non-production Supervisor exception.
 
-Trivial edits, docs-only changes, formatting, and explicitly requested tiny
-fixes may be handled directly. If a small change affects public patch
-maintenance, update `PATCH.md` before closing.
+`REVIEW: PASS` is never human Done.
 
 ## Public Patch Maintenance
 
@@ -201,41 +191,16 @@ core T3 Code files, keep the attachment points small and document them in
 
 ## Agent Board Planning Graph
 
-Deprecated as the product orchestration source of truth. Runtime boards live in
-T3 server state (`state.sqlite` / `t3://orchestration/agent-board`). A legacy
-`.t3/agent-board.json` in a project, if present, is imported once and must not
-be treated as the live control plane.
+Active board state lives in T3 server storage (`t3://orchestration/agent-board`),
+not in repository Markdown or `.t3/agent-board.json` (legacy one-shot import
+only). Optional `taskRecordPath` / `slicePlanPath` on a card are explicit
+project references — never required proof storage.
 
-When shaping maintainer Planning work in this fork, keep these card fields
-useful for visualization:
+Useful card fields for visualization: `area`, `slice`, `dependencies`, optional
+paths above. Use `dependencies` only for hard execution blockers.
 
-- `area`: the larger sub-project bucket, such as Frontend, Backend, or Admin.
-- `slice`: the smaller vertical chunk within an area.
-- `dependencies`: card IDs that must complete before this card is unblocked.
-- `taskRecordPath`: optional linked notes under `docs/agents/tasks/`.
-- `slicePlanPath`: optional linked slice plan under `docs/agents/slices/`.
+Preferred relationship language: depends on / connects to / shares contract with /
+conflicts with / enables.
 
-Use `dependencies` only for hard execution blockers. Do not use it for loose
-coordination, shared domain concepts, or frontend/backend features that merely
-need to agree on an interface.
-
-Preferred relationship language:
-
-- `depends on`: this card cannot be completed or verified until the referenced
-  card is done.
-- `connects to`: this card must coordinate with another card, but both can move
-  in parallel if the contract is clear.
-- `shares contract with`: cards meet at an API, schema, event, route, data
-  shape, permission rule, or UI state.
-- `conflicts with`: cards are unsafe to run in parallel because they touch the
-  same files, migrations, state model, or user workflow.
-- `enables`: the referenced card is not required for implementation, but it
-  makes the feature usable or demonstrable.
-
-Example: a frontend login screen and backend auth endpoint usually `share
-contract with` each other. The backend endpoint does not depend on the frontend
-to exist. A full login UX card may `depend on` both if its proof-of-done is an
-end-to-end user login flow.
-
-Optional markdown task/slice docs may explain work; board fields in server
-storage remain authoritative for the Planning UI.
+Historical planning-graph prose (if needed) belongs under `docs/legacy/`, not
+as active orchestration Source Of Truth.
