@@ -253,4 +253,219 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
       }).pipe(Effect.provide(makeBoardEnv(cwd, baseDir, dbPath)));
     }),
   );
+
+  it.effect("save after durable id appears clears stale path-scoped row without load", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-orch-save-race-project-",
+      });
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-orch-save-race-home-",
+      });
+      const dbPath = path.join(baseDir, "userdata", "state.sqlite");
+      yield* fileSystem.makeDirectory(path.dirname(dbPath), { recursive: true });
+      const durableProjectId = "prj_durable_save_race_001";
+
+      const seeded = yield* Effect.gen(function* () {
+        yield* runMigrations();
+        const service = yield* AgentBoardFileSystem;
+        const created = yield* service.load({ cwd, createIfMissing: true });
+        const interimId = pathScopedProjectId(created.board.projectRoot);
+        const firstBoard = {
+          ...created.board,
+          cards: [
+            {
+              id: "RACE-1",
+              title: "Path-scoped first save",
+              state: "Backlog" as const,
+              createdAt: "2026-08-31T12:00:00.000Z",
+              updatedAt: "2026-08-31T12:00:00.000Z",
+            },
+          ],
+          updatedAt: "2026-08-31T12:00:00.000Z",
+        };
+        yield* service.save({ cwd, board: firstBoard });
+        return { interimId, projectRoot: created.board.projectRoot, firstBoard };
+      }).pipe(Effect.provide(makeBoardEnv(cwd, baseDir, dbPath)));
+
+      // Durable projection appears; save the pre-existing board WITHOUT load().
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            ${durableProjectId},
+            ${"Save race project"},
+            ${seeded.projectRoot},
+            ${null},
+            ${"[]"},
+            ${"2026-08-31T12:10:00.000Z"},
+            ${"2026-08-31T12:10:00.000Z"},
+            ${null}
+          )
+        `;
+
+        const service = yield* AgentBoardFileSystem;
+        const newestBoard = {
+          ...seeded.firstBoard,
+          cards: [
+            {
+              id: "RACE-1",
+              title: "Newest board after durable id",
+              state: "Ready" as const,
+              intentBrief: {
+                intent: "Prove save clears path-scoped twin.",
+                acceptanceCriteria: ["Exactly one agent_boards row"],
+              },
+              createdAt: "2026-08-31T12:00:00.000Z",
+              updatedAt: "2026-08-31T12:20:00.000Z",
+            },
+          ],
+          updatedAt: "2026-08-31T12:20:00.000Z",
+        };
+        yield* service.save({ cwd, board: newestBoard });
+
+        const boardRows = yield* sql<{
+          readonly projectId: string;
+          readonly boardJson: string;
+        }>`
+          SELECT project_id AS "projectId", board_json AS "boardJson"
+          FROM agent_boards
+          ORDER BY project_id
+        `;
+        expect(boardRows).toHaveLength(1);
+        expect(boardRows[0]?.projectId).toBe(durableProjectId);
+        expect(boardRows[0]?.projectId).not.toBe(seeded.interimId);
+        expect(boardRows[0]?.boardJson).toContain("Newest board after durable id");
+        expect(boardRows[0]?.boardJson).toContain("RACE-1");
+
+        const loaded = yield* service.load({ cwd, createIfMissing: false });
+        expect(loaded.board.cards[0]?.title).toBe("Newest board after durable id");
+        expect(loaded.board.updatedAt).toBe("2026-08-31T12:20:00.000Z");
+
+        const afterLoad = yield* sql<{ readonly projectId: string }>`
+          SELECT project_id AS "projectId" FROM agent_boards
+        `;
+        expect(afterLoad.map((row) => row.projectId)).toEqual([durableProjectId]);
+      }).pipe(Effect.provide(makeBoardEnv(cwd, baseDir, dbPath)));
+    }),
+  );
+
+  it.effect("load defensively clears pre-existing durable+path-scoped duplicate rows", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-orch-dup-clean-project-",
+      });
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-orch-dup-clean-home-",
+      });
+      const dbPath = path.join(baseDir, "userdata", "state.sqlite");
+      yield* fileSystem.makeDirectory(path.dirname(dbPath), { recursive: true });
+      const durableProjectId = "prj_durable_dup_clean_001";
+
+      const seeded = yield* Effect.gen(function* () {
+        yield* runMigrations();
+        const service = yield* AgentBoardFileSystem;
+        const created = yield* service.load({ cwd, createIfMissing: true });
+        const interimId = pathScopedProjectId(created.board.projectRoot);
+        const board = {
+          ...created.board,
+          cards: [
+            {
+              id: "DUP-1",
+              title: "Durable wins",
+              state: "Backlog" as const,
+              createdAt: "2026-08-31T12:00:00.000Z",
+              updatedAt: "2026-08-31T12:00:00.000Z",
+            },
+          ],
+          updatedAt: "2026-08-31T12:00:00.000Z",
+        };
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            ${durableProjectId},
+            ${"Dup clean project"},
+            ${created.board.projectRoot},
+            ${null},
+            ${"[]"},
+            ${"2026-08-31T12:10:00.000Z"},
+            ${"2026-08-31T12:10:00.000Z"},
+            ${null}
+          )
+        `;
+        // Simulate a historical race: both durable and interim rows exist.
+        yield* service.save({ cwd, board });
+        const staleInterimJson = JSON.stringify({
+          schemaVersion: 1,
+          projectRoot: created.board.projectRoot,
+          cards: [
+            {
+              id: "STALE",
+              title: "Stale interim",
+              state: "Backlog",
+              createdAt: "2026-08-31T11:00:00.000Z",
+              updatedAt: "2026-08-31T11:00:00.000Z",
+            },
+          ],
+          createdAt: "2026-08-31T11:00:00.000Z",
+          updatedAt: "2026-08-31T11:00:00.000Z",
+        });
+        yield* sql`
+          INSERT INTO agent_boards (project_id, project_root, board_json, created_at, updated_at)
+          VALUES (
+            ${interimId},
+            ${created.board.projectRoot},
+            ${staleInterimJson},
+            ${"2026-08-31T11:00:00.000Z"},
+            ${"2026-08-31T11:00:00.000Z"}
+          )
+        `;
+        const before = yield* sql<{ readonly projectId: string }>`
+          SELECT project_id AS "projectId" FROM agent_boards ORDER BY project_id
+        `;
+        expect(before.map((row) => row.projectId).sort()).toEqual(
+          [durableProjectId, interimId].sort(),
+        );
+        return { interimId };
+      }).pipe(Effect.provide(makeBoardEnv(cwd, baseDir, dbPath)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* AgentBoardFileSystem;
+        const loaded = yield* service.load({ cwd, createIfMissing: false });
+        expect(loaded.board.cards[0]?.id).toBe("DUP-1");
+        expect(loaded.board.cards[0]?.title).toBe("Durable wins");
+
+        const sql = yield* SqlClient.SqlClient;
+        const after = yield* sql<{ readonly projectId: string }>`
+          SELECT project_id AS "projectId" FROM agent_boards
+        `;
+        expect(after.map((row) => row.projectId)).toEqual([durableProjectId]);
+        expect(after.map((row) => row.projectId)).not.toContain(seeded.interimId);
+      }).pipe(Effect.provide(makeBoardEnv(cwd, baseDir, dbPath)));
+    }),
+  );
 });

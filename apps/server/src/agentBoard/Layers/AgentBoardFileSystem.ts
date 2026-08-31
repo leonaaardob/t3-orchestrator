@@ -104,6 +104,162 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
     return rows[0]?.projectId ?? pathScopedProjectId(projectRoot);
   });
 
+  const makeDefaultBoard = Effect.map(
+    nowIso,
+    (timestamp): AgentBoardFile => ({
+      schemaVersion: 1,
+      projectRoot: "",
+      defaultView: "kanban",
+      runner: {
+        maxConcurrentCards: 1,
+        repairCycles: 3,
+      },
+      cards: [],
+      graphLinks: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  );
+
+  const readBoardRow = Effect.fn("AgentBoardFileSystem.readBoardRow")(function* (
+    cwd: string,
+    projectId: string,
+  ) {
+    const rows = yield* sql<{ readonly boardJson: string }>`
+      SELECT board_json AS "boardJson"
+      FROM agent_boards
+      WHERE project_id = ${projectId}
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd,
+            operation: "agentBoard.read",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+    return rows[0]?.boardJson !== undefined ? Option.some(rows[0].boardJson) : Option.none();
+  });
+
+  /**
+   * When a durable projection project_id is in use, drop any leftover interim
+   * `path:*` row for the same project_root (save-without-load race + defensive
+   * duplicate cleanup on load).
+   */
+  const clearStalePathScopedBoard = Effect.fn("AgentBoardFileSystem.clearStalePathScopedBoard")(
+    function* (input: {
+      readonly cwd: string;
+      readonly projectRoot: string;
+      readonly durableProjectId: string;
+    }) {
+      const interimId = pathScopedProjectId(input.projectRoot);
+      if (interimId === input.durableProjectId) return;
+      yield* sql`
+        DELETE FROM agent_boards
+        WHERE project_id = ${interimId}
+          AND project_root = ${input.projectRoot}
+      `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentBoardFileSystemError({
+              cwd: input.cwd,
+              operation: "agentBoard.rekey",
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+    },
+  );
+
+  const writeBoardRow = Effect.fn("AgentBoardFileSystem.writeBoardRow")(function* (input: {
+    readonly cwd: string;
+    readonly projectId: string;
+    readonly projectRoot: string;
+    readonly board: AgentBoardFile;
+  }) {
+    const contents = yield* encodeAgentBoardFile(input.board).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd: input.cwd,
+            operation: "agentBoard.encode",
+            detail: String(cause),
+            cause,
+          }),
+      ),
+    );
+    const timestamp = input.board.updatedAt;
+    yield* sql`
+      INSERT INTO agent_boards (
+        project_id,
+        project_root,
+        board_json,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${input.projectId},
+        ${input.projectRoot},
+        ${contents},
+        ${input.board.createdAt},
+        ${timestamp}
+      )
+      ON CONFLICT (project_id)
+      DO UPDATE SET
+        project_root = excluded.project_root,
+        board_json = excluded.board_json,
+        updated_at = excluded.updated_at
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd: input.cwd,
+            operation: "agentBoard.write",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+  });
+
+  /** Upsert durable/interim board row and remove stale path-scoped duplicate atomically. */
+  const writeBoardAndClearInterim = Effect.fn("AgentBoardFileSystem.writeBoardAndClearInterim")(
+    function* (input: {
+      readonly cwd: string;
+      readonly projectId: string;
+      readonly projectRoot: string;
+      readonly board: AgentBoardFile;
+    }) {
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* writeBoardRow(input);
+            yield* clearStalePathScopedBoard({
+              cwd: input.cwd,
+              projectRoot: input.projectRoot,
+              durableProjectId: input.projectId,
+            });
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof AgentBoardFileSystemError
+              ? cause
+              : new AgentBoardFileSystemError({
+                  cwd: input.cwd,
+                  operation: "agentBoard.write",
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+          ),
+        );
+    },
+  );
+
   /**
    * Prefer durable projection project_id. If a board was created earlier under
    * the interim path-scoped key for the same project_root, rekey that row onto
@@ -113,6 +269,13 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
     function* (cwd: string, projectRoot: string, preferredProjectId: string) {
       const preferred = yield* readBoardRow(cwd, preferredProjectId);
       if (Option.isSome(preferred)) {
+        // Defensive: durable row may already exist while a stale path:* twin
+        // remains after a save-without-load race that predated cleanup.
+        yield* clearStalePathScopedBoard({
+          cwd,
+          projectRoot,
+          durableProjectId: preferredProjectId,
+        });
         return { projectId: preferredProjectId, boardJson: preferred.value } as const;
       }
 
@@ -132,26 +295,12 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
             ),
           );
           const promoted = { ...board, projectRoot };
-          yield* writeBoardRow({
+          yield* writeBoardAndClearInterim({
             cwd,
             projectId: preferredProjectId,
             projectRoot,
             board: promoted,
           });
-          yield* sql`
-            DELETE FROM agent_boards
-            WHERE project_id = ${interimId}
-          `.pipe(
-            Effect.mapError(
-              (cause) =>
-                new AgentBoardFileSystemError({
-                  cwd,
-                  operation: "agentBoard.rekey",
-                  detail: cause.message,
-                  cause,
-                }),
-            ),
-          );
           yield* Effect.logInfo("agentBoard.project-id-rekeyed", {
             fromProjectId: interimId,
             toProjectId: preferredProjectId,
@@ -204,26 +353,36 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
             ),
           );
           const promoted = { ...board, projectRoot };
-          yield* writeBoardRow({
+          yield* writeBoardAndClearInterim({
             cwd,
             projectId: preferredProjectId,
             projectRoot,
             board: promoted,
           });
-          yield* sql`
-            DELETE FROM agent_boards
-            WHERE project_id = ${rootRow.projectId}
-          `.pipe(
-            Effect.mapError(
-              (cause) =>
-                new AgentBoardFileSystemError({
-                  cwd,
-                  operation: "agentBoard.rekey",
-                  detail: cause.message,
-                  cause,
-                }),
-            ),
-          );
+          if (rootRow.projectId !== pathScopedProjectId(projectRoot)) {
+            // Clear any non-interim foreign key that byRoot surfaced.
+            yield* sql`
+              DELETE FROM agent_boards
+              WHERE project_id = ${rootRow.projectId}
+                AND project_root = ${projectRoot}
+            `.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AgentBoardFileSystemError({
+                    cwd,
+                    operation: "agentBoard.rekey",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+          }
+        } else {
+          yield* clearStalePathScopedBoard({
+            cwd,
+            projectRoot,
+            durableProjectId: preferredProjectId,
+          });
         }
         return { projectId: preferredProjectId, boardJson: rootRow.boardJson } as const;
       }
@@ -248,97 +407,6 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       });
     },
   );
-
-  const makeDefaultBoard = Effect.map(
-    nowIso,
-    (timestamp): AgentBoardFile => ({
-      schemaVersion: 1,
-      projectRoot: "",
-      defaultView: "kanban",
-      runner: {
-        maxConcurrentCards: 1,
-        repairCycles: 3,
-      },
-      cards: [],
-      graphLinks: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }),
-  );
-
-  const readBoardRow = Effect.fn("AgentBoardFileSystem.readBoardRow")(function* (
-    cwd: string,
-    projectId: string,
-  ) {
-    const rows = yield* sql<{ readonly boardJson: string }>`
-      SELECT board_json AS "boardJson"
-      FROM agent_boards
-      WHERE project_id = ${projectId}
-      LIMIT 1
-    `.pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentBoardFileSystemError({
-            cwd,
-            operation: "agentBoard.read",
-            detail: cause.message,
-            cause,
-          }),
-      ),
-    );
-    return rows[0]?.boardJson !== undefined ? Option.some(rows[0].boardJson) : Option.none();
-  });
-
-  const writeBoardRow = Effect.fn("AgentBoardFileSystem.writeBoardRow")(function* (input: {
-    readonly cwd: string;
-    readonly projectId: string;
-    readonly projectRoot: string;
-    readonly board: AgentBoardFile;
-  }) {
-    const contents = yield* encodeAgentBoardFile(input.board).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentBoardFileSystemError({
-            cwd: input.cwd,
-            operation: "agentBoard.encode",
-            detail: String(cause),
-            cause,
-          }),
-      ),
-    );
-    const timestamp = input.board.updatedAt;
-    yield* sql`
-      INSERT INTO agent_boards (
-        project_id,
-        project_root,
-        board_json,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        ${input.projectId},
-        ${input.projectRoot},
-        ${contents},
-        ${input.board.createdAt},
-        ${timestamp}
-      )
-      ON CONFLICT (project_id)
-      DO UPDATE SET
-        project_root = excluded.project_root,
-        board_json = excluded.board_json,
-        updated_at = excluded.updated_at
-    `.pipe(
-      Effect.mapError(
-        (cause) =>
-          new AgentBoardFileSystemError({
-            cwd: input.cwd,
-            operation: "agentBoard.write",
-            detail: cause.message,
-            cause,
-          }),
-      ),
-    );
-  });
 
   const tryDecodeLegacyFile = Effect.fn("AgentBoardFileSystem.tryDecodeLegacyFile")(function* (
     cwd: string,
@@ -396,7 +464,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       const legacyRead = yield* tryDecodeLegacyFile(input.cwd, legacyPath.absolutePath);
       if (legacyRead._tag === "board") {
         const imported = { ...legacyRead.board, projectRoot };
-        yield* writeBoardRow({
+        yield* writeBoardAndClearInterim({
           cwd: input.cwd,
           projectId,
           projectRoot,
@@ -423,7 +491,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       }
 
       const defaultBoard = Object.assign(yield* makeDefaultBoard, { projectRoot });
-      yield* writeBoardRow({
+      yield* writeBoardAndClearInterim({
         cwd: input.cwd,
         projectId,
         projectRoot,
@@ -455,7 +523,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         ),
       );
 
-      yield* writeBoardRow({
+      yield* writeBoardAndClearInterim({
         cwd: input.cwd,
         projectId,
         projectRoot,
