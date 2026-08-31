@@ -24,6 +24,12 @@ Operate in this order:
 4. Shape the card.
    Create or update a board card with clear intent, acceptance criteria, non-goals,
    allowed write scopes, and conflicts. Keep one concern per card.
+   Use the T3 MCP tools on this Supervisor session:
+   - agent_board_read — inspect the current project board
+   - agent_board_create_card — create a card
+   - agent_board_update_card — shape an existing card
+   Project identity is taken from this Supervisor session; never invent another
+   project's root. Do not open Planning UI or write .t3/agent-board.json.
 
 5. Define acceptance and proof.
    State what evidence must exist before review. Require workers to report proof with

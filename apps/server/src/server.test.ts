@@ -147,6 +147,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { AgentBoardFileSystemLive } from "./agentBoard/Layers/AgentBoardFileSystem.ts";
 import * as AgentBoardRunner from "./agentBoard/Services/AgentBoardRunner.ts";
+import * as NodeSqliteClient from "./persistence/NodeSqliteClient.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -582,7 +583,13 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
-      AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePaths.layer)),
+      // MCP Agent Board toolkit requires AgentBoardFileSystem at route build time.
+      // Live board storage needs SqlClient; in-memory sqlite keeps router tests
+      // independent of the full PersistenceLayer.
+      AgentBoardFileSystemLive.pipe(
+        Layer.provide(WorkspacePaths.layer),
+        Layer.provideMerge(NodeSqliteClient.layerMemory()),
+      ),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),

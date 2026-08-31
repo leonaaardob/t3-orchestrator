@@ -36,6 +36,17 @@ When a thread has durable role `project-supervisor`, the reactor adds one
 provider-neutral `context` field on the send-turn input. Standard threads omit
 it.
 
+The same Supervisor session also receives T3 MCP tools when a credential is
+minted for the provider turn:
+
+- `agent_board_read`
+- `agent_board_create_card`
+- `agent_board_update_card`
+
+These tools are gated by the `agent-board` MCP capability (issued only for
+`project-supervisor` threads) and re-check durable thread role + project id from
+projection state. Project identity is never taken from a model-supplied path.
+
 Adapters then map that field into whatever channel their CLI supports. The
 mapping differs by provider; do not assume a privileged developer channel
 everywhere.

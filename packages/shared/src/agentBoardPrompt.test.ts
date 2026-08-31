@@ -31,6 +31,7 @@ const baseCard = {
     branchName: "board/ORCH-042",
     proofNotes: ["seeded proof"],
   },
+  workflowMode: "standard" as const,
   intentBrief: {
     intent: "Rewrite worker prompts around T3 packets.",
     desiredOutcome: "No WORKFLOW.md as orchestration SoT.",

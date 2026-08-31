@@ -38,6 +38,9 @@ describe("supervisorContract", () => {
   });
 
   it("forbids Supervisor user-repo edits and task-record proof ledger language", () => {
+    expect(SUPERVISOR_PLAYBOOK).toContain("agent_board_read");
+    expect(SUPERVISOR_PLAYBOOK).toContain("agent_board_create_card");
+    expect(SUPERVISOR_PLAYBOOK).toContain("agent_board_update_card");
     expect(SUPERVISOR_PLAYBOOK).toContain("T3 orchestration state only");
     expect(SUPERVISOR_PLAYBOOK).toContain("card → worker");
     expect(SUPERVISOR_PLAYBOOK).toContain("no tiny-fix");

@@ -1,8 +1,8 @@
 # T3 Orchestrator Patch
 
 Status: Active — synced through upstream T3 Code **v0.0.35**; synchronized
-candidate is **T3 Orchestrator 0.0.38** on `leonaaardob/t3-orchestrator`
-(`t3-orchestrator@0.0.38`).
+candidate is **T3 Orchestrator 0.0.39** on `leonaaardob/t3-orchestrator`
+(`t3-orchestrator@0.0.39`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -284,6 +284,18 @@ updated_at)`.
     OpenCode/Grok currently user-prepend via `providerTurnText`). This
     attachment point must be preserved if upstream changes provider turn input
     or adapter prompt assembly.
+- `apps/server/src/mcp/toolkits/agentBoard/{tools,handlers}.ts` +
+  `apps/server/src/mcp/McpHttpServer.ts` +
+  `apps/server/src/mcp/McpInvocationContext.ts` +
+  `apps/server/src/mcp/McpSessionRegistry.ts` +
+  `apps/server/src/provider/Layers/ProviderService.ts`
+  - **0.0.39:** Supervisor → Agent Board is a real MCP capability, not prompt
+    prose alone. Tools `agent_board_read`, `agent_board_create_card`, and
+    `agent_board_update_card` mutate server-owned board state
+    (`t3://orchestration/agent-board`). Credentials grant `agent-board` only
+    for durable `project-supervisor` threads (independent of browser/preview
+    access). Handlers re-check thread role and resolve project root from
+    projection — never from a model-supplied path. Playbook names the tools.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
   - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the
@@ -501,18 +513,23 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
-### Fork install note (`t3-orchestrator@0.0.38`)
+### Fork install note (`t3-orchestrator@0.0.39`)
 
 Publish and install exact versions from npm:
 
 ```text
-npx t3-orchestrator@0.0.38 service update --base-dir ~/.t3-orchestrator
+npx t3-orchestrator@0.0.39 service update --base-dir ~/.t3-orchestrator
 ```
 
 `0.0.37` remains on the registry but can rewrite `ExecStart` to an editor-owned
-Node when `service update` runs from Cursor/agent environments; prefer `0.0.38`
-for durable service Node resolution and desktop↔remote synchronization. Do not
-overwrite published npm versions.
+Node when `service update` runs from Cursor/agent environments; prefer `0.0.39`
+(or `0.0.38` until 0.0.39 is published) for durable service Node resolution and
+desktop↔remote synchronization. Do not overwrite published npm versions.
+
+This repository must **not** track a historical `.t3/agent-board.json`. Legacy
+import remains supported for user projects that still have that file; the
+Orchestrator repo itself stays clean so a checkout cannot accidentally import
+fork-dev board state.
 
 ### Distribution identity (server/CLI/npm)
 

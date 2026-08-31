@@ -56,9 +56,11 @@ import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -237,9 +239,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
    * This is the only place a credential is minted, so withholding one here is
-   * what disables agent browser access everywhere: every adapter already
-   * treats a missing session as "no MCP server", and the `/mcp` endpoint
-   * accepts nothing but tokens issued from this path.
+   * what disables MCP tool access everywhere: every adapter already treats a
+   * missing session as "no MCP server", and the `/mcp` endpoint accepts
+   * nothing but tokens issued from this path.
+   *
+   * Credentials are issued when agent browser access is on (preview tools)
+   * and/or when the thread is the Project Supervisor (agent-board tools).
+   * Capability sets are explicit — Supervisor board access does not imply
+   * browser tools, and the reverse is also true.
    */
   /**
    * Deny on an unreadable settings file rather than letting the read failure
@@ -259,9 +266,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  /**
+   * Best-effort Supervisor role lookup. Uses SqlClient when the full runtime
+   * provides it; tests without SQL simply treat the thread as non-Supervisor.
+   */
+  const isProjectSupervisorThread = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+      if (Option.isNone(sql)) return false;
+      const rows = yield* sql.value<{ readonly role: string }>`
+        SELECT role
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+        LIMIT 1
+      `.pipe(Effect.catch(() => Effect.succeed([] as Array<{ readonly role: string }>)));
+      return rows[0]?.role === "project-supervisor";
+    });
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      if (!(yield* agentBrowserAccessEnabled)) {
+      const browserEnabled = yield* agentBrowserAccessEnabled;
+      const supervisorThread = yield* isProjectSupervisorThread(threadId);
+      const capabilities = new Set<McpInvocationContext.McpCapability>();
+      if (browserEnabled) capabilities.add("preview");
+      if (supervisorThread) capabilities.add("agent-board");
+
+      if (capabilities.size === 0) {
         // Revoke as well as clear. Every other prepare path reaches
         // `issueActiveMcpCredential`, which revokes the thread first, so
         // skipping it here would leave a previously issued bearer token valid
@@ -272,7 +302,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
         return undefined;
       }
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId });
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        capabilities,
+      });
       if (credential) {
         yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
       }

@@ -74,10 +74,11 @@ do not replace or mutate them in place.
 
 Keep package versions aligned with upstream's `X.Y.Z` via
 `scripts/update-release-package-versions.ts` after syncing — do not invent a
-parallel scheme. Current synchronized candidate is **0.0.38** /
-`orchestrator-v0.0.38` (npm `t3-orchestrator@0.0.38` + matching desktop).
+parallel scheme. Current synchronized candidate is **0.0.39** /
+`orchestrator-v0.0.39` (npm `t3-orchestrator@0.0.39` + matching desktop).
 `0.0.37` is on npm but can persist an editor-owned Node into the background
-service unit when updated from Cursor/agent PATH; prefer `0.0.38`. Advance
+service unit when updated from Cursor/agent PATH; prefer `0.0.39` once published
+(or `0.0.38` until then). Advance
 package versions
 deliberately and publish only after macOS dry runs pass.
 
