@@ -237,6 +237,14 @@ The current patch attaches to upstream T3 Code through these areas:
   - `SUPERVISOR_THREAD_TITLE = "Project Supervisor"` plus an
     `isSupervisorThread` helper that reads the durable thread role, never the
     mutable title.
+- `src/lib/resolveProjectThreadSelection.ts`
+  - Pure project-scoped thread selection resolver: keep a valid in-project
+    selection (or explicit requested thread), otherwise fall back to the
+    project's active Supervisor (`role === "project-supervisor"`). Distinguishes
+    `pending` (threads not loaded) from resolved empty so scope switches do not
+    flash empty state. Wired from `Sidebar.tsx` on project-scope changes and from
+    delete/archive fallbacks (`getFallbackThreadIdAfterDelete`, archive
+    navigation) so Supervisor is the default—not forced—project thread.
 - `packages/contracts/src/orchestration.ts`, `apps/server/src/orchestration/`,
   and `apps/server/src/persistence/`
   - Fork-local `project-supervisor` thread role, carried through the normal
@@ -253,8 +261,13 @@ The current patch attaches to upstream T3 Code through these areas:
     prompt assembly.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
+  - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the
+    same project before the previous sort-order fallback.
 - `src/components/Sidebar.tsx`
   - Supervisor badge (violet `Crown` pill, `data-testid="supervisor-badge"`) in card, slim, and search rows; pin indicator retained. Context menu wires `Make Supervisor` / `Remove Supervisor` (set/clear durable role, set presentation title, and pin/unpin via existing APIs). Placeholder `Create Project Supervisor` creates a normal thread with the Supervisor role and pins it at top.
+  - Project-scope changes resolve the content-pane thread via
+    `resolveProjectThreadSelection` (ownership-checked fallback to Supervisor;
+    no click simulation).
 - `src/components/ChatView.tsx`
   - Planning tab strip + persisted `Break` safety control. Board runs no
     longer launch from the client: the previous

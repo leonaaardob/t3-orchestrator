@@ -1389,6 +1389,36 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("getFallbackThreadIdAfterDelete", () => {
+  it("prefers the Project Supervisor over newer normal threads", () => {
+    const fallbackThreadId = getFallbackThreadIdAfterDelete({
+      threads: [
+        makeThread({
+          id: ThreadId.make("thread-active"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:05:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("thread-newest"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T10:10:00.000Z",
+          messages: [],
+        }),
+        makeThread({
+          id: ThreadId.make("supervisor"),
+          projectId: ProjectId.make("project-1"),
+          createdAt: "2026-03-09T09:00:00.000Z",
+          role: "project-supervisor",
+          messages: [],
+        }),
+      ],
+      deletedThreadId: ThreadId.make("thread-active"),
+      sortOrder: "created_at",
+    });
+
+    expect(fallbackThreadId).toBe(ThreadId.make("supervisor"));
+  });
+
   it("returns the top remaining thread in the deleted thread's project sidebar order", () => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [

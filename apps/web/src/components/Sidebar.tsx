@@ -110,7 +110,12 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { readThreadShell, useProjects, useThreadShells } from "../state/entities";
+import {
+  readThreadShell,
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -121,6 +126,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { resolveProjectThreadSelection } from "../lib/resolveProjectThreadSelection";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "../types";
@@ -1765,6 +1771,7 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const threadsReady = useAllEnvironmentShellsBootstrapped();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2174,6 +2181,62 @@ export default function Sidebar() {
     () => searchableThreads.find((thread) => isSupervisorThread(thread)) ?? null,
     [searchableThreads],
   );
+  // When a project is scoped, resolve the content-pane thread from ownership —
+  // keep a valid in-project selection, otherwise fall back to that project's
+  // Supervisor. Never force Supervisor over a valid normal thread, and never
+  // invent a thread when no Supervisor exists (existing empty state).
+  useEffect(() => {
+    if (!threadsReady || scopedProjectKeys === null) {
+      return;
+    }
+
+    if (routeTarget?.kind === "draft" && routeDraftThread) {
+      const draftProjectKey = `${routeDraftThread.environmentId}:${routeDraftThread.projectId}`;
+      if (scopedProjectKeys.has(draftProjectKey)) {
+        return;
+      }
+    }
+
+    const selectedThread =
+      routeThreadRef === null
+        ? null
+        : (threads.find(
+            (thread) =>
+              thread.id === routeThreadRef.threadId &&
+              thread.environmentId === routeThreadRef.environmentId,
+          ) ?? null);
+
+    const resolution = resolveProjectThreadSelection({
+      activeProjectKeys: scopedProjectKeys,
+      selectedThread,
+      projectThreads: searchableThreads,
+      threadsReady: true,
+    });
+    if (resolution.status !== "resolved" || resolution.thread === null) {
+      return;
+    }
+
+    const nextRef = scopeThreadRef(resolution.thread.environmentId, resolution.thread.id);
+    if (routeThreadKey === scopedThreadKey(nextRef)) {
+      return;
+    }
+
+    void router.navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(nextRef),
+      replace: true,
+    });
+  }, [
+    routeDraftThread,
+    routeTarget,
+    routeThreadKey,
+    routeThreadRef,
+    router,
+    scopedProjectKeys,
+    searchableThreads,
+    threads,
+    threadsReady,
+  ]);
   const visiblePinnedThreads = useMemo(
     () => withoutSupervisorThreads(pinnedThreads),
     [pinnedThreads],

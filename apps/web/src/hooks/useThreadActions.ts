@@ -21,6 +21,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import { isSupervisorThread } from "../lib/supervisorThread";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
@@ -224,7 +225,7 @@ export function useThreadActions() {
       }
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
-      const shouldNavigateToDraft =
+      const shouldNavigateAway =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
       const archiveResult = await archiveThreadMutation({
@@ -241,19 +242,52 @@ export function useThreadActions() {
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
 
-      if (shouldNavigateToDraft) {
-        const navigationResult = await settlePromise(() =>
-          handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
-        );
-        if (navigationResult._tag === "Failure") {
-          return navigationResult;
+      if (shouldNavigateAway) {
+        // Prefer the Project Supervisor default when the archived thread was
+        // the current selection; otherwise keep the existing new-draft path.
+        const supervisorFallback = readEnvironmentThreadRefs(threadRef.environmentId)
+          .map((ref) => readThreadShell(ref))
+          .find(
+            (shell) =>
+              shell !== null &&
+              shell.id !== threadRef.threadId &&
+              shell.projectId === thread.projectId &&
+              shell.archivedAt === null &&
+              isSupervisorThread(shell),
+          );
+        if (supervisorFallback) {
+          const navigationResult = await settlePromise(() =>
+            router.navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(
+                scopeThreadRef(supervisorFallback.environmentId, supervisorFallback.id),
+              ),
+              replace: true,
+            }),
+          );
+          if (navigationResult._tag === "Failure") {
+            return navigationResult;
+          }
+        } else {
+          const navigationResult = await settlePromise(() =>
+            handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
+          );
+          if (navigationResult._tag === "Failure") {
+            return navigationResult;
+          }
         }
         return archiveResult;
       }
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [
+      archiveThreadMutation,
+      getCurrentRouteThreadRef,
+      markThreadVisited,
+      resolveThreadTarget,
+      router,
+    ],
   );
 
   const unarchiveThread = useCallback(

@@ -817,7 +817,11 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> &
+    ThreadSortInput & {
+      readonly role?: "standard" | "project-supervisor" | undefined;
+      readonly archivedAt?: string | null;
+    },
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
@@ -830,17 +834,20 @@ export function getFallbackThreadIdAfterDelete<
     return null;
   }
 
-  return (
-    sortThreads(
-      threads.filter(
-        (thread) =>
-          thread.projectId === deletedThread.projectId &&
-          thread.id !== deletedThreadId &&
-          !deletedThreadIds?.has(thread.id),
-      ),
-      sortOrder,
-    )[0]?.id ?? null
+  const remaining = threads.filter(
+    (thread) =>
+      thread.projectId === deletedThread.projectId &&
+      thread.id !== deletedThreadId &&
+      !deletedThreadIds?.has(thread.id) &&
+      thread.archivedAt == null,
   );
+
+  const supervisor = remaining.find((thread) => isSupervisorThread(thread));
+  if (supervisor) {
+    return supervisor.id;
+  }
+
+  return sortThreads(remaining, sortOrder)[0]?.id ?? null;
 }
 export function getProjectSortTimestamp(
   project: SidebarProject,
