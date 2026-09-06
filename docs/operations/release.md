@@ -40,7 +40,9 @@ to install that exact version. Publishing desktop without npm causes
 6. The workflow publishes the tested server tarball to npm using trusted
    publishing, verifies registry integrity and downloads it publicly, then
    publishes the desktop GitHub Release and updater manifests. Failure before
-   npm verification blocks the desktop release.
+   npm verification blocks the desktop release. Registry metadata and tarball
+   availability propagate separately; verification retries both for up to six
+   minutes, including npm/CDN negative-cache delays.
 7. Verify the new Mac application and update KH from its Connections screen.
    Check that the server returns at the requested version and existing projects,
    conversations and board cards remain accessible. See

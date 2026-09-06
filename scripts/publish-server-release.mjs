@@ -64,25 +64,34 @@ export async function publishServerRelease(directory, version, channel) {
       { stdio: "inherit" },
     );
   }
-  // Registry propagation can lag a successful publish. Never release desktop
-  // clients until the exact server artifact is publicly retrievable.
-  for (let attempt = 0; attempt < 6; attempt++) {
+  await verifyPublishedServer(expected);
+}
+
+export async function verifyPublishedServer(expected) {
+  const endpoint = `https://registry.npmjs.org/t3-orchestrator/${expected.version}`;
+  // Metadata and tarballs propagate independently. Both must be retrievable
+  // with the tested integrity before desktop publication can proceed.
+  for (let attempt = 0; attempt < 24; attempt++) {
     const response = await fetch(endpoint, { signal: AbortSignal.timeout(30_000) });
     if (response.ok) {
       const published = await response.json();
       assertPublishedArtifact(published, expected);
       const download = await fetch(published.dist.tarball, { signal: AbortSignal.timeout(60_000) });
-      if (!download.ok) throw new Error(`npm tarball returned HTTP ${download.status}.`);
-      const integrity = `sha512-${NodeCrypto.createHash("sha512")
-        .update(Buffer.from(await download.arrayBuffer()))
-        .digest("base64")}`;
-      if (integrity !== expected.integrity)
-        throw new Error("Downloaded npm tarball integrity mismatch.");
-      console.log(`Published and downloaded matching t3-orchestrator@${version}.`);
-      return;
+      if (download.ok) {
+        const integrity = `sha512-${NodeCrypto.createHash("sha512")
+          .update(Buffer.from(await download.arrayBuffer()))
+          .digest("base64")}`;
+        if (integrity !== expected.integrity)
+          throw new Error("Downloaded npm tarball integrity mismatch.");
+        console.log(`Published and downloaded matching t3-orchestrator@${expected.version}.`);
+        return;
+      }
+      if (download.status !== 404) throw new Error(`npm tarball returned HTTP ${download.status}.`);
+    } else if (response.status !== 404) {
+      throw new Error(`npm registry returned HTTP ${response.status}.`);
     }
-    if (response.status !== 404) throw new Error(`npm registry returned HTTP ${response.status}.`);
-    await new Promise((resolveWait) => setTimeout(resolveWait, 5_000));
+    console.log(`Waiting for npm propagation (${attempt + 1}/24).`);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 15_000));
   }
   throw new Error(
     "npm publication is not publicly available yet; desktop publication remains blocked.",

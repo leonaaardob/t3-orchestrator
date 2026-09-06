@@ -680,7 +680,8 @@ the extra features after the run is safe.
   package license and restores source assets after packing.
 - `scripts/smoke-server-package.mjs`, `scripts/publish-server-release.mjs` and
   `scripts/orchestrator-release.test.mjs` enforce installation, runtime/version
-  compatibility, publication ordering and immutable artifact integrity.
+  compatibility, publication ordering and immutable artifact integrity. Registry
+  metadata and tarball propagation are retried separately before desktop publication.
 - `apps/server/src/cloud/selfUpdate.ts` names the actual fork package on failed
   preparation; the standalone launcher and rollback protocol remain unchanged.
 - `apps/web/src/agentBoardReady.ts` omits absent optional project references so

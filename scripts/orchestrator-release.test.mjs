@@ -1,7 +1,12 @@
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { parse } from "yaml";
-import { assertPublishedArtifact, publishServerRelease } from "./publish-server-release.mjs";
+import {
+  assertPublishedArtifact,
+  publishServerRelease,
+  verifyPublishedServer,
+} from "./publish-server-release.mjs";
 
 describe("Orchestrator release invariants", () => {
   const workflow = parse(
@@ -62,6 +67,67 @@ describe("Orchestrator release invariants", () => {
     } finally {
       if (previous === undefined) delete process.env.GITHUB_REPOSITORY;
       else process.env.GITHUB_REPOSITORY = previous;
+    }
+  });
+});
+
+describe("npm publication propagation", () => {
+  const tarball = Buffer.from("tested server artifact");
+  const expected = {
+    name: "t3-orchestrator",
+    version: "0.0.40",
+    integrity: `sha512-${NodeCrypto.createHash("sha512").update(tarball).digest("base64")}`,
+  };
+  const metadata = () =>
+    Response.json({
+      name: expected.name,
+      version: expected.version,
+      dist: {
+        integrity: expected.integrity,
+        tarball: "https://registry.npmjs.org/t3-orchestrator/-/t3-orchestrator-0.0.40.tgz",
+      },
+    });
+
+  it("waits for metadata and then the tarball to propagate before releasing desktop", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(metadata())
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(metadata())
+      .mockResolvedValueOnce(new Response(tarball));
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      let completed = false;
+      const verification = verifyPublishedServer(expected).then(() => {
+        completed = true;
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(completed).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await verification;
+      expect(completed).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects downloaded bytes that differ from the tested artifact", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(metadata())
+        .mockResolvedValueOnce(new Response("different bytes")),
+    );
+    try {
+      await expect(verifyPublishedServer(expected)).rejects.toThrow("integrity mismatch");
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
