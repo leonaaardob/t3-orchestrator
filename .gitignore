@@ -24,7 +24,10 @@ __screenshots__/
 .tanstack
 squashfs-root/
 .vercel
-.github/workflows/
+.github/workflows/*
+!.github/workflows/desktop-release.yml
+!.github/workflows/desktop-macos-preview.yml
+!.github/workflows/orchestrator-ci.yml
 .cursor/
 .docs/
 .plans/

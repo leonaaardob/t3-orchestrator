@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import * as DateTime from "effect/DateTime";
@@ -19,6 +19,8 @@ import {
   type AgentBoardFileSystemShape,
 } from "../Services/AgentBoardFileSystem.ts";
 import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
+
+const isAgentBoardFileSystemError = Schema.is(AgentBoardFileSystemError);
 
 const LEGACY_BOARD_RELATIVE_PATH = ".t3/agent-board.json" as const;
 const BOARD_STORAGE_REF = "t3://orchestration/agent-board" as const;
@@ -47,7 +49,7 @@ export function safeWorkspaceSegment(value: string): string {
  * Stable across restarts for the same normalized project root.
  */
 export function pathScopedProjectId(projectRoot: string): string {
-  const digest = createHash("sha256").update(projectRoot).digest("hex").slice(0, 24);
+  const digest = NodeCrypto.createHash("sha256").update(projectRoot).digest("hex").slice(0, 24);
   return `path:${digest}`;
 }
 
@@ -247,7 +249,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         )
         .pipe(
           Effect.mapError((cause) =>
-            Schema.is(AgentBoardFileSystemError)(cause)
+            isAgentBoardFileSystemError(cause)
               ? cause
               : new AgentBoardFileSystemError({
                   cwd: input.cwd,

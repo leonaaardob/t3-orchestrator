@@ -714,3 +714,8 @@ references together when rebasing.
 Desktop identity no longer declares a removed migration error type. Web
 orchestration settings use the shared `offline` phase, and Fast Mode transitions
 omit absent optional approval/bypass fields instead of encoding `undefined`.
+
+Deferred Planning editor saves now call the latest commit callback and skip
+unchanged details. Closing a card after Ready cannot replay its older Draft
+state or erase its intent brief. The table editor uses the same current-callback
+rule. Client test document fixtures include the theme customizer dataset.

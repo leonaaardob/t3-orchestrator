@@ -1131,7 +1131,7 @@ describe("AgentBoardSchedulerLive", () => {
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`UPDATE agent_boards SET board_json = ${"{not-json"}`;
-      }).pipe(Effect.provide(corruptLayer), Effect.provide(NodeServices.layer));
+      }).pipe(Effect.provide(corruptLayer.pipe(Layer.provideMerge(NodeServices.layer))));
 
       yield* harness.start();
       yield* pause(120);

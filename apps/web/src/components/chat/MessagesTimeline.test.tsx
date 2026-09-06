@@ -163,6 +163,7 @@ beforeAll(async () => {
   });
   vi.stubGlobal("document", {
     documentElement: {
+      dataset: {},
       classList,
       offsetHeight: 0,
     },

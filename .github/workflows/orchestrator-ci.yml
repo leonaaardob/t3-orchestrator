@@ -41,6 +41,9 @@ jobs:
           run-install: false
       - name: Install workspace dependencies
         run: vp install --frozen-lockfile --filter=@t3tools/desktop... --filter=t3-orchestrator... --filter=@t3tools/scripts...
+      - name: Install mobile dependencies for cross-client server tests
+        if: matrix.package == 't3-orchestrator'
+        run: vp install --frozen-lockfile --filter=@t3tools/mobile...
       - name: Typecheck
         env:
           CHECK_PACKAGE: ${{ matrix.package }}

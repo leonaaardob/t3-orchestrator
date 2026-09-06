@@ -3156,6 +3156,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing Promise-based reactor harness owns the runtime and scope.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
@@ -3174,6 +3175,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing Promise-based reactor harness owns the runtime and scope.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
@@ -3207,6 +3209,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing Promise-based reactor harness owns the runtime and scope.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.user-input.respond",

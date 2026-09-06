@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1699,6 +1700,11 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
     [clearPlanningCellDraft, planningCellDrafts, planningCellKey, updateCardById],
   );
 
+  const latestPlanningCellCommit = useRef(commitPlanningCellDraft);
+  useLayoutEffect(() => {
+    latestPlanningCellCommit.current = commitPlanningCellDraft;
+  }, [commitPlanningCellDraft]);
+
   const schedulePlanningCellCommit = useCallback(
     (card: AgentBoardCard, column: PlanningEditableColumn) => {
       const key = planningCellKey(card.id, column);
@@ -1713,12 +1719,12 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
             return;
           }
           planningCommitTimersRef.current.delete(key);
-          commitPlanningCellDraft(card, column);
+          latestPlanningCellCommit.current(card, column);
         }, PLANNING_EDIT_COMMIT_DELAY_MS);
       const timer = scheduleTimer();
       planningCommitTimersRef.current.set(key, timer);
     },
-    [commitPlanningCellDraft, planningCellKey],
+    [planningCellKey],
   );
 
   const openCardDetails = useCallback((card: AgentBoardCard) => {
@@ -1751,7 +1757,16 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
       window.clearTimeout(detailCommitTimerRef.current);
       detailCommitTimerRef.current = null;
     }
-    if (!detailDraft) return;
+    if (!detailDraft || !detailCard) return;
+    const persisted = detailDraftFromCard(detailCard);
+    if (
+      detailDraft.title === persisted.title &&
+      detailDraft.area === persisted.area &&
+      detailDraft.slice === persisted.slice &&
+      detailDraft.slicePlanPath === persisted.slicePlanPath &&
+      detailDraft.dependencies === persisted.dependencies
+    )
+      return;
     updateDetailCard((card) => {
       const {
         area: _existingArea,
@@ -1771,7 +1786,13 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         ...(slicePlanPath ? { slicePlanPath } : {}),
       } as AgentBoardCard;
     });
-  }, [detailDraft, updateDetailCard]);
+  }, [detailDraft, detailCard, updateDetailCard]);
+
+  // A delayed field save must use the current card after Ready/run transitions.
+  const latestDetailCommit = useRef(commitDetailDraft);
+  useLayoutEffect(() => {
+    latestDetailCommit.current = commitDetailDraft;
+  }, [commitDetailDraft]);
 
   const scheduleDetailDraftCommit = useCallback(() => {
     if (detailCommitTimerRef.current) {
@@ -1784,10 +1805,10 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           return;
         }
         detailCommitTimerRef.current = null;
-        commitDetailDraft();
+        latestDetailCommit.current();
       }, PLANNING_EDIT_COMMIT_DELAY_MS);
     detailCommitTimerRef.current = scheduleTimer();
-  }, [commitDetailDraft]);
+  }, []);
 
   const saveIntentBrief = useCallback(() => {
     const intentBrief = intentBriefFromDraft(intentDraft);
@@ -3744,7 +3765,6 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                           onClick={() => {
                             const approvedAt = new Date().toISOString();
                             updateDetailCard((card) => {
-                              const { reviewBypass: _reviewBypass, ...cardWithoutBypass } = card;
                               const {
                                 currentError: _e,
                                 currentDecisionQuestion: _q,
