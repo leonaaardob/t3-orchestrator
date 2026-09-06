@@ -24,6 +24,10 @@ official T3 Code. Upgrading from T3 Orchestrator 0.0.34 starts a separate
 profile; it does not import settings or connections from the shared legacy
 T3 Code location.
 
+Its local server data lives in `~/.t3-orchestrator/userdata`, separately from
+official T3 Code’s `~/.t3`. Existing data in the old shared folder is not imported
+automatically. An explicitly configured data directory overrides this default.
+
 Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.

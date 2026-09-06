@@ -720,3 +720,21 @@ Deferred Planning editor saves now call the latest commit callback and skip
 unchanged details. Closing a card after Ready cannot replay its older Draft
 state or erase its intent brief. The table editor uses the same current-callback
 rule. Client test document fixtures include the theme customizer dataset.
+
+### Local home isolation (desktop and development)
+
+`apps/desktop/src/app/DesktopStatePaths.ts`, `scripts/dev-runner.ts`, and
+`packages/shared/src/devHome.ts` now use `defaultRemoteHomeName` from
+`packages/shared/src/distributionIdentity.ts`. Desktop state defaults to
+`~/.t3-orchestrator/userdata` (development: `~/.t3-orchestrator/dev`); linked
+worktrees use `<worktree>/.t3-orchestrator`, ignored by `.gitignore`. This closes
+the remaining local attachment points that still selected the official T3 home.
+Explicit `T3CODE_HOME` / `--home-dir` overrides retain their existing precedence.
+Web and mobile use the connected server's state; SSH and CLI already use the
+fork home. No contracts or provider adapters change.
+
+After pulling upstream, check these three default-home resolvers and retain the
+focused DesktopEnvironment, DesktopEarlyElectronStartup, devHome and dev-runner
+tests. Rebuild/reinstall desktop to apply the change to an installed app. Until
+then, launch with `T3CODE_HOME` explicitly set to the fork home. Existing `.t3`
+data is never automatically moved or imported; see the migration runbook.
