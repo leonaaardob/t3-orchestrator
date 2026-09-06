@@ -31,6 +31,7 @@ import {
 
 interface PackageJson {
   name: string;
+  license: string;
   repository: {
     type: string;
     url: string;
@@ -212,6 +213,7 @@ const publishCmd = Command.make(
     appVersion: Flag.string("app-version").pipe(Flag.optional),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
+    packDir: Flag.string("pack-dir").pipe(Flag.optional),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
@@ -243,6 +245,7 @@ const publishCmd = Command.make(
           const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
             name: serverPackageJson.name,
+            license: serverPackageJson.license,
             repository: serverPackageJson.repository,
             bin: serverPackageJson.bin,
             type: serverPackageJson.type,
@@ -277,7 +280,15 @@ const publishCmd = Command.make(
             }
             yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
-            const args = createVpPmPublishArgs(config);
+            const args = Option.isSome(config.packDir)
+              ? [
+                  "pack",
+                  "--filter",
+                  "t3-orchestrator",
+                  "--pack-destination",
+                  path.resolve(repoRoot, config.packDir.value),
+                ]
+              : createVpPmPublishArgs(config);
             const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
 
             yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);

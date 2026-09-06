@@ -1,8 +1,8 @@
 # T3 Orchestrator Patch
 
 Status: Active — synced through upstream T3 Code **v0.0.35**; synchronized
-candidate is **T3 Orchestrator 0.0.39** on `leonaaardob/t3-orchestrator`
-(`t3-orchestrator@0.0.39`).
+candidate is **T3 Orchestrator 0.0.40** on `leonaaardob/t3-orchestrator`
+(`t3-orchestrator@0.0.40`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
@@ -10,10 +10,10 @@ upstream T3 Code changes.
 
 ## Patch Goals
 
-- Add a project-local planning board backed by `.t3/agent-board.json`.
+- Add a project-local planning board backed by server SQLite storage; legacy `.t3/agent-board.json` is a one-shot import only.
 - Keep planning state visible through Kanban, Planning table, and Dependency
   tree views.
-- Make markdown planning docs the durable reasoning layer.
+- Keep optional project documents subordinate to server-owned card and proof state.
 - Make the board the visible proof ledger.
 - Support a supervisor-first agent workflow where implementation is delegated
   to bounded worker agents and reviewed before `Done`.
@@ -513,7 +513,7 @@ layers:
 Keep future changes aligned with that layering. Avoid placing planning rules in
 unrelated UI or provider code unless there is no smaller attachment point.
 
-### Fork install note (`t3-orchestrator@0.0.39`)
+### Fork install note (`t3-orchestrator@0.0.40`)
 
 Publish and install exact versions from npm:
 
@@ -666,3 +666,31 @@ from rendering.
 Use this if the Planning UI, board parser, or dependency view is crashing during
 an active run. The same button appears as `Planning disabled` and can re-enable
 the extra features after the run is safe.
+
+## Coordinated desktop and standalone releases
+
+- `.github/workflows/desktop-release.yml` builds and tests both artifacts before
+  any publication, publishes the exact tested `t3-orchestrator` tarball to npm,
+  verifies its availability, then exposes desktop downloads. Desktop still
+  embeds its local server; remote service updates still install from npm.
+- `.github/workflows/orchestrator-ci.yml` supplies the release checks and normal
+  main/pull-request CI. Keep that dependency when repairing the fork workflow.
+- `apps/server/scripts/cli.ts` adds `publish --pack-dir` to reuse the established
+  publish metadata/catalog/icon preparation without publishing. It retains the
+  package license and restores source assets after packing.
+- `scripts/smoke-server-package.mjs`, `scripts/publish-server-release.mjs` and
+  `scripts/orchestrator-release.test.mjs` enforce installation, runtime/version
+  compatibility, publication ordering and immutable artifact integrity.
+- `apps/server/src/cloud/selfUpdate.ts` names the actual fork package on failed
+  preparation; the standalone launcher and rollback protocol remain unchanged.
+- `apps/web/src/agentBoardReady.ts` omits absent optional project references so
+  Ready cards encode successfully through the shared contract. The web client
+  and desktop wrapper share this path; it does not change provider adapters or
+  introduce required repository files.
+
+Upstream changes to CLI packaging, native dependencies, version injection,
+service preflight or desktop artifact manifests can break these attachment
+points. Reapply the isolated changes and run focused regression tests plus the
+complete release dry run. Restore the npm trusted publisher if the repository or
+workflow filename changes. Operational instructions live in
+`docs/operations/release.md`.

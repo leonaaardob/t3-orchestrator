@@ -18,6 +18,7 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly installFails?: boolean;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
 }
 
@@ -41,7 +42,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           return {
             stdout: "",
             stderr: "",
-            code: ChildProcessSpawner.ExitCode(0),
+            code: ChildProcessSpawner.ExitCode(options.installFails ? 1 : 0),
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
@@ -128,6 +129,18 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         "local update required",
       );
     }),
+  );
+
+  it.effect(
+    "names the actual npm package on installation failure and leaves the launcher alone",
+    () =>
+      Effect.gen(function* () {
+        const { selfUpdate, order } = yield* makeHarness({ installFails: true });
+        expect(
+          (yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+        ).toBe("Could not prepare t3-orchestrator@1.1.0.");
+        expect(order).toEqual(["install"]);
+      }),
   );
 
   it.effect("allows only one update at a time", () =>

@@ -6,6 +6,7 @@ import {
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import { formatPackageSpec } from "@t3tools/shared/distributionIdentity";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -164,7 +165,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"
             ? failWith(error.reason, error)
-            : failWith(`Could not prepare t3@${targetVersion}.`, error),
+            : failWith(`Could not prepare ${formatPackageSpec(targetVersion)}.`, error),
         ),
       );
 

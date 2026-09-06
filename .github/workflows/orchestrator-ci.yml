@@ -1,0 +1,52 @@
+name: Orchestrator CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Check ${{ matrix.package }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - t3-orchestrator
+          - "@t3tools/web"
+          - "@t3tools/desktop"
+          - "@t3tools/contracts"
+          - "@t3tools/shared"
+          - "@t3tools/client-runtime"
+          - "@t3tools/ssh"
+          - "@t3tools/scripts"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - name: Install workspace dependencies
+        run: vp install --frozen-lockfile --filter=@t3tools/desktop... --filter=t3-orchestrator... --filter=@t3tools/scripts...
+      - name: Typecheck
+        env:
+          CHECK_PACKAGE: ${{ matrix.package }}
+        run: vp run --filter "$CHECK_PACKAGE" typecheck
+      - name: Tests
+        env:
+          CHECK_PACKAGE: ${{ matrix.package }}
+        run: vp run --filter "$CHECK_PACKAGE" test

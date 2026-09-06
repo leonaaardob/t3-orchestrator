@@ -1,8 +1,8 @@
-name: Desktop Release
+name: Orchestrator Release
 
 # Fork-owned T3 Orchestrator desktop builds for leonaaardob/t3-orchestrator.
-# Intentionally omits upstream release.yml concerns: npm OIDC, Vercel, Azure
-# Trusted Signing, relay production secrets, and AUR. macOS Developer ID
+# Publishes the matching standalone server to npm before exposing desktop
+# releases. No upstream Vercel, Azure, relay production secrets, or AUR. Developer ID
 # signing and notarization are optional: unsigned macOS artifacts are valid
 # manual-install dry runs, while signed builds enable automatic installation.
 
@@ -14,19 +14,22 @@ on:
         required: false
         type: string
       publish_release:
-        description: "Publish a GitHub Release after all builds succeed"
+        description: "Publish the matching npm server, then the GitHub desktop release"
         required: false
         type: boolean
         default: false
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: orchestrator-release
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  checks:
+    uses: ./.github/workflows/orchestrator-ci.yml
+
   preflight:
     name: Preflight
     runs-on: ubuntu-24.04
@@ -63,9 +66,20 @@ jobs:
             version="$(node -p "require('./apps/desktop/package.json').version")"
           fi
 
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Invalid release version: $version" >&2
             exit 1
+          fi
+
+          if [[ "${PUBLISH_RELEASE:-false}" == "true" ]]; then
+            if [[ "$GITHUB_REPOSITORY" != "leonaaardob/t3-orchestrator" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "Public releases must run from leonaaardob/t3-orchestrator main." >&2
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/orchestrator-v$version"; then
+              echo "This release tag already exists. Choose a new version." >&2
+              exit 1
+            fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -80,6 +94,44 @@ jobs:
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
+
+  server_package:
+    name: Build and install standalone server
+    needs: [preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3-orchestrator...
+              - --filter=@t3tools/scripts...
+      - name: Align versions
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
+      - name: Build server and bundled web client
+        run: vp run --filter t3-orchestrator build
+      - name: Pack the standalone server without publishing
+        run: node apps/server/scripts/cli.ts publish --pack-dir server-release --verbose
+      - name: Install and start the exact tarball in an isolated home
+        run: node scripts/smoke-server-package.mjs server-release/t3-orchestrator-*.tgz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: standalone-server-package
+          path: server-release/*
+          if-no-files-found: error
+          retention-days: 14
 
   build_wsl_node_pty:
     name: Build WSL node-pty (${{ matrix.arch }})
@@ -418,15 +470,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  release:
+  aggregate:
     # Always aggregate/validate the release payload after builds. GitHub Release
     # creation stays gated on publish_release so dry runs prove merge + assets.
     name: Aggregate release payload
-    needs: [preflight, build]
+    needs: [preflight, checks, server_package, build]
     if: >-
       ${{ !failure() && !cancelled() &&
       needs.preflight.result == 'success' &&
-      needs.build.result == 'success' }}
+      needs.build.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.server_package.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -606,6 +660,73 @@ jobs:
             echo "Dry run: release payload validated; skipping GitHub Release publish."
           fi
 
+      - name: Retain the validated desktop payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: validated-desktop-release
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish_server:
+    name: Publish matching npm server
+    needs: [preflight, aggregate, server_package]
+    if: needs.preflight.outputs.publish_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11
+      - uses: actions/download-artifact@v8
+        with:
+          name: standalone-server-package
+          path: server-release
+      - name: Publish the tested tarball and verify registry integrity
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.preflight.outputs.is_prerelease == 'true' && 'next' || 'latest' }}
+        run: node scripts/publish-server-release.mjs server-release "$RELEASE_VERSION" "$RELEASE_CHANNEL"
+
+  release:
+    name: Publish desktop release
+    needs: [preflight, aggregate, publish_server]
+    if: needs.preflight.outputs.publish_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+      - uses: actions/download-artifact@v8
+        with:
+          name: validated-desktop-release
+          path: release-assets
       - name: Guard release repository
         if: ${{ needs.preflight.outputs.publish_release == 'true' }}
         shell: bash

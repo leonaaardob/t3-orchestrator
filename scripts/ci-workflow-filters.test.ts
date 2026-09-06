@@ -1,5 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Reads workflow files as static test fixtures.
 import * as NodePath from "node:path";
-import { readFileSync, readdirSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 import { assert, it } from "@effect/vitest";
 
@@ -14,7 +15,7 @@ const FORK_RELEASE_WORKFLOWS = [
 const STALE_SERVER_FILTER = /--filter(?:=|\s+)t3(?:\.\.\.|["'\s]|$)/;
 
 function readRepoFile(relativePath: string): string {
-  return readFileSync(NodePath.join(repoRoot, relativePath), "utf8");
+  return NodeFS.readFileSync(NodePath.join(repoRoot, relativePath), "utf8");
 }
 
 it("fork release workflows target t3-orchestrator, not the retired t3 workspace", () => {
@@ -46,11 +47,11 @@ it("build-desktop staging keeps production install for the staged server graph",
 
 it("no fork workflow reintroduces a bare t3 workspace filter", () => {
   const workflowDir = NodePath.join(repoRoot, ".github/workflows");
-  for (const fileName of readdirSync(workflowDir)) {
+  for (const fileName of NodeFS.readdirSync(workflowDir)) {
     if (!fileName.endsWith(".yml") && !fileName.endsWith(".yaml")) {
       continue;
     }
-    const contents = readFileSync(NodePath.join(workflowDir, fileName), "utf8");
+    const contents = NodeFS.readFileSync(NodePath.join(workflowDir, fileName), "utf8");
     assert.notMatch(
       contents,
       /--filter=t3\.\.\./,

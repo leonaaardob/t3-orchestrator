@@ -9,24 +9,25 @@
 
 ## Preconditions
 
-- Current public baseline: **0.0.35** (`orchestrator-v0.0.35` Release assets /
+- Current public baseline: **0.0.38** (`orchestrator-v0.0.38` Release assets /
   merged `latest*.yml`), whose macOS app is unsigned.
 - Next version **N+1** is published on
   [`leonaaardob/t3-orchestrator` Releases](https://github.com/leonaaardob/t3-orchestrator/releases)
   with merged updater manifests (`latest-mac.yml`, `latest.yml`,
   `latest-linux.yml`) and the expected `T3-Orchestrator-*` artifacts.
-- Client under test was installed from the **0.0.35** public feed (not a local
+- Client under test was installed from the **0.0.38** public feed (not a local
   unsigned preview with publish omitted).
 - No `T3CODE_DESKTOP_UPDATE_REPOSITORY` override unless deliberately testing
   override behavior.
-- The next macOS ZIP must contain a signed/notarized app. Windows remains
-  unsigned; expect SmartScreen there and do not disable OS protections.
+- For unsigned macOS releases, validate the manual DMG replacement flow.
+  Automatic installation is enabled only for signed/notarized builds. Windows
+  remains unsigned; do not disable OS protections.
 
 ## What “pass” means
 
 On each required platform:
 
-1. Installed **0.0.35** client detects a newer version (**N+1**).
+1. Installed **0.0.38** client detects a newer version (**N+1**).
 2. Updater selects the **correct architecture** for the host.
 3. Download URL / artifact name matches the platform mapping below.
 4. Metadata verification succeeds (`sha512` / size from the merged manifest).
@@ -65,12 +66,13 @@ If physical hardware is unavailable for Windows ARM or Linux ARM64:
 
 ## Suggested procedure (per platform)
 
-1. Install and launch **0.0.35** from the public Release asset for that arch.
+1. Install and launch **0.0.38** from the public Release asset for that arch.
 2. Clear any stale override env vars; confirm update repo is
    `leonaaardob/t3-orchestrator`.
 3. Trigger in-app update check (or wait for the normal check).
 4. Confirm offered version is **N+1** and the chosen file matches the table.
-5. Accept download; wait for verify + install.
+5. Accept download; on unsigned macOS, open the offered DMG, quit the app,
+   replace it in Applications and reopen it. Signed builds use automatic install.
 6. After restart, confirm About / update UI shows **N+1** and no error toast.
 7. Optionally re-check updates: should report already newest.
 
@@ -83,11 +85,12 @@ If physical hardware is unavailable for Windows ARM or Linux ARM64:
   upload and no leftover per-arch temporary manifests on the Release.
 - **Install blocked on macOS:** retain the failed updater logs and confirm the
   downloaded ZIP's app passes the release verification commands. This smoke is
-  specifically the unsigned 0.0.35 → signed N+1 transition; do not substitute
-  0.0.34 unless testing it as a separate compatibility case.
+  validates the installation mode advertised by the actual release: manual DMG
+  for unsigned builds, automatic installation for signed builds.
 
 ## Related docs
 
 - Fork release path: [`release.md`](./release.md) (top “Fork desktop releases”).
 - Signing/notarization setup: same file, “Fork signing and notarization”.
-- Next-release backlog: same file, “Fork next-release backlog”.
+- Standalone KH: verify the exact npm version exists, update from the client,
+  and confirm the service returns at N+1 with its existing board and projects.
