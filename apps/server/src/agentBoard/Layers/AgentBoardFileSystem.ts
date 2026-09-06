@@ -247,7 +247,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         )
         .pipe(
           Effect.mapError((cause) =>
-            cause instanceof AgentBoardFileSystemError
+            Schema.is(AgentBoardFileSystemError)(cause)
               ? cause
               : new AgentBoardFileSystemError({
                   cwd: input.cwd,

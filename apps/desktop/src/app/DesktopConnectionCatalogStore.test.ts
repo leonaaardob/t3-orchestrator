@@ -324,6 +324,7 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(
           environment.savedEnvironmentRegistryPath,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Deliberately malformed legacy credential fixture.
           JSON.stringify({
             version: 1,
             records: [

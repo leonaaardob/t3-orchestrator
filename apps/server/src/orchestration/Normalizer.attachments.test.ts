@@ -1,3 +1,4 @@
+import * as VcsProvisioningService from "../vcs/VcsProvisioningService.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -19,6 +20,9 @@ import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./No
 
 const testLayer = Layer.mergeAll(
   WorkspacePaths.layer,
+  Layer.mock(VcsProvisioningService.VcsProvisioningService)({
+    ensureGitRepositoryReady: () => Effect.void,
+  }),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-normalizer-attachments-" }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 

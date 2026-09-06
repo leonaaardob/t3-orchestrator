@@ -19,7 +19,10 @@ import { MISSING_WORKER_CONFIG_ERROR } from "@t3tools/shared/agentBoardRunner";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
+import {
+  AgentBoardFileSystem,
+  AgentBoardFileSystemError,
+} from "../Services/AgentBoardFileSystem.ts";
 import { AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
 import { AgentBoardRunner, AgentBoardRunnerError } from "../Services/AgentBoardRunner.ts";
 import { AgentBoardScheduler } from "../Services/AgentBoardScheduler.ts";
@@ -29,6 +32,7 @@ import * as ServerConfig from "../../config.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import * as VcsProvisioningService from "../../vcs/VcsProvisioningService.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -96,7 +100,7 @@ const makeCard = (
     state: "Ready",
     priority: 1,
     dependencies: [],
-    runtime: { attemptCount: 0 },
+    runtime: { proofNotes: [], attemptCount: 0 },
     createdAt: T0,
     updatedAt: T0,
     intentBrief: { intent: `Implement ${overrides.id}.` },
@@ -146,7 +150,18 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
     Effect.gen(function* () {
       const service = yield* AgentBoardFileSystem;
       return yield* body(service);
-    }).pipe(Effect.provide(makeBoardLayer()));
+    }).pipe(
+      Effect.provide(makeBoardLayer()),
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileSystemError({
+            cwd,
+            operation: "test.board",
+            detail: String(cause),
+            cause,
+          }),
+      ),
+    );
 
   const boardFiles: AgentBoardFileSystem["Service"] = {
     load: (input) => withBoard((service) => service.load(input)),
@@ -418,6 +433,8 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
   }).pipe(
     Layer.provideMerge(countingBoardLayer),
     Layer.provideMerge(mockRunnerLayer),
+    Layer.provideMerge(serverConfigLayer),
+    Layer.provideMerge(Layer.mock(VcsProvisioningService.VcsProvisioningService)({})),
     Layer.provideMerge(orchestrationEngineLayer),
     Layer.provideMerge(Layer.mock(GitWorkflowService)({})),
     Layer.provideMerge(projectionSnapshotQueryLayer),
@@ -564,6 +581,7 @@ describe("AgentBoardSchedulerLive", () => {
             id: "c1",
             state: "Running",
             runtime: {
+              proofNotes: [],
               attemptCount: 1,
               implementationRunId: RuntimeSessionId.make("t1"),
               lastHeartbeatAt: T0,
@@ -615,6 +633,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: TFRESH,
@@ -682,6 +701,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: TFRESH,
@@ -735,6 +755,7 @@ describe("AgentBoardSchedulerLive", () => {
             id: "c1",
             state: "Running",
             runtime: {
+              proofNotes: [],
               attemptCount: 1,
               implementationRunId: RuntimeSessionId.make("ghost"),
               lastHeartbeatAt: TFRESH,
@@ -777,6 +798,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,
@@ -854,6 +876,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,
@@ -902,6 +925,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,
@@ -981,6 +1005,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,
@@ -1064,6 +1089,7 @@ describe("AgentBoardSchedulerLive", () => {
           id: "c1",
           state: "Running",
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,
@@ -1162,6 +1188,7 @@ describe("AgentBoardSchedulerLive", () => {
             bypassedStages: [],
           },
           runtime: {
+            proofNotes: [],
             attemptCount: 1,
             implementationRunId: RuntimeSessionId.make("t1"),
             lastHeartbeatAt: T0,

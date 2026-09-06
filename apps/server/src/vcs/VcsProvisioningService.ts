@@ -23,7 +23,7 @@ export class VcsProvisioningService extends Context.Service<
       readonly cwd: string;
     }) => Effect.Effect<void, VcsError>;
   }
->()("t3/vcs/VcsProvisioningService") {}
+>()("t3-orchestrator/vcs/VcsProvisioningService") {}
 
 function resolveRequestedKind(
   kind: VcsDriverKind | undefined,

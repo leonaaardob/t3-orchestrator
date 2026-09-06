@@ -2,6 +2,7 @@ import { Context, Schema } from "effect";
 import type { Effect } from "effect";
 import type { AgentBoardRunInput, AgentBoardRunResult } from "@t3tools/contracts";
 
+import type { ServerConfig } from "../../config.ts";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -46,9 +47,10 @@ export interface AgentBoardRunnerShape {
     | OrchestrationEngineService
     | ProjectionSnapshotQuery
     | VcsProvisioningService
+    | ServerConfig
   >;
 }
 
 export class AgentBoardRunner extends Context.Service<AgentBoardRunner, AgentBoardRunnerShape>()(
-  "t3/agentBoard/Services/AgentBoardRunner",
+  "t3-orchestrator/agentBoard/Services/AgentBoardRunner",
 ) {}

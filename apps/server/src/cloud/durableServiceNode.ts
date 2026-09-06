@@ -223,7 +223,7 @@ export const resolveDurableServiceNode = Effect.fn("cloud.resolve_durable_servic
         pathEnv: input.pathEnv,
         execPath: input.execPath,
         pathJoin: path.join,
-        pathDelimiter: input.pathDelimiter,
+        ...(input.pathDelimiter === undefined ? {} : { pathDelimiter: input.pathDelimiter }),
       });
 
     let examined = 0;

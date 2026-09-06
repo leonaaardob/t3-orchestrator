@@ -108,6 +108,7 @@ it.effect(
         Effect.succeed(
           hasRepository
             ? {
+                kind: "git" as const,
                 rootPath: "/repo",
                 metadataPath: null,
                 freshness: {
@@ -144,6 +145,7 @@ it.effect(
                 ? {
                     kind: "git" as const,
                     repository: {
+                      kind: "git" as const,
                       rootPath: "/repo",
                       metadataPath: null,
                       freshness: {

@@ -1,11 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { NodeServices as NodeServicesType } from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Stream from "effect/Stream";
 import {
   type AgentBoardFile,
-  type AgentBoardRunResult,
   EnvironmentId,
   type OrchestrationCommand,
   type OrchestrationProject,
@@ -19,7 +17,7 @@ import {
 } from "@t3tools/shared/agentBoardPrompt";
 import { MISSING_WORKER_CONFIG_ERROR } from "@t3tools/shared/agentBoardRunner";
 
-import { AgentBoardRunner, type AgentBoardRunnerError } from "../Services/AgentBoardRunner.ts";
+import { AgentBoardRunner } from "../Services/AgentBoardRunner.ts";
 import { AgentBoardFileSystem } from "../Services/AgentBoardFileSystem.ts";
 import {
   AgentBoardFileSystemLive,
@@ -52,35 +50,6 @@ const PROJECT_DEFAULT_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "opencode/grok-code",
 } as const;
-
-interface Harness {
-  readonly cwd: string;
-  readonly baseDir: string;
-  readonly boardFiles: {
-    readonly load: (input: {
-      readonly cwd: string;
-      readonly createIfMissing?: boolean;
-    }) => Effect.Effect<
-      Awaited<ReturnType<AgentBoardFileSystem["Service"]["load"]>>,
-      unknown,
-      NodeServicesType
-    >;
-    readonly save: (input: {
-      readonly cwd: string;
-      readonly board: AgentBoardFile;
-    }) => Effect.Effect<unknown, unknown, NodeServicesType>;
-  };
-  // Platform services stay in R (satisfied by the suite's NodeServices
-  // provide); every domain collaborator is closed inside runCard.
-  readonly runCard: () => Effect.Effect<
-    AgentBoardRunResult,
-    AgentBoardRunnerError,
-    NodeServicesType
-  >;
-  readonly dispatchedCommands: () => ReadonlyArray<OrchestrationCommand>;
-  readonly createWorktreeCalls: () => number;
-  readonly failNextTurnStartWith: (detail: string | null) => void;
-}
 
 const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (options?: {
   readonly projectDefaultModelSelection?: unknown;
@@ -323,7 +292,7 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
     failNextTurnStartWith: (detail: string | null) => {
       turnStartFailure.detail = detail;
     },
-  } satisfies Harness;
+  };
 });
 
 describe("AgentBoardRunnerLive", () => {

@@ -78,6 +78,7 @@ it.layer(Layer.mergeAll(NodeServices.layer))("AgentBoardFileSystemLive", (it) =>
           yield* fileSystem.makeDirectory(path.join(cwd, ".t3"), { recursive: true });
           yield* fileSystem.writeFileString(
             path.join(cwd, ".t3", "agent-board.json"),
+            // @effect-diagnostics-next-line preferSchemaOverJson:off - Raw persisted legacy JSON fixture.
             `${JSON.stringify({
               schemaVersion: 1,
               projectRoot: cwd,

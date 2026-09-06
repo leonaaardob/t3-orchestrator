@@ -861,6 +861,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       yield* sql`DELETE FROM projection_projects`;
 
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Raw persisted legacy JSON fixture.
       const presetsJson = JSON.stringify({
         mode: "advanced",
         implementation: { instanceId: "cursor", model: "composer-2.5" },

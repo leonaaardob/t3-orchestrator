@@ -28,7 +28,7 @@ export function buildProviderEnvironmentOptions<T extends ProviderEnvironmentOpt
 }
 
 export function resolveSelectedProviderEnvironmentId(
-  environments: ReadonlyArray<ProviderEnvironmentOptionLike>,
+  environments: ReadonlyArray<Pick<ProviderEnvironmentOptionLike, "environmentId">>,
   selectedEnvironmentId: EnvironmentId | null,
   primaryEnvironmentId: EnvironmentId | null,
 ): EnvironmentId | null {

@@ -59,6 +59,10 @@ const makeThreadShell = (input: {
     branch: null,
     worktreePath: null,
     latestTurn: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
     archivedAt: null,
@@ -87,25 +91,14 @@ const makeTempDir = Effect.gen(function* () {
   });
 });
 
-const runSupervisorBoardCase = <A, E>(
+type BoardToolkit = Effect.Success<typeof AgentBoardToolkit>;
+
+const runSupervisorBoardCase = <A, E, R>(
   body: (input: {
     readonly cwdA: string;
     readonly cwdB: string;
-    readonly toolkit: {
-      readonly handle: (
-        name: "agent_board_read" | "agent_board_create_card" | "agent_board_update_card",
-        params: unknown,
-      ) => Effect.Effect<
-        { readonly encodedResult: unknown },
-        AgentBoardFileError,
-        McpInvocationContext.McpInvocationContext
-      >;
-    };
-  }) => Effect.Effect<
-    A,
-    E,
-    FileSystem.FileSystem | Path.Path | McpInvocationContext.McpInvocationContext
-  >,
+    readonly toolkit: BoardToolkit;
+  }) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const cwdA = yield* makeTempDir;
@@ -169,7 +162,7 @@ const runSupervisorBoardCase = <A, E>(
     } as ProjectionSnapshotQuery["Service"]);
 
     const env = AgentBoardToolkitHandlersLive.pipe(
-      Layer.provide(projectionMock),
+      Layer.provideMerge(projectionMock),
       Layer.provide(
         AgentBoardFileSystemLive.pipe(
           Layer.provide(WorkspacePathsModule.layer),
@@ -199,26 +192,16 @@ const withInvocation = <A, E, R>(
   effect: Effect.Effect<A, E, R | McpInvocationContext.McpInvocationContext>,
 ) => effect.pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, invocation));
 
-const runTool = <E, R>(
-  toolkit: {
-    readonly handle: (
-      name: "agent_board_read" | "agent_board_create_card" | "agent_board_update_card",
-      params: unknown,
-    ) => unknown;
-  },
-  name: "agent_board_read" | "agent_board_create_card" | "agent_board_update_card",
-  params: unknown,
+const runTool = (
+  toolkit: BoardToolkit,
+  name: keyof BoardToolkit["tools"],
+  params: Parameters<BoardToolkit["handle"]>[1],
   invocation: McpInvocationContext.McpInvocationScope,
 ) =>
   withInvocation(
     invocation,
     Effect.gen(function* () {
-      const handled = toolkit.handle(name, params) as Effect.Effect<
-        Stream.Stream<{ readonly encodedResult: unknown }, E, R>,
-        E,
-        R | McpInvocationContext.McpInvocationContext
-      >;
-      const stream = yield* handled;
+      const stream = yield* toolkit.handle(name, params);
       const last = yield* Stream.run(stream, Sink.last());
       return yield* Effect.fromOption(last);
     }),

@@ -1,3 +1,4 @@
+import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -99,6 +100,11 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
   Layer.mergeAll(
     OrchestrationLayerLive.pipe(
       Layer.provideMerge(RepositoryIdentityResolver.layer),
+      Layer.provideMerge(
+        Layer.mock(VcsProvisioningService.VcsProvisioningService)({
+          ensureGitRepositoryReady: () => Effect.void,
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceLayerLive),
     ),
     WorkspacePaths.layer,

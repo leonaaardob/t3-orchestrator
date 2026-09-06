@@ -44,7 +44,7 @@ describe("defaultOrchestrationEnvironmentId", () => {
 describe("orchestrationEnvironmentCanEdit", () => {
   it("keeps cached settings visible while offline instead of falling back", () => {
     const result = orchestrationEnvironmentCanEdit({
-      connectionPhase: "disconnected",
+      connectionPhase: "offline",
       hasServerConfig: true,
       operateAccess: "granted",
     });
@@ -54,7 +54,7 @@ describe("orchestrationEnvironmentCanEdit", () => {
 
   it("marks offline without cache as unavailable with no editable surface", () => {
     const result = orchestrationEnvironmentCanEdit({
-      connectionPhase: "disconnected",
+      connectionPhase: "offline",
       hasServerConfig: false,
       operateAccess: "granted",
     });

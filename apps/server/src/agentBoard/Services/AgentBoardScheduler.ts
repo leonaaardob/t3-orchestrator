@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
+import type { ServerConfig } from "../../config.ts";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import type { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -23,7 +24,8 @@ export type AgentBoardSchedulerRequirements =
   | GitWorkflowService
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
-  | VcsProvisioningService;
+  | VcsProvisioningService
+  | ServerConfig;
 
 export interface AgentBoardSchedulerShape {
   /**
@@ -48,4 +50,4 @@ export interface AgentBoardSchedulerShape {
 export class AgentBoardScheduler extends Context.Service<
   AgentBoardScheduler,
   AgentBoardSchedulerShape
->()("t3/agentBoard/Services/AgentBoardScheduler") {}
+>()("t3-orchestrator/agentBoard/Services/AgentBoardScheduler") {}

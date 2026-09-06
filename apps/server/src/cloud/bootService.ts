@@ -450,7 +450,7 @@ export class BootService extends Context.Service<
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
->()("t3/cloud/bootService") {}
+>()("t3-orchestrator/cloud/bootService") {}
 
 export interface BootServiceHost {
   /** Invoking process Node; never persisted when ephemeral/editor-owned. */
@@ -552,9 +552,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       pathEnv: installerPath,
       execPath: host.execPath,
       nodeEngineRange: input.nodeEngineRange,
-      candidatePaths: host.candidatePaths,
+      ...(host.candidatePaths === undefined ? {} : { candidatePaths: host.candidatePaths }),
       runner,
-    });
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
   });
 
   const planFor = (nodePath: string): BootServicePlan => ({

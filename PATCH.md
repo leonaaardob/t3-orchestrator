@@ -694,3 +694,23 @@ points. Reapply the isolated changes and run focused regression tests plus the
 complete release dry run. Restore the npm trusted publisher if the repository or
 workflow filename changes. Operational instructions live in
 `docs/operations/release.md`.
+
+### Contract verification after 0.0.39
+
+The release checks also validate the runtime requirements introduced by the
+SQLite board and VCS provisioning work. Runner/scheduler service contracts now
+include `ServerConfig`; boot-service Node discovery captures its filesystem/path
+services. Test environments provide the VCS service and current card defaults,
+and Supervisor MCP tests use the real streaming Toolkit handler type. These
+checks preserve cross-project denial, durable board persistence and failed
+update behavior.
+
+Effect service identifiers in `apps/server/src` use the actual package prefix
+`t3-orchestrator/` rather than the retired npm package prefix `t3/`. These are
+in-process dependency-injection keys; they do not rename stored environment IDs,
+SQLite tables, RPC names or data directories. Keep service declarations and
+references together when rebasing.
+
+Desktop identity no longer declares a removed migration error type. Web
+orchestration settings use the shared `offline` phase, and Fast Mode transitions
+omit absent optional approval/bypass fields instead of encoding `undefined`.

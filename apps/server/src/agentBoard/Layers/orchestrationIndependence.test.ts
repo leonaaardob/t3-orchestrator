@@ -125,6 +125,9 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
             ...created.board,
             cards: [
               {
+                priority: 1,
+                dependencies: [],
+                parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
                 id: "REOPEN-1",
                 title: "Reopen durability",
                 state: "Review",
@@ -146,6 +149,9 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
                 intentBrief: {
                   intent: "Prove file-backed reopen.",
                   acceptanceCriteria: ["Survives fresh layer"],
+                  constraints: [],
+                  nonGoals: [],
+                  openDecisions: [],
                 },
                 createdAt: "2026-08-31T12:00:00.000Z",
                 updatedAt: "2026-08-31T12:02:00.000Z",
@@ -197,6 +203,11 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
             ...created.board,
             cards: [
               {
+                priority: 1,
+                dependencies: [],
+                parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+                workflowMode: "standard" as const,
+                runtime: { attemptCount: 0, proofNotes: [] },
                 id: "REKEY-1",
                 title: "Created under path scope",
                 state: "Backlog",
@@ -277,6 +288,11 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
           ...created.board,
           cards: [
             {
+              priority: 1,
+              dependencies: [],
+              parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+              workflowMode: "standard" as const,
+              runtime: { attemptCount: 0, proofNotes: [] },
               id: "RACE-1",
               title: "Path-scoped first save",
               state: "Backlog" as const,
@@ -321,12 +337,20 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
           ...seeded.firstBoard,
           cards: [
             {
+              priority: 1,
+              dependencies: [],
+              parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+              workflowMode: "standard" as const,
+              runtime: { attemptCount: 0, proofNotes: [] },
               id: "RACE-1",
               title: "Newest board after durable id",
               state: "Ready" as const,
               intentBrief: {
                 intent: "Prove save clears path-scoped twin.",
                 acceptanceCriteria: ["Exactly one agent_boards row"],
+                constraints: [],
+                nonGoals: [],
+                openDecisions: [],
               },
               createdAt: "2026-08-31T12:00:00.000Z",
               updatedAt: "2026-08-31T12:20:00.000Z",
@@ -385,6 +409,11 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
           ...created.board,
           cards: [
             {
+              priority: 1,
+              dependencies: [],
+              parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+              workflowMode: "standard" as const,
+              runtime: { attemptCount: 0, proofNotes: [] },
               id: "DUP-1",
               title: "Durable wins",
               state: "Backlog" as const,
@@ -419,6 +448,7 @@ it.layer(Layer.mergeAll(NodeServices.layer))("orchestration repository independe
         `;
         // Simulate a historical race: both durable and interim rows exist.
         yield* service.save({ cwd, board });
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Raw persisted legacy JSON fixture.
         const staleInterimJson = JSON.stringify({
           schemaVersion: 1,
           projectRoot: created.board.projectRoot,

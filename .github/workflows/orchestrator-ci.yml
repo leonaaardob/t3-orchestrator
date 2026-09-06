@@ -2,7 +2,6 @@ name: Orchestrator CI
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -47,6 +46,7 @@ jobs:
           CHECK_PACKAGE: ${{ matrix.package }}
         run: vp run --filter "$CHECK_PACKAGE" typecheck
       - name: Tests
+        if: ${{ !cancelled() }}
         env:
           CHECK_PACKAGE: ${{ matrix.package }}
         run: vp run --filter "$CHECK_PACKAGE" test

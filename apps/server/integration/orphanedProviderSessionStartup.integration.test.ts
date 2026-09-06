@@ -1,3 +1,4 @@
+import * as VcsProvisioningService from "../src/vcs/VcsProvisioningService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -59,6 +60,11 @@ const makePersistedRuntimeLayer = (dbPath: string) => {
   const persistence = makeSqlitePersistenceLive(dbPath);
   const orchestration = OrchestrationLayerLive.pipe(
     Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      Layer.mock(VcsProvisioningService.VcsProvisioningService)({
+        ensureGitRepositoryReady: () => Effect.void,
+      }),
+    ),
     Layer.provideMerge(persistence),
   );
   const directory = ProviderSessionDirectoryLive.pipe(

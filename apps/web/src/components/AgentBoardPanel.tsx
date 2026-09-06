@@ -3717,9 +3717,6 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                                 workflowMode: "fast",
                                 fastModeApproval: {
                                   requestedAt: card.fastModeApproval?.requestedAt ?? requestedAt,
-                                  approvedAt: undefined,
-                                  approvedBy: undefined,
-                                  rejectedAt: undefined,
                                   bypassedStages: card.fastModeApproval?.bypassedStages ?? [],
                                 },
                                 state:
@@ -3747,6 +3744,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                           onClick={() => {
                             const approvedAt = new Date().toISOString();
                             updateDetailCard((card) => {
+                              const { reviewBypass: _reviewBypass, ...cardWithoutBypass } = card;
                               const {
                                 currentError: _e,
                                 currentDecisionQuestion: _q,
@@ -3776,20 +3774,20 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
                           onClick={() => {
                             const rejectedAt = new Date().toISOString();
                             updateDetailCard((card) => {
+                              const { reviewBypass: _reviewBypass, ...cardWithoutBypass } = card;
                               const {
                                 currentError: _e,
                                 currentDecisionQuestion: _q,
                                 ...runtimeRest
                               } = card.runtime;
                               return {
-                                ...card,
+                                ...cardWithoutBypass,
                                 workflowMode: "standard",
                                 fastModeApproval: {
                                   requestedAt: card.fastModeApproval?.requestedAt ?? rejectedAt,
                                   rejectedAt,
                                   bypassedStages: [],
                                 },
-                                reviewBypass: undefined,
                                 state: card.state === "Needs Decision" ? "Ready" : card.state,
                                 runtime: runtimeRest,
                               } as AgentBoardCard;

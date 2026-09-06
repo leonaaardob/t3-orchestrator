@@ -65,4 +65,4 @@ export interface AgentBoardFileSystemShape {
 export class AgentBoardFileSystem extends Context.Service<
   AgentBoardFileSystem,
   AgentBoardFileSystemShape
->()("t3/agentBoard/Services/AgentBoardFileSystem") {}
+>()("t3-orchestrator/agentBoard/Services/AgentBoardFileSystem") {}

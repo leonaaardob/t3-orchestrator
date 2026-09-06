@@ -1,3 +1,4 @@
+import { AcpRequestError } from "effect-acp/errors";
 import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -153,7 +154,12 @@ describe("applyCursorAcpModelSelection", () => {
       setModel: (value: string) => {
         calls.push({ type: "model", value });
         if (value === "gemini-3.7-flash-high") {
-          return Effect.fail({ message: 'Invalid value "gemini-3.7-flash-high"' });
+          return Effect.fail(
+            new AcpRequestError({
+              code: -32602,
+              errorMessage: 'Invalid value "gemini-3.7-flash-high"',
+            }),
+          );
         }
         return Effect.void;
       },

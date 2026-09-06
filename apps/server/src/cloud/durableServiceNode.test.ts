@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Tests host-specific executable path discovery.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import {

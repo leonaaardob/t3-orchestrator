@@ -112,7 +112,7 @@ const slugCardId = (title: string, timestamp: string): string => {
     .replaceAll(/[^a-z0-9]+/g, "-")
     .replaceAll(/^-+|-+$/g, "")
     .slice(0, 40);
-  return `TASK-${day}-${slug || "card"}-${Date.now()}`;
+  return `TASK-${day}-${slug || "card"}-${Date.parse(timestamp)}`;
 };
 
 const mapBoardFsError = (operation: string) => (cause: { readonly message: string }) =>
