@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { AgentBoardCard } from "@t3tools/contracts";
+import { AgentBoardCard } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { prepareCardForReady } from "./agentBoardReady.ts";
+
+const encodeCard = Schema.encodeSync(AgentBoardCard);
 
 const baseCard = {
   id: "CARD-1",
@@ -34,6 +37,7 @@ describe("prepareCardForReady", () => {
     expect(next.intentBrief?.intent).toContain("Ship Ready");
     expect(next.taskRecordPath).toBeUndefined();
     expect(next.slicePlanPath).toBeUndefined();
+    expect(() => encodeCard(next)).not.toThrow();
     expect(next.updatedAt).toBe("2026-08-31T12:05:00.000Z");
   });
 

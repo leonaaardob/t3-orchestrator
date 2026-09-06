@@ -9,13 +9,14 @@ export function prepareCardForReady(input: {
   readonly intentBrief: AgentBoardIntentBrief;
   readonly timestamp: string;
 }): AgentBoardCard {
+  const { taskRecordPath, slicePlanPath, ...card } = input.card;
   return {
-    ...input.card,
+    ...card,
     state: "Ready",
     intentBrief: input.intentBrief,
     // Preserve explicit optional references only — never invent defaults.
-    taskRecordPath: input.card.taskRecordPath,
-    slicePlanPath: input.card.slicePlanPath,
+    ...(taskRecordPath?.trim() ? { taskRecordPath } : {}),
+    ...(slicePlanPath?.trim() ? { slicePlanPath } : {}),
     updatedAt: input.timestamp,
-  } as AgentBoardCard;
+  };
 }
