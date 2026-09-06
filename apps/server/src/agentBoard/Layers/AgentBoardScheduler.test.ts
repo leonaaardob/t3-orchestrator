@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Clock, Duration, Effect, FileSystem, Layer, Option, Path, Queue, Stream } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
@@ -175,6 +175,7 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
   let launchMode: "launch" | "missing-config" = "launch";
   let launchedThreadCounter = 0;
   let schedulerSaveCount = 0;
+  const savedBoards = yield* Queue.unbounded<AgentBoardFile>();
 
   const toRunnerFailure = (cardId: string, operation: string, cause: unknown) =>
     new AgentBoardRunnerError({
@@ -418,7 +419,9 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
       Effect.suspend(() =>
         Effect.gen(function* () {
           schedulerSaveCount += 1;
-          return yield* boardFiles.save(input);
+          const saved = yield* boardFiles.save(input);
+          yield* Queue.offer(savedBoards, saved.board);
+          return saved;
         }),
       ),
     claim: (input) => boardFiles.claim(input),
@@ -490,6 +493,14 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
       launchMode = mode;
     },
     schedulerSaves: () => schedulerSaveCount,
+    awaitSavedCard: (matches: (card: AgentBoardCard) => boolean) =>
+      Effect.gen(function* () {
+        for (;;) {
+          const board = yield* Queue.take(savedBoards);
+          const card = board.cards.find(matches);
+          if (card) return card;
+        }
+      }),
     setReviewText: (threadId: string, text: string) => {
       fakeDetails.set(threadId, { text });
     },
@@ -934,60 +945,51 @@ describe("AgentBoardSchedulerLive", () => {
         }),
       ]);
       yield* harness.start();
-      yield* waitFor(() =>
-        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Reviewing")),
-      );
-      const reviewingCard = (yield* harness.readBoard()).cards[0];
-      const reviewId = reviewingCard?.runtime.reviewRunId as unknown as string;
+      const reviewingCard = yield* harness.awaitSavedCard((card) => card.state === "Reviewing");
+      const reviewId = reviewingCard.runtime.reviewRunId;
+      if (!reviewId) throw new Error("Expected a persisted review thread.");
       harness.setReviewText(reviewId, "Missing tests.\nREVIEW: FAIL - tests failing");
+      // Keep the repair incomplete until its board transition has been persisted.
+      harness.threads.set("t1", {
+        latestTurnState: "running",
+        sessionStatus: "running",
+        lastError: null,
+        updatedAt: TFRESH,
+      });
       harness.threads.set(reviewId, {
         latestTurnState: "completed",
         sessionStatus: "ready",
         lastError: null,
         updatedAt: TFRESH,
       });
-      yield* waitFor(() =>
-        Effect.sync(() =>
-          harness
-            .dispatchedCommands()
-            .some(
-              (c) =>
-                c.type === "thread.turn.start" && (c as { threadId: string }).threadId === "t1",
-            ),
-        ),
-      );
-      let card = (yield* harness.readBoard()).cards[0];
-      expect(card?.runtime.attemptCount).toBe(2);
-      expect(card?.runtime.currentError).toContain("tests failing");
+      const repairingCard = yield* harness.awaitSavedCard((card) => card.state === "Diagnosing");
+      expect(repairingCard.runtime.attemptCount).toBe(2);
+      expect(repairingCard.runtime.currentError).toContain("tests failing");
+      expect(
+        harness
+          .dispatchedCommands()
+          .some((command) => command.type === "thread.turn.start" && command.threadId === "t1"),
+      ).toBe(true);
       harness.threads.set("t1", {
         latestTurnState: "completed",
         sessionStatus: "ready",
         lastError: null,
         updatedAt: TFRESH,
       });
-      yield* waitFor(() =>
-        Effect.sync(
-          () => harness.dispatchedCommands().filter((c) => c.type === "thread.create").length === 2,
-        ),
-      );
-      // Now second review has been launched; complete it
-      for (const [tid, entry] of Array.from(harness.threads.entries())) {
-        if (entry.latestTurnState === "running") {
-          harness.setReviewText(tid, "REVIEW: PASS");
-          harness.threads.set(tid, {
-            latestTurnState: "completed",
-            sessionStatus: "ready",
-            lastError: null,
-            updatedAt: TFRESH,
-          });
-        }
-      }
-      yield* Effect.logInfo("test set second review to PASS", {
-        threads: Array.from(harness.threads.entries()).map(([k, v]) => [k, v.latestTurnState]),
+      const secondReviewCard = yield* harness.awaitSavedCard((card) => card.state === "Reviewing");
+      const secondReviewId = secondReviewCard.runtime.reviewRunId;
+      if (!secondReviewId) throw new Error("Expected a persisted second review thread.");
+      expect(secondReviewId).not.toBe(reviewId);
+      harness.setReviewText(secondReviewId, "REVIEW: PASS");
+      harness.threads.set(secondReviewId, {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: TFRESH,
       });
-      yield* waitFor(() =>
-        harness.readBoard().pipe(Effect.map((board) => board.cards[0]?.state === "Review")),
-      );
+      const reviewedCard = yield* harness.awaitSavedCard((card) => card.state === "Review");
+      expect(reviewedCard.runtime.attemptCount).toBe(2);
+      expect(reviewedCard.runtime.reviewRunId).toBe(secondReviewId);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
