@@ -1,6 +1,11 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type {
+  AgentBoardFileError,
+  AgentBoardRunInput,
+  AgentBoardRunResult,
+} from "@t3tools/contracts";
 
 import type { ServerConfig } from "../../config.ts";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
@@ -28,6 +33,15 @@ export type AgentBoardSchedulerRequirements =
   | ServerConfig;
 
 export interface AgentBoardSchedulerShape {
+  /** Reconcile a card's project immediately, preserving scheduling and human gates. */
+  readonly runCard: (
+    input: AgentBoardRunInput,
+  ) => Effect.Effect<
+    Pick<AgentBoardRunResult, "board" | "card">,
+    AgentBoardFileError,
+    AgentBoardSchedulerRequirements
+  >;
+
   /**
    * Start the always-on board scheduler loop within the provided scope.
    *
@@ -47,6 +61,11 @@ export interface AgentBoardSchedulerShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope | AgentBoardSchedulerRequirements>;
 }
 
+/**
+ * Runtime callers provide collaborators, as with AgentBoardRunner, to avoid
+ * a build-time cycle between scheduler, provider runtime and orchestration.
+ * @effect-expect-leaking AgentBoardFileSystem | AgentBoardRunner | GitWorkflowService | OrchestrationEngineService | ProjectionSnapshotQuery | ServerConfig | VcsProvisioningService
+ */
 export class AgentBoardScheduler extends Context.Service<
   AgentBoardScheduler,
   AgentBoardSchedulerShape

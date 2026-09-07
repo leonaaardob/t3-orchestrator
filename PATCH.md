@@ -298,6 +298,15 @@ updated_at)`.
     credential is reissued with the current capability set. Handlers re-check
     thread role and resolve project root from projection — never from a
     model-supplied path. Playbook names the tools.
+  - **0.0.43:** `agent_board_run_card` connects Supervisor delegation to
+    `AgentBoardScheduler.runCard`. Explicit requests and background ticks share
+    a scheduling lock; dependencies, capacity, priority, approval and review
+    gates stay in the existing scheduler. Preserve this service method, MCP
+    registration/dependencies, and Playbook tool instructions after upstream
+    merges; restore them together and run the MCP/runner/scheduler tests to
+    repair missing delegation. No client-specific launch path is required.
+    Scheduler snapshots are refreshed after each launch so a later approval
+    gate cannot overwrite worker runtime or reset a failed card to Ready.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
   - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the

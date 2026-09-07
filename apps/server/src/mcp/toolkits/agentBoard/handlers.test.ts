@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentBoardFileError,
+  type AgentBoardRunInput,
   EnvironmentId,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
@@ -17,6 +18,11 @@ import * as ServerConfig from "../../../config.ts";
 import { runMigrations } from "../../../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../../../persistence/NodeSqliteClient.ts";
 import { AgentBoardFileSystem } from "../../../agentBoard/Services/AgentBoardFileSystem.ts";
+import { AgentBoardRunner } from "../../../agentBoard/Services/AgentBoardRunner.ts";
+import { AgentBoardScheduler } from "../../../agentBoard/Services/AgentBoardScheduler.ts";
+import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { VcsProvisioningService } from "../../../vcs/VcsProvisioningService.ts";
 import { AgentBoardFileSystemLive } from "../../../agentBoard/Layers/AgentBoardFileSystem.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as WorkspacePathsModule from "../../../workspace/WorkspacePaths.ts";
@@ -98,6 +104,7 @@ const runSupervisorBoardCase = <A, E, R>(
     readonly cwdA: string;
     readonly cwdB: string;
     readonly toolkit: BoardToolkit;
+    readonly runRequests: Array<AgentBoardRunInput>;
   }) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
@@ -105,6 +112,7 @@ const runSupervisorBoardCase = <A, E, R>(
     const cwdB = yield* makeTempDir;
     const baseDir = yield* makeTempDir;
     const sqlite = NodeSqliteClient.layerMemory();
+    const runRequests: Array<AgentBoardRunInput> = [];
 
     const projects = new Map([
       [projectAId, makeProjectShell(projectAId, cwdA)],
@@ -162,6 +170,31 @@ const runSupervisorBoardCase = <A, E, R>(
     } as ProjectionSnapshotQuery["Service"]);
 
     const env = AgentBoardToolkitHandlersLive.pipe(
+      Layer.provideMerge(
+        Layer.mock(AgentBoardScheduler)({
+          runCard: (input) =>
+            Effect.gen(function* () {
+              runRequests.push(input);
+              const boardFs = yield* AgentBoardFileSystem;
+              const loaded = yield* boardFs
+                .load({ cwd: input.cwd, createIfMissing: false })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AgentBoardFileError({ message: `Cannot load board: ${cause.message}` }),
+                  ),
+                );
+              const card = loaded.board.cards.find((candidate) => candidate.id === input.cardId);
+              if (!card) return yield* new AgentBoardFileError({ message: "Card not found" });
+              return { board: loaded.board, card };
+            }),
+        }),
+      ),
+      Layer.provideMerge(Layer.mock(AgentBoardRunner)({})),
+      Layer.provideMerge(Layer.mock(GitWorkflowService)({})),
+      Layer.provideMerge(Layer.mock(OrchestrationEngineService)({})),
+      Layer.provideMerge(Layer.mock(VcsProvisioningService)({})),
+      Layer.provideMerge(ServerConfig.layerTest(cwdA, baseDir)),
       Layer.provideMerge(projectionMock),
       Layer.provide(
         AgentBoardFileSystemLive.pipe(
@@ -183,7 +216,7 @@ const runSupervisorBoardCase = <A, E, R>(
     return yield* Effect.gen(function* () {
       yield* runMigrations();
       const toolkit = yield* AgentBoardToolkit;
-      return yield* body({ cwdA, cwdB, toolkit });
+      return yield* body({ cwdA, cwdB, toolkit, runRequests });
     }).pipe(Effect.provide(env));
   });
 
@@ -315,6 +348,77 @@ it.layer(Layer.mergeAll(NodeServices.layer))("Supervisor agent-board MCP toolkit
   });
 
   describe("isolation", () => {
+    it.effect("delegates through the scheduler using only the Supervisor's project", () =>
+      runSupervisorBoardCase(({ cwdA, toolkit, runRequests }) =>
+        Effect.gen(function* () {
+          const invocation = invocationFor(supervisorThreadA, ["agent-board"]);
+          yield* runTool(
+            toolkit,
+            "agent_board_create_card",
+            {
+              id: "RUN-ME",
+              title: "Run me",
+              intent: "Verify delegation",
+              markReady: true,
+            },
+            invocation,
+          );
+          const result = yield* runTool(
+            toolkit,
+            "agent_board_run_card",
+            {
+              cardId: "RUN-ME",
+            },
+            invocation,
+          );
+          expect(runRequests).toEqual([{ cwd: cwdA, cardId: "RUN-ME" }]);
+          expect(result.encodedResult).toMatchObject({
+            projectId: projectAId,
+            projectRoot: cwdA,
+            storageRef: "t3://orchestration/agent-board",
+            card: { id: "RUN-ME", state: "Ready" },
+          });
+          yield* runTool(
+            toolkit,
+            "agent_board_read",
+            {},
+            invocationFor(supervisorThreadB, ["agent-board"]),
+          );
+          const foreign = yield* runTool(
+            toolkit,
+            "agent_board_run_card",
+            {
+              cardId: "RUN-ME",
+            },
+            invocationFor(supervisorThreadB, ["agent-board"]),
+          ).pipe(Effect.flip);
+          expect(foreign.message).toContain("not found");
+        }),
+      ),
+    );
+
+    it.effect("denies launch without both capability and durable Supervisor role", () =>
+      runSupervisorBoardCase(({ toolkit, runRequests }) =>
+        Effect.gen(function* () {
+          for (const invocation of [
+            invocationFor(supervisorThreadA, ["preview"]),
+            invocationFor(standardThreadA, ["agent-board"]),
+          ]) {
+            const denied = yield* runTool(
+              toolkit,
+              "agent_board_run_card",
+              {
+                cardId: "RUN-ME",
+              },
+              invocation,
+            ).pipe(Effect.flip);
+            expect(denied.message).toContain("agent-board");
+          }
+          expect(runRequests).toEqual([]);
+        }),
+      ),
+    );
+
     it.effect("Test D: Supervisor A cannot mutate project B board/cards", () =>
       runSupervisorBoardCase(({ toolkit }) =>
         Effect.gen(function* () {

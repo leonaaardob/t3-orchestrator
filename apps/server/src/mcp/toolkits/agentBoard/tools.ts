@@ -10,6 +10,12 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import { AgentBoardFileSystem } from "../../../agentBoard/Services/AgentBoardFileSystem.ts";
+import { AgentBoardRunner } from "../../../agentBoard/Services/AgentBoardRunner.ts";
+import { AgentBoardScheduler } from "../../../agentBoard/Services/AgentBoardScheduler.ts";
+import { ServerConfig } from "../../../config.ts";
+import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { VcsProvisioningService } from "../../../vcs/VcsProvisioningService.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -24,6 +30,11 @@ const PositivePriority = PositiveInt;
 /** Empty parameters — project identity comes from the Supervisor session. */
 export const AgentBoardReadInput = Schema.Struct({});
 export type AgentBoardReadInput = typeof AgentBoardReadInput.Type;
+
+export const AgentBoardRunCardInput = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+});
+export type AgentBoardRunCardInput = typeof AgentBoardRunCardInput.Type;
 
 export const AgentBoardReadResult = Schema.Struct({
   storageRef: Schema.Literal("t3://orchestration/agent-board"),
@@ -130,8 +141,28 @@ export const AgentBoardUpdateCardTool = boardTool(
   }).annotate(Tool.Title, "Update agent board card"),
 );
 
+export const AgentBoardRunCardTool = boardTool(
+  Tool.make("agent_board_run_card", {
+    description:
+      "Request execution of a Ready card in the Supervisor's current project through the T3 scheduler. Preserves dependencies, priority, concurrency limits, execution presets and human approval gates. Returns the persisted card and worker runtime; Ready means queued, Blocked/Needs Decision includes the reason. Repeated calls do not duplicate active runs. The scheduler handles independent review and repair; REVIEW: PASS is not human Done.",
+    parameters: AgentBoardRunCardInput,
+    success: AgentBoardCardMutationResult,
+    failure: AgentBoardFileError,
+    dependencies: [
+      ...dependencies,
+      AgentBoardScheduler,
+      AgentBoardRunner,
+      ServerConfig,
+      GitWorkflowService,
+      OrchestrationEngineService,
+      VcsProvisioningService,
+    ],
+  }).annotate(Tool.Title, "Run agent board card"),
+);
+
 export const AgentBoardToolkit = Toolkit.make(
   AgentBoardReadTool,
   AgentBoardCreateCardTool,
   AgentBoardUpdateCardTool,
+  AgentBoardRunCardTool,
 );

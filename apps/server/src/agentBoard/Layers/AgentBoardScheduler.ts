@@ -6,10 +6,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   type AgentBoardCard,
   type AgentBoardFile,
+  AgentBoardFileError,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -116,6 +118,7 @@ const outcome = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<Outcome
 
 const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
   Effect.gen(function* () {
+    const scheduling = yield* Semaphore.make(1);
     // Platform-only collaborator (command/message ids). Domain services are
     // resolved per tick so this Live layer carries no cross-domain build-time
     // dependencies — the calling fiber provides them.
@@ -1619,9 +1622,21 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             }
           }
         }
+        // Persist pending gates before the runner writes its own runtime state.
+        if (dirty) {
+          const saved = yield* boardFiles.save({
+            cwd,
+            board: { ...board, updatedAt: yield* nowIso },
+          });
+          board = saved.board;
+          dirty = false;
+        }
         const launchOutcome = yield* outcome(
           input.collaborators.runner.run({ cwd, cardId: candidate.id }),
         );
+        // Later gate patches must not overwrite a launched/blocked worker with
+        // the Ready card from the snapshot taken before the run.
+        board = (yield* boardFiles.load({ cwd, createIfMissing: false })).board;
         if (launchOutcome._tag === "error") {
           // The runner already persisted `Blocked` + `currentError`; log it
           // and move on to the next candidate.
@@ -1678,7 +1693,56 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           ),
         );
       }
-    });
+    }, scheduling.withPermits(1));
+
+    const runCard: AgentBoardSchedulerShape["runCard"] = Effect.fn("AgentBoardScheduler.runCard")(
+      function* (input) {
+        const collaborators: TickCollaborators = {
+          boardFiles: yield* AgentBoardFileSystem,
+          runner: yield* AgentBoardRunner,
+          orchestrationEngine: yield* OrchestrationEngineService,
+          projectionSnapshotQuery: yield* ProjectionSnapshotQuery,
+        };
+        const loaded = yield* collaborators.boardFiles.load({
+          cwd: input.cwd,
+          createIfMissing: false,
+        });
+        const card = loaded.board.cards.find((candidate) => candidate.id === input.cardId);
+        if (!card) {
+          return yield* new AgentBoardFileError({
+            message: `Agent board card not found: ${input.cardId}`,
+          });
+        }
+        // Repeated calls observe active/completed runs instead of starting duplicates.
+        if (
+          card.state !== "Ready" &&
+          card.state !== "Running" &&
+          card.state !== "Reviewing" &&
+          card.state !== "Diagnosing"
+        )
+          return { board: loaded.board, card };
+        yield* processProject({ collaborators, cwd: input.cwd });
+        const refreshed = yield* collaborators.boardFiles.load({
+          cwd: input.cwd,
+          createIfMissing: false,
+        });
+        const current = refreshed.board.cards.find((candidate) => candidate.id === input.cardId);
+        if (!current) {
+          return yield* new AgentBoardFileError({
+            message: `Agent board card not found: ${input.cardId}`,
+          });
+        }
+        return { board: refreshed.board, card: current };
+      },
+      scheduling.withPermits(1),
+      Effect.mapError(
+        (cause) =>
+          new AgentBoardFileError({
+            message: `Failed to schedule agent board card: ${cause.message}`,
+            cause,
+          }),
+      ),
+    );
 
     const start: AgentBoardSchedulerShape["start"] = () =>
       Effect.gen(function* () {
@@ -1704,6 +1768,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
 
     return {
       start,
+      runCard,
     } satisfies AgentBoardSchedulerShape;
   });
 

@@ -11,12 +11,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { AgentBoardFileSystem } from "../../../agentBoard/Services/AgentBoardFileSystem.ts";
+import { AgentBoardScheduler } from "../../../agentBoard/Services/AgentBoardScheduler.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   type AgentBoardCardMutationResult,
   type AgentBoardCreateCardInput,
   type AgentBoardReadResult,
+  type AgentBoardRunCardInput,
   type AgentBoardUpdateCardInput,
   AgentBoardToolkit,
 } from "./tools.ts";
@@ -328,8 +330,21 @@ const updateCard = Effect.fn("AgentBoardToolkit.updateCard")(function* (
   };
 });
 
+const runCard = Effect.fn("AgentBoardToolkit.runCard")(function* (input: AgentBoardRunCardInput) {
+  const { projectId, projectRoot } = yield* requireSupervisorProjectContext();
+  const scheduler = yield* AgentBoardScheduler;
+  const result = yield* scheduler.runCard({ cwd: projectRoot, cardId: input.cardId });
+  return {
+    storageRef: "t3://orchestration/agent-board" as const,
+    projectId,
+    projectRoot,
+    ...result,
+  };
+});
+
 export const AgentBoardToolkitHandlersLive = AgentBoardToolkit.toLayer({
   agent_board_read: readBoard,
   agent_board_create_card: createCard,
   agent_board_update_card: updateCard,
+  agent_board_run_card: runCard,
 });

@@ -42,6 +42,14 @@ minted for the provider turn:
 - `agent_board_read`
 - `agent_board_create_card`
 - `agent_board_update_card`
+- `agent_board_run_card`
+
+`agent_board_run_card` immediately reconciles the owning project through the
+same scheduler as automatic Ready-card execution. Scheduler ticks and explicit
+requests share a lock, preserving dependencies, priority, concurrency limits,
+Fast Mode approval, and duplicate-run protection. The returned persisted card
+distinguishes queued Ready work, an active worker, and launch failures. Review
+and repair remain scheduler-owned, and Done remains a human decision.
 
 These tools are gated by the `agent-board` MCP capability (issued only for
 `project-supervisor` threads) and re-check durable thread role + project id from

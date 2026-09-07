@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Stream from "effect/Stream";
+import * as DateTime from "effect/DateTime";
 import {
   type AgentBoardFile,
   EnvironmentId,
@@ -9,7 +10,12 @@ import {
   type OrchestrationProject,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
+  type OrchestrationThreadShell,
+  type OrchestrationProjectShell,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
+import * as Sink from "effect/Sink";
 
 import {
   buildAgentBoardImplementationPrompt,
@@ -25,6 +31,10 @@ import {
   resolveOrchestrationWorkspacePath,
 } from "./AgentBoardFileSystem.ts";
 import { AgentBoardRunnerLive } from "./AgentBoardRunner.ts";
+import { AgentBoardSchedulerLive } from "./AgentBoardScheduler.ts";
+import { AgentBoardToolkit } from "../../mcp/toolkits/agentBoard/tools.ts";
+import { AgentBoardToolkitHandlersLive } from "../../mcp/toolkits/agentBoard/handlers.ts";
+import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
 import * as WorkspacePathsModule from "../../workspace/WorkspacePaths.ts";
 import * as ServerConfig from "../../config.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
@@ -261,6 +271,7 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
   return {
     cwd,
     baseDir,
+    runInEnv,
     boardFiles: {
       load: (input: { cwd: string; createIfMissing?: boolean }) =>
         runInEnv(
@@ -296,6 +307,135 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
 });
 
 describe("AgentBoardRunnerLive", () => {
+  it.effect("Supervisor MCP creates, launches and independently reviews a persisted card", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ boardWorkerModelSelection: BOARD_WORKER_SELECTION });
+      yield* harness.runInEnv(
+        Effect.gen(function* () {
+          const boardFs = yield* AgentBoardFileSystem;
+          const loaded = yield* boardFs.load({ cwd: harness.cwd, createIfMissing: false });
+          yield* boardFs.save({ cwd: harness.cwd, board: { ...loaded.board, cards: [] } });
+          const projection = yield* ProjectionSnapshotQuery;
+          const supervisorId = ThreadId.make("supervisor-e2e");
+          const completed = new Set<string>();
+          const timestamp = yield* Effect.map(DateTime.now, DateTime.formatIso);
+          const project = {
+            id: PROJECT_ID,
+            workspaceRoot: harness.cwd,
+            scripts: [],
+          } as unknown as OrchestrationProjectShell;
+          const projected = {
+            ...projection,
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+            getThreadShellById: (threadId: ThreadId) =>
+              Effect.sync(() => {
+                if (threadId === supervisorId)
+                  return Option.some({
+                    id: supervisorId,
+                    projectId: PROJECT_ID,
+                    role: "project-supervisor",
+                  } as OrchestrationThreadShell);
+                const command = harness
+                  .dispatchedCommands()
+                  .find(
+                    (candidate) =>
+                      candidate.type === "thread.create" && candidate.threadId === threadId,
+                  );
+                if (command?.type !== "thread.create") return Option.none();
+                return Option.some({
+                  ...command,
+                  id: threadId,
+                  projectId: PROJECT_ID,
+                  latestTurn: { state: completed.has(threadId) ? "completed" : "running" },
+                  session: { status: completed.has(threadId) ? "ready" : "running" },
+                  updatedAt: timestamp,
+                } as unknown as OrchestrationThreadShell);
+              }),
+            getThreadDetailById: () =>
+              Effect.succeed(
+                Option.some({
+                  messages: [
+                    { role: "assistant", text: "Verified acceptance criteria. REVIEW: PASS" },
+                  ],
+                  activities: [],
+                } as unknown as OrchestrationThread),
+              ),
+          };
+          yield* Effect.gen(function* () {
+            const toolkit = yield* AgentBoardToolkit;
+            const call = (
+              name: keyof typeof toolkit.tools,
+              params: Parameters<typeof toolkit.handle>[1],
+            ) =>
+              Effect.gen(function* () {
+                const stream = yield* toolkit.handle(name, params);
+                return yield* Stream.run(stream, Sink.last()).pipe(
+                  Effect.flatMap(Effect.fromOption),
+                );
+              });
+            yield* call("agent_board_create_card", {
+              id: CARD_ID,
+              title: "End-to-end delegation",
+              intent: "Verify worker and independent review",
+              acceptanceCriteria: ["Worker and reviewer have separate threads"],
+              markReady: true,
+            });
+            const launched = yield* call("agent_board_run_card", { cardId: CARD_ID });
+            expect(launched.encodedResult).toMatchObject({ card: { state: "Running" } });
+            const implementation = harness
+              .dispatchedCommands()
+              .find((command) => command.type === "thread.create");
+            if (implementation?.type !== "thread.create")
+              throw new Error("Missing implementation thread");
+            yield* call("agent_board_run_card", { cardId: CARD_ID });
+            expect(harness.createWorktreeCalls()).toBe(1);
+            completed.add(implementation.threadId);
+            const reviewing = yield* call("agent_board_run_card", { cardId: CARD_ID });
+            expect(reviewing.encodedResult).toMatchObject({ card: { state: "Reviewing" } });
+            const review = harness
+              .dispatchedCommands()
+              .filter((command) => command.type === "thread.create")[1];
+            if (review?.type !== "thread.create")
+              throw new Error("Missing independent review thread");
+            expect(review.threadId).not.toBe(implementation.threadId);
+            expect(review.worktreePath).toBe(implementation.worktreePath);
+            completed.add(review.threadId);
+            const reviewed = yield* call("agent_board_run_card", { cardId: CARD_ID });
+            expect(reviewed.encodedResult).toMatchObject({
+              card: {
+                state: "Review",
+                runtime: {
+                  implementationRunId: implementation.threadId,
+                  reviewRunId: review.threadId,
+                },
+              },
+            });
+            const reread = yield* call("agent_board_read", {});
+            expect(reread.encodedResult).toMatchObject({ board: { cards: [{ state: "Review" }] } });
+            expect(
+              harness
+                .dispatchedCommands()
+                .filter((command) => command.type === "thread.turn.start"),
+            ).toHaveLength(2);
+          }).pipe(
+            Effect.provide(
+              AgentBoardToolkitHandlersLive.pipe(Layer.provideMerge(AgentBoardSchedulerLive)),
+            ),
+            Effect.provideService(ProjectionSnapshotQuery, projected),
+            Effect.provideService(McpInvocationContext, {
+              environmentId: EnvironmentId.make("env-e2e"),
+              threadId: supervisorId,
+              providerSessionId: "supervisor-session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              capabilities: new Set(["agent-board"] as const),
+              issuedAt: 1,
+            }),
+          );
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("launches a claimed card end to end headless (happy path)", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ boardWorkerModelSelection: BOARD_WORKER_SELECTION });

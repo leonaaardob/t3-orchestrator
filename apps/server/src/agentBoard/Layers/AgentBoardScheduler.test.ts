@@ -448,6 +448,9 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
     cwd,
     baseDir,
     boardFiles,
+    withScheduler: <A, E, R>(
+      body: (scheduler: AgentBoardScheduler["Service"]) => Effect.Effect<A, E, R>,
+    ) => Effect.flatMap(AgentBoardScheduler, body).pipe(Effect.provide(schedulerEnvironment)),
     start: () =>
       Effect.gen(function* () {
         const scheduler = yield* AgentBoardScheduler;
@@ -511,6 +514,65 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
 });
 
 describe("AgentBoardSchedulerLive", () => {
+  it.effect("explicit concurrent requests launch once and preserve capacity and dependencies", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.seedBoard([
+        makeCard({ id: "c1" }),
+        makeCard({ id: "c2", priority: 2 }),
+        makeCard({ id: "dependent", dependencies: ["unfinished"] }),
+      ]);
+      yield* harness.withScheduler((scheduler) =>
+        Effect.gen(function* () {
+          const results = yield* Effect.all(
+            [
+              scheduler.runCard({ cwd: harness.cwd, cardId: "c1" }),
+              scheduler.runCard({ cwd: harness.cwd, cardId: "c1" }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(results.map((result) => result.card.state)).toEqual(["Running", "Running"]);
+          expect(results[0]?.card.runtime.implementationRunId).toBe(
+            results[1]?.card.runtime.implementationRunId,
+          );
+          expect((yield* scheduler.runCard({ cwd: harness.cwd, cardId: "c2" })).card.state).toBe(
+            "Ready",
+          );
+          expect(
+            (yield* scheduler.runCard({ cwd: harness.cwd, cardId: "dependent" })).card.state,
+          ).toBe("Ready");
+          expect(harness.runCalls().map((call) => call.cardId)).toEqual(["c1"]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("explicit requests return persisted missing-config and approval failures", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.seedBoard([
+        makeCard({ id: "missing-config" }),
+        makeCard({ id: "fast", workflowMode: "fast" }),
+      ]);
+      harness.setLaunchMode("missing-config");
+      yield* harness.withScheduler((scheduler) =>
+        Effect.gen(function* () {
+          const blocked = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "missing-config" });
+          expect(blocked.card.state).toBe("Blocked");
+          expect(blocked.card.runtime.currentError).toContain(MISSING_WORKER_CONFIG_ERROR);
+          const fast = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "fast" });
+          expect(fast.card.state).toBe("Needs Decision");
+          expect(fast.card.runtime.currentDecisionQuestion).toBe(FAST_MODE_APPROVAL_QUESTION);
+          expect(harness.runCalls().map((call) => call.cardId)).toEqual(["missing-config"]);
+          const missing = yield* scheduler
+            .runCard({ cwd: harness.cwd, cardId: "absent" })
+            .pipe(Effect.flip);
+          expect(missing.message).toContain("not found");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("claims an eligible Ready card through the runner service", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
