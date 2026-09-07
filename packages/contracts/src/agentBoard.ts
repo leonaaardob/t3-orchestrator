@@ -81,6 +81,8 @@ export const AgentBoardRuntime = Schema.Struct({
   branchName: Schema.optionalKey(TrimmedNonEmptyString),
   implementationRunId: Schema.optionalKey(RuntimeSessionId),
   reviewRunId: Schema.optionalKey(RuntimeSessionId),
+  /** Wait for this repair request to appear in the projected latest turn. */
+  repairRequestedAt: Schema.optionalKey(IsoDateTime),
   attemptCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   lastHeartbeatAt: Schema.optionalKey(IsoDateTime),
   currentError: Schema.optionalKey(TrimmedNonEmptyString),

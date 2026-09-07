@@ -50,6 +50,10 @@ requests share a lock, preserving dependencies, priority, concurrency limits,
 Fast Mode approval, and duplicate-run protection. The returned persisted card
 distinguishes queued Ready work, an active worker, and launch failures. Review
 and repair remain scheduler-owned, and Done remains a human decision.
+Before review, the scheduler stores the completed worker turn's assistant report
+in card proof notes and includes it in the reviewer packet. Repair requests store
+their timestamp in `runtime.repairRequestedAt`; the previous completed turn cannot
+trigger another review while the new request is still awaiting projection.
 
 These tools are gated by the `agent-board` MCP capability (issued only for
 `project-supervisor` threads) and re-check durable thread role + project id from

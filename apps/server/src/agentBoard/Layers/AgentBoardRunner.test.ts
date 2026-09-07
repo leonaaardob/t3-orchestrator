@@ -129,6 +129,7 @@ const makeHarness = Effect.fn("AgentBoardRunner.test.makeHarness")(function* (op
   const serverConfigLayer = ServerConfig.layerTest(cwd, baseDir);
 
   const projectionSnapshotQueryLayer = Layer.mock(ProjectionSnapshotQuery)({
+    getThreadDetailById: () => Effect.succeed(Option.none()),
     getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
       Effect.suspend(() =>
         workspaceRoot === cwd
@@ -351,11 +352,20 @@ describe("AgentBoardRunnerLive", () => {
                   updatedAt: timestamp,
                 } as unknown as OrchestrationThreadShell);
               }),
-            getThreadDetailById: () =>
+            getThreadDetailById: (threadId: ThreadId) =>
               Effect.succeed(
                 Option.some({
                   messages: [
-                    { role: "assistant", text: "Verified acceptance criteria. REVIEW: PASS" },
+                    {
+                      role: "assistant",
+                      text:
+                        harness
+                          .dispatchedCommands()
+                          .find((command) => command.type === "thread.create")?.threadId ===
+                        threadId
+                          ? "Worker proof: node -e verification succeeded; smoke.txt contains the expected bytes."
+                          : "Verified acceptance criteria. REVIEW: PASS",
+                    },
                   ],
                   activities: [],
                 } as unknown as OrchestrationThread),
@@ -399,6 +409,16 @@ describe("AgentBoardRunnerLive", () => {
               throw new Error("Missing independent review thread");
             expect(review.threadId).not.toBe(implementation.threadId);
             expect(review.worktreePath).toBe(implementation.worktreePath);
+            const reviewStart = harness
+              .dispatchedCommands()
+              .find(
+                (command) =>
+                  command.type === "thread.turn.start" && command.threadId === review.threadId,
+              );
+            if (reviewStart?.type !== "thread.turn.start") throw new Error("Missing review turn");
+            expect(reviewStart.message.text).toContain(
+              "Worker proof: node -e verification succeeded",
+            );
             completed.add(review.threadId);
             const reviewed = yield* call("agent_board_run_card", { cardId: CARD_ID });
             expect(reviewed.encodedResult).toMatchObject({
@@ -412,6 +432,10 @@ describe("AgentBoardRunnerLive", () => {
             });
             const reread = yield* call("agent_board_read", {});
             expect(reread.encodedResult).toMatchObject({ board: { cards: [{ state: "Review" }] } });
+            const persisted = yield* boardFs.load({ cwd: harness.cwd, createIfMissing: false });
+            expect(persisted.board.cards[0]?.runtime.proofNotes.join("\n")).toContain(
+              "Worker proof: node -e verification succeeded",
+            );
             expect(
               harness
                 .dispatchedCommands()

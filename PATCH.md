@@ -307,6 +307,11 @@ updated_at)`.
     repair missing delegation. No client-specific launch path is required.
     Scheduler snapshots are refreshed after each launch so a later approval
     gate cannot overwrite worker runtime or reset a failed card to Ready.
+    Completed worker reports are copied into bounded card proof notes before
+    review prompts are built. `AgentBoardRuntime.repairRequestedAt` persists
+    the repair request timestamp so reconciliation waits for that turn rather
+    than re-reviewing the previous completed turn. Preserve this optional
+    contract field and the proof handoff when updating projections/providers.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
   - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the

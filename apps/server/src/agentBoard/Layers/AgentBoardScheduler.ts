@@ -18,6 +18,7 @@ import {
   FAST_MODE_APPROVAL_QUESTION,
   MessageId,
   ThreadId,
+  type TurnId,
 } from "@t3tools/contracts";
 import {
   buildAgentBoardRepairPrompt,
@@ -181,6 +182,39 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
       return messages.map((m) => m.text).join("\n");
     };
 
+    const captureWorkerProof = Effect.fn("AgentBoardScheduler.captureWorkerProof")(function* (
+      collaborators: TickCollaborators,
+      card: AgentBoardCard,
+      turnId: TurnId,
+    ) {
+      const runId = card.runtime.implementationRunId;
+      if (!runId) return card;
+      const heading = `### Worker report — ${runId} / ${turnId}`;
+      if (card.runtime.proofNotes.some((note) => note.startsWith(heading))) return card;
+      const detail = yield* collaborators.projectionSnapshotQuery.getThreadDetailById(
+        ThreadId.make(runId),
+      );
+      if (Option.isNone(detail)) return card;
+      const messages = detail.value.messages.filter(
+        (message) =>
+          message.role === "assistant" && (message.turnId === turnId || message.turnId == null),
+      );
+      const report = messages
+        .map((message) => message.text)
+        .join("\n")
+        .trim();
+      if (!report) return card;
+      return {
+        ...card,
+        runtime: {
+          ...card.runtime,
+          proofNotes: [...card.runtime.proofNotes, `${heading}\n${truncate(report, 16000)}`].slice(
+            -50,
+          ),
+        },
+      };
+    });
+
     /** Short continuation message for a retry turn — never the full prompt. */
     const continuationMessage = (card: AgentBoardCard, lastError: string): string =>
       [
@@ -266,7 +300,10 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         readonly detail: string;
       }) {
         const runId = input.card.runtime.implementationRunId;
-        if (runId === undefined) return null;
+        if (runId === undefined)
+          return yield* new AgentBoardFileError({
+            message: "No implementation thread available for repair.",
+          });
         yield* input.orchestrationEngine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make(yield* nextUuid),
@@ -564,7 +601,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                   cardId: input.card.id,
                   detail: validated.error,
                 });
-                return null;
+                return yield* new AgentBoardFileError({ message: validated.error });
               }
               if (validated._tag === "resolved") {
                 repairModelSelection = validated.selection;
@@ -574,6 +611,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             }
           }
         }
+        const requestedAt = yield* nowIso;
         yield* input.collaborators.orchestrationEngine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make(yield* nextUuid),
@@ -587,7 +625,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           ...(repairModelSelection ? { modelSelection: repairModelSelection } : {}),
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          createdAt: yield* nowIso,
+          createdAt: requestedAt,
         });
         yield* Effect.logInfo("agentBoard.scheduler.repair-dispatched", {
           cwd: input.cwd,
@@ -595,7 +633,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           threadId: runId,
           reason: truncate(input.reviewReason, 300),
         });
-        return runId;
+        return requestedAt;
       },
     );
 
@@ -697,6 +735,8 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           sessionStatus === "interrupted";
 
         if (latestTurn?.state === "completed") {
+          const proofCard = yield* captureWorkerProof(input.collaborators, card, latestTurn.turnId);
+          if (proofCard !== card) applyPatch(card.id, () => proofCard);
           // Approved Fast Mode: skip Reviewing and land in Review with audit.
           if (isFastModeApproved(card)) {
             const timestamp = yield* nowIso;
@@ -767,7 +807,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
             collaborators: input.collaborators,
             cwd,
             board,
-            card,
+            card: proofCard,
           });
           if (launch._tag === "ok") {
             const timestamp = yield* nowIso;
@@ -1042,6 +1082,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                     runtime: {
                       ...current.runtime,
                       attemptCount: attempts + 1,
+                      repairRequestedAt: repairDispatched.value,
                       lastHeartbeatAt: timestamp,
                       currentError: truncate(`Review failed: ${reason}`, 2000),
                     },
@@ -1170,6 +1211,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                     runtime: {
                       ...current.runtime,
                       attemptCount: attempts + 1,
+                      repairRequestedAt: repairDispatched.value,
                       lastHeartbeatAt: timestamp,
                       currentError: truncate(`Review failed: ${parsed.reason}`, 2000),
                     },
@@ -1228,6 +1270,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                   runtime: {
                     ...current.runtime,
                     attemptCount: attempts + 1,
+                    repairRequestedAt: repairDispatched.value,
                     lastHeartbeatAt: timestamp,
                     currentError: truncate(detail, 2000),
                   },
@@ -1287,6 +1330,7 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                   runtime: {
                     ...current.runtime,
                     attemptCount: attempts + 1,
+                    repairRequestedAt: repairDispatched.value,
                     lastHeartbeatAt: timestamp,
                     currentError: truncate(detail, 2000),
                   },
@@ -1347,6 +1391,11 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         }
         const thread = threadOption.value;
         const latestTurn = thread.latestTurn;
+        if (
+          card.runtime.repairRequestedAt !== undefined &&
+          !(parseTimeMs(latestTurn?.requestedAt) >= parseTimeMs(card.runtime.repairRequestedAt))
+        )
+          continue;
         const sessionStatus = thread.session?.status ?? null;
         const sessionDead =
           sessionStatus === null ||
@@ -1354,11 +1403,13 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
           sessionStatus === "error" ||
           sessionStatus === "interrupted";
         if (latestTurn?.state === "completed") {
+          const proofCard = yield* captureWorkerProof(input.collaborators, card, latestTurn.turnId);
+          if (proofCard !== card) applyPatch(card.id, () => proofCard);
           const launch = yield* launchReviewThread({
             collaborators: input.collaborators,
             cwd,
             board,
-            card,
+            card: proofCard,
           });
           if (launch._tag === "ok") {
             const timestamp = yield* nowIso;

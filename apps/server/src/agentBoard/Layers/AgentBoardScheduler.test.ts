@@ -48,6 +48,7 @@ const MODEL_SELECTION = {
 type FakeTurnState = "running" | "interrupted" | "completed" | "error";
 
 interface FakeThreadEntry {
+  readonly requestedAt?: string;
   readonly latestTurnState: FakeTurnState | null;
   readonly sessionStatus:
     | "starting"
@@ -228,7 +229,12 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
           : {
               turnId: TurnId.make(`turn-${id}`),
               state: entry.latestTurnState,
-              requestedAt: T0,
+              requestedAt:
+                entry.requestedAt ??
+                dispatched
+                  .filter((command) => command.type === "thread.turn.start")
+                  .findLast((command) => command.threadId === id)?.createdAt ??
+                T0,
               startedAt: T0,
               completedAt: null,
               assistantMessageId: null,
@@ -304,12 +310,10 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
         const text = detail?.text ?? "";
         return Effect.succeed(
           Option.some({
-            thread: {
-              id: threadId,
-              messages: text ? [{ role: "assistant", text }] : [],
-              activities: [],
-            },
-          } as unknown as import("@t3tools/contracts").OrchestrationThreadDetailSnapshot),
+            id: threadId,
+            messages: text ? [{ role: "assistant", text }] : [],
+            activities: [],
+          } as unknown as import("@t3tools/contracts").OrchestrationThread),
         );
       }),
   } as unknown as ProjectionSnapshotQuery["Service"]);
@@ -514,6 +518,59 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
 });
 
 describe("AgentBoardSchedulerLive", () => {
+  it.effect(
+    "waits for the requested repair turn instead of re-reviewing the previous completion",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.seedBoard([
+          makeCard({
+            id: "repair",
+            state: "Diagnosing",
+            runtime: {
+              attemptCount: 2,
+              proofNotes: [],
+              implementationRunId: RuntimeSessionId.make("worker"),
+              repairRequestedAt: TFRESH,
+              workspacePath: harness.cwd,
+            },
+          }),
+        ]);
+        harness.setThread("worker", {
+          latestTurnState: "completed",
+          sessionStatus: "ready",
+          lastError: null,
+          updatedAt: TFRESH,
+          requestedAt: T0,
+        });
+        yield* harness.withScheduler((scheduler) =>
+          Effect.gen(function* () {
+            const waiting = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+            expect(waiting.card.state).toBe("Diagnosing");
+            expect(harness.dispatchedCommands()).toEqual([]);
+            harness.setThread("worker", {
+              latestTurnState: "completed",
+              sessionStatus: "ready",
+              lastError: null,
+              updatedAt: TFRESH,
+              requestedAt: TFRESH,
+            });
+            harness.setReviewText("worker", "Repair proof: Node byte verification passed.");
+            const reviewed = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+            expect(reviewed.card.state).toBe("Reviewing");
+            expect(reviewed.card.runtime.proofNotes.join("\n")).toContain(
+              "Repair proof: Node byte verification passed.",
+            );
+            const start = harness
+              .dispatchedCommands()
+              .find((command) => command.type === "thread.turn.start");
+            if (start?.type !== "thread.turn.start") throw new Error("No review turn");
+            expect(start.message.text).toContain("Repair proof: Node byte verification passed.");
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("explicit concurrent requests launch once and preserve capacity and dependencies", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
