@@ -1,8 +1,8 @@
 # T3 Orchestrator Patch
 
 Status: Active — synced through upstream T3 Code **v0.0.35**; synchronized
-candidate is **T3 Orchestrator 0.0.40** on `leonaaardob/t3-orchestrator`
-(`t3-orchestrator@0.0.40`).
+candidate is **T3 Orchestrator 0.0.44** on `leonaaardob/t3-orchestrator`
+(`t3-orchestrator@0.0.44`).
 
 Purpose: document the fork-specific Planning, agent-board, and
 supervisor-workflow modifications so this public patch can be repaired after
