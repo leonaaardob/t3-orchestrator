@@ -2205,3 +2205,67 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("Supervisor agent-board access", () => {
+  it.effect("issues the agent-board capability for a durable Supervisor thread", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-supervisor-capability");
+      const issuedCapabilities: Array<ReadonlyArray<string>> = [];
+      const codex = makeFakeCodexAdapter();
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive({
+        issueMcpCredential: (request) =>
+          Effect.sync(() => {
+            issuedCapabilities.push(Array.from(request.capabilities ?? []));
+            return undefined;
+          }),
+      }).pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id, project_id, title, model_selection_json, runtime_mode,
+            interaction_mode, created_at, updated_at, role
+          ) VALUES (
+            ${threadId}, 'project-supervisor-capability', 'Project Supervisor',
+            '{"instanceId":"codex","model":"gpt-5"}', 'full-access',
+            'default', '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z',
+            'project-supervisor'
+          )
+        `;
+
+        const provider = yield* ProviderService.ProviderService;
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(Layer.mergeAll(providerLayer, SqlitePersistenceMemory)));
+
+      assert.deepEqual(issuedCapabilities, [["preview", "agent-board"]]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});

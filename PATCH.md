@@ -294,8 +294,10 @@ updated_at)`.
     `agent_board_update_card` mutate server-owned board state
     (`t3://orchestration/agent-board`). Credentials grant `agent-board` only
     for durable `project-supervisor` threads (independent of browser/preview
-    access). Handlers re-check thread role and resolve project root from
-    projection — never from a model-supplied path. Playbook names the tools.
+    access). Role changes restart active provider sessions so the MCP
+    credential is reissued with the current capability set. Handlers re-check
+    thread role and resolve project root from projection — never from a
+    model-supplied path. Playbook names the tools.
 - `src/components/Sidebar.logic.ts`
   - Re-exports `SUPERVISOR_THREAD_TITLE` / `isSupervisorThread` for shared thread presentation.
   - `getFallbackThreadIdAfterDelete` prefers an active Project Supervisor in the

@@ -537,6 +537,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly forceRestart?: boolean;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -738,6 +739,7 @@ const make = Effect.gen(function* () {
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        options?.forceRestart !== true &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
@@ -1471,6 +1473,18 @@ const make = Effect.gen(function* () {
     switch (event.type) {
       case "thread.meta-updated":
         yield* threadTitleRegenerationWorker.enqueue(event);
+        if (event.payload.role !== undefined) {
+          const thread = yield* resolveThread(event.payload.threadId);
+          if (thread?.session && thread.session.status !== "stopped") {
+            const cachedModelSelection = threadModelSelections.get(event.payload.threadId);
+            yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
+              ...(cachedModelSelection !== undefined
+                ? { modelSelection: cachedModelSelection }
+                : {}),
+              forceRestart: true,
+            });
+          }
+        }
         return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
@@ -1532,7 +1546,8 @@ const make = Effect.gen(function* () {
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
-        (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
+        (event.type === "thread.meta-updated" &&
+          (event.payload.regenerateTitle === true || event.payload.role !== undefined)) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||

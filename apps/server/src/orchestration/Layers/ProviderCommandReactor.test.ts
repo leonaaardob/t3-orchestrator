@@ -2335,6 +2335,71 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("refreshes the provider session when Supervisor role changes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-role-refresh"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-role-refresh"),
+          role: "user",
+          text: "start the standard session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-promote-role-refresh"),
+        threadId: ThreadId.make("thread-1"),
+        role: "project-supervisor",
+      }),
+    );
+
+    await waitFor(
+      async () =>
+        (await harness.readModel()).threads.find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.role === "project-supervisor",
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { opaque: "resume-1" },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-demote-role-refresh"),
+        threadId: ThreadId.make("thread-1"),
+        role: "standard",
+      }),
+    );
+
+    await waitFor(
+      async () =>
+        (await harness.readModel()).threads.find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.role === "standard",
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 3);
+    expect(harness.startSession.mock.calls[2]?.[1]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { opaque: "resume-1" },
+    });
+  });
+
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
