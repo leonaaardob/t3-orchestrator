@@ -1,6 +1,7 @@
 import { Clock, Duration, Effect, FileSystem, Layer, Option, Path, Queue, Stream } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import {
   type AgentBoardCard,
   type AgentBoardFile,
@@ -176,6 +177,7 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
   let launchMode: "launch" | "missing-config" = "launch";
   let launchedThreadCounter = 0;
   let schedulerSaveCount = 0;
+  let turnStartFailure: string | undefined;
   const savedBoards = yield* Queue.unbounded<AgentBoardFile>();
 
   const toRunnerFailure = (cardId: string, operation: string, cause: unknown) =>
@@ -333,6 +335,14 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
         }
         // Mirror decider.requireThread: continuations onto threads the
         // projection no longer knows are rejected before being recorded.
+        if (command.type === "thread.turn.start" && turnStartFailure !== undefined) {
+          return Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: turnStartFailure,
+            }),
+          );
+        }
         if (command.type === "thread.turn.start" && !fakeThreads.has(command.threadId)) {
           return Effect.fail(
             new OrchestrationCommandInvariantError({
@@ -499,6 +509,9 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
     setLaunchMode: (mode: "launch" | "missing-config") => {
       launchMode = mode;
     },
+    failTurnStart: (detail: string) => {
+      turnStartFailure = detail;
+    },
     schedulerSaves: () => schedulerSaveCount,
     awaitSavedCard: (matches: (card: AgentBoardCard) => boolean) =>
       Effect.gen(function* () {
@@ -518,6 +531,182 @@ const makeHarness = Effect.fn("AgentBoardScheduler.test.harness")(function* (opt
 });
 
 describe("AgentBoardSchedulerLive", () => {
+  it.effect("re-queues exhausted work into one bounded repair before a fresh review", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(TFRESH));
+      const harness = yield* makeHarness();
+      const card = makeCard({
+        id: "repair",
+        state: "Needs Decision",
+        runtime: {
+          attemptCount: 3,
+          proofNotes: ["Original implementation evidence"],
+          implementationRunId: RuntimeSessionId.make("worker"),
+          reviewRunId: RuntimeSessionId.make("old-review"),
+          workspacePath: harness.cwd,
+          currentError: "Autonomous review retries exhausted: harness failed",
+          currentDecisionQuestion: "Authorize a new cycle?",
+        },
+      });
+      yield* harness.seedBoard([card]);
+      harness.setThread("worker", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: T0,
+        requestedAt: T0,
+      });
+      yield* harness.withScheduler((scheduler) =>
+        Effect.gen(function* () {
+          const parked = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+          expect(parked.card.state).toBe("Needs Decision");
+          expect(harness.dispatchedCommands()).toEqual([]);
+          yield* harness.seedBoard([
+            { ...card, state: "Ready" } as AgentBoardCard,
+            makeCard({ id: "other", priority: 2 }),
+          ]);
+          const results = yield* Effect.all(
+            [
+              scheduler.runCard({ cwd: harness.cwd, cardId: "repair" }),
+              scheduler.runCard({ cwd: harness.cwd, cardId: "repair" }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const repaired = results[0]!.card;
+          expect(results.map((result) => result.card.state)).toEqual(["Diagnosing", "Diagnosing"]);
+          expect(repaired.runtime).toMatchObject({
+            attemptCount: 1,
+            implementationRunId: "worker",
+            workspacePath: harness.cwd,
+          });
+          expect(repaired.runtime.currentDecisionQuestion).toBeUndefined();
+          expect(repaired.runtime.proofNotes.join("\n")).toContain("previous cycle used 3");
+          expect(repaired.runtime.proofNotes).toContain("Original implementation evidence");
+          expect(harness.runCalls()).toEqual([]);
+          const commands = harness.dispatchedCommands();
+          expect(commands).toHaveLength(1);
+          const repair = commands[0];
+          if (repair?.type !== "thread.turn.start") throw new Error("No repair turn");
+          expect(repair.threadId).toBe("worker");
+          expect(repair.message.text).toContain("harness failed");
+          expect(repair.message.text).toContain("Attempt count: 1");
+          expect(repaired.runtime.repairRequestedAt).toBe(repair.createdAt);
+          expect((yield* harness.readBoard()).cards.find((c) => c.id === "other")?.state).toBe(
+            "Ready",
+          );
+          harness.setThread("worker", {
+            latestTurnState: "completed",
+            sessionStatus: "ready",
+            lastError: null,
+            updatedAt: repair.createdAt,
+            requestedAt: repair.createdAt,
+          });
+          harness.setReviewText("worker", "Reproducible repair evidence: command, output, SHA.");
+          const reviewed = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+          expect(reviewed.card.state).toBe("Reviewing");
+          expect(reviewed.card.runtime.reviewRunId).not.toBe("old-review");
+          const reviewId = ThreadId.make(reviewed.card.runtime.reviewRunId!);
+          const review = harness
+            .dispatchedCommands()
+            .find(
+              (command) => command.type === "thread.turn.start" && command.threadId === reviewId,
+            );
+          if (review?.type !== "thread.turn.start") throw new Error("No fresh review");
+          expect(review.message.text).toContain("Reproducible repair evidence");
+          harness.setThread(reviewId, {
+            latestTurnState: "completed",
+            sessionStatus: "ready",
+            lastError: null,
+            updatedAt: repair.createdAt,
+          });
+          harness.setReviewText(reviewId, "REVIEW: FAIL - another repair needed");
+          yield* TestClock.adjust("1 millis");
+          const retry = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+          expect(retry.card.state).toBe("Diagnosing");
+          expect(retry.card.runtime.attemptCount).toBe(2);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reconciles completed work without a failure instead of repairing it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.seedBoard([
+        makeCard({
+          id: "completed",
+          runtime: {
+            attemptCount: 1,
+            proofNotes: [],
+            implementationRunId: RuntimeSessionId.make("worker"),
+            workspacePath: harness.cwd,
+          },
+        }),
+      ]);
+      harness.setThread("worker", {
+        latestTurnState: "completed",
+        sessionStatus: "ready",
+        lastError: null,
+        updatedAt: T0,
+      });
+      yield* harness.withScheduler((scheduler) =>
+        Effect.gen(function* () {
+          expect(
+            (yield* scheduler.runCard({ cwd: harness.cwd, cardId: "completed" })).card.state,
+          ).toBe("Running");
+          expect(harness.dispatchedCommands()).toEqual([]);
+          expect(
+            (yield* scheduler.runCard({ cwd: harness.cwd, cardId: "completed" })).card.state,
+          ).toBe("Reviewing");
+          expect(
+            harness
+              .dispatchedCommands()
+              .some(
+                (command) => command.type === "thread.turn.start" && command.threadId === "worker",
+              ),
+          ).toBe(false);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "parks a rejected repair restart without resetting its budget or claiming success",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.seedBoard([
+          makeCard({
+            id: "repair",
+            runtime: {
+              attemptCount: 3,
+              proofNotes: [],
+              implementationRunId: RuntimeSessionId.make("worker"),
+              currentError: "Review failed",
+            },
+          }),
+        ]);
+        harness.setThread("worker", {
+          latestTurnState: "completed",
+          sessionStatus: "ready",
+          lastError: null,
+          updatedAt: T0,
+        });
+        harness.failTurnStart("Repair provider unavailable");
+        yield* harness.withScheduler((scheduler) =>
+          Effect.gen(function* () {
+            const result = yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+            expect(result.card.state).toBe("Blocked");
+            expect(result.card.runtime.attemptCount).toBe(3);
+            expect(result.card.runtime.currentError).toContain("Repair provider unavailable");
+            expect(result.card.runtime.repairRequestedAt).toBeUndefined();
+            yield* scheduler.runCard({ cwd: harness.cwd, cardId: "repair" });
+            expect(harness.dispatchedCommands()).toEqual([]);
+          }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "waits for the requested repair turn instead of re-reviewing the previous completion",
     () =>

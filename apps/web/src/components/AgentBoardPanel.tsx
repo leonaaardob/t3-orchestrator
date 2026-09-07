@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -626,6 +627,7 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
   const [detailDraft, setDetailDraft] = useState<DetailDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const concurrencyInputId = useId();
   const [error, setError] = useState<string | null>(null);
   const reportPlanningError = useCallback((message: string) => {
     setError(message);
@@ -1246,6 +1248,59 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
         );
     },
     [environmentId, workspaceRoot],
+  );
+
+  const saveConcurrencyLimit = useCallback(
+    async (maxConcurrentCards: number) => {
+      if (!workspaceRoot || saving) return;
+      if (!Number.isSafeInteger(maxConcurrentCards) || maxConcurrentCards < 1) {
+        reportPlanningError("Enter a whole number of at least 1 for parallel cards.");
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        // Refresh before saving so a settings change uses the latest card state.
+        const loaded = await loadAgentBoard({
+          environmentId,
+          input: { cwd: workspaceRoot, createIfMissing: false },
+        });
+        if (loaded._tag !== "Success") throw squashAtomCommandFailure(loaded);
+        const latest = loaded.value.board;
+        const saved = await saveAgentBoardCommand({
+          environmentId,
+          input: {
+            cwd: workspaceRoot,
+            board: {
+              ...latest,
+              runner: { ...latest.runner, maxConcurrentCards },
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        });
+        if (saved._tag !== "Success") throw squashAtomCommandFailure(saved);
+        setBoard(saved.value.board);
+        toastManager.add({
+          type: "success",
+          title: "Parallel card limit saved",
+          description: `This project allows up to ${maxConcurrentCards} active ${maxConcurrentCards === 1 ? "card" : "cards"}.`,
+        });
+      } catch (saveError) {
+        reportPlanningError(
+          saveError instanceof Error ? saveError.message : "Could not save parallel card limit.",
+        );
+      } finally {
+        setSaving(false);
+      }
+    },
+    [
+      environmentId,
+      loadAgentBoard,
+      reportPlanningError,
+      saveAgentBoardCommand,
+      saving,
+      workspaceRoot,
+    ],
   );
 
   const setBoardViewAndPersist = useCallback(
@@ -2175,6 +2230,54 @@ const AgentBoardPanel = memo(function AgentBoardPanel({
           </span>
         )}
       </div>
+
+      {board ? (
+        <form
+          className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/50 px-3 py-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = new FormData(event.currentTarget).get("maxConcurrentCards");
+            void saveConcurrencyLimit(Number(value));
+          }}
+        >
+          <div className="min-w-0 flex-1 basis-48">
+            <label htmlFor={concurrencyInputId} className="text-xs font-medium">
+              Parallel cards
+            </label>
+            <p id={`${concurrencyInputId}-help`} className="text-xs text-muted-foreground">
+              Maximum active cards for this project, including reviews and repairs. Lowering the
+              limit lets active work finish.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              key={`${environmentId}:${workspaceRoot}:${board.runner.maxConcurrentCards}`}
+              nativeInput
+              id={concurrencyInputId}
+              name="maxConcurrentCards"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={Number.MAX_SAFE_INTEGER}
+              step={1}
+              required
+              defaultValue={board.runner.maxConcurrentCards}
+              aria-describedby={`${concurrencyInputId}-help`}
+              disabled={saving || loading || !workspaceRoot}
+              className="w-20"
+              size="compact"
+            />
+            <Button
+              type="submit"
+              size="xs"
+              variant="outline"
+              disabled={saving || loading || !workspaceRoot}
+            >
+              Apply
+            </Button>
+          </div>
+        </form>
+      ) : null}
 
       {/* Supervisor thread affordance — a normal pinned thread, just easy to find. */}
       {supervisorProject ? (

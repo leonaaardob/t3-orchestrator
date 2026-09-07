@@ -71,6 +71,14 @@ harder to inspect.
 
 ## Core Integration Points
 
+- `apps/web/src/components/AgentBoardPanel.tsx` exposes the project board's
+  `runner.maxConcurrentCards` as **Parallel cards** with an explicit Apply action
+  in every Planning view. It reloads the owning environment's board before saving
+  through the existing board RPC and confirms only persisted results. Preserve
+  this control when upstream changes the panel; the scheduler already enforces
+  the stored limit. Web and Electron share the control; native mobile has no
+  Planning board surface yet. No schema migration is needed.
+
 The current patch attaches to upstream T3 Code through these areas:
 
 ### Contracts (`packages/contracts`)
@@ -184,6 +192,14 @@ updated_at)`.
     headless with fake engine/git layers in `Layers/AgentBoardRunner.test.ts`.
 - `src/agentBoard/Services/AgentBoardScheduler.ts` +
   `src/agentBoard/Layers/AgentBoardScheduler.ts`
+  - Re-queued Ready cards with a completed worker and a retained error/decision
+    start a repair continuation in the existing workspace, with a fresh bounded
+    attempt budget and an audit of the previous count. Review waits for that
+    repair's projected completion; dispatch failures park as Blocked. Keep this
+    branch before completed-worker reconciliation when syncing upstream, or a
+    manual restart will silently re-review the old result. Covered by focused
+    scheduler tests; deploy a rebuilt server to activate the fix, with no data
+    migration or workspace relocation.
   - Always-on 15-second reconciler: reads project shells from the durable
     projection, reconciles `Running`/`Reviewing`/`Diagnosing` before claiming
     Ready work, uses the shared runner, persists `Reviewing`/`Review`/

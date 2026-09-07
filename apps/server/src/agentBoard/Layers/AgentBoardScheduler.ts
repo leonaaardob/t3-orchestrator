@@ -513,7 +513,11 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         readonly reviewReason: string;
       }) {
         const runId = input.card.runtime.implementationRunId;
-        if (runId === undefined) return null;
+        if (runId === undefined) {
+          return yield* new AgentBoardFileError({
+            message: "No implementation thread available for repair.",
+          });
+        }
         // Resolve repair preset (Global→Project) when available; otherwise
         // reuse the implementation thread's existing model (no override).
         let repairModelSelection: import("@t3tools/contracts").ModelSelection | undefined =
@@ -1651,6 +1655,67 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
                 cardId: candidate.id,
                 threadId: previousRunId,
               });
+              continue;
+            }
+            const repairReason =
+              candidate.runtime.currentError ?? candidate.runtime.currentDecisionQuestion;
+            if (turnState === "completed" && repairReason !== undefined) {
+              // Re-queueing failed work starts a new bounded repair cycle in
+              // its existing workspace. A completed turn alone is not proof
+              // that the requested repair has happened.
+              const timestamp = yield* nowIso;
+              const repairDispatched = yield* outcome(
+                dispatchRepairTurn({
+                  collaborators: input.collaborators,
+                  cwd,
+                  board,
+                  card: {
+                    ...candidate,
+                    runtime: { ...candidate.runtime, attemptCount: 1 },
+                  },
+                  reviewReason: `The card was re-queued to Ready for a new repair cycle. Repair the outstanding findings before requesting another review.\n${repairReason}`,
+                }),
+              );
+              if (repairDispatched._tag === "error") {
+                applyPatch(candidate.id, (current) => ({
+                  ...current,
+                  state: "Blocked",
+                  runtime: {
+                    ...current.runtime,
+                    currentError: truncate(
+                      `Repair restart failed: ${repairDispatched.error.message}`,
+                      2000,
+                    ),
+                    lastHeartbeatAt: timestamp,
+                  },
+                  updatedAt: timestamp,
+                }));
+                continue;
+              }
+              appendProofNotes({
+                applyPatch,
+                card: candidate,
+                timestamp,
+                lines: [
+                  `Re-queued repair on ${previousRunId}; previous cycle used ${candidate.runtime.attemptCount} attempt(s). Starting a new bounded cycle.`,
+                  `Reason: ${repairReason}`,
+                ],
+              });
+              applyPatch(candidate.id, (current) => {
+                const { currentDecisionQuestion: _question, ...runtime } = current.runtime;
+                return {
+                  ...current,
+                  state: "Diagnosing",
+                  runtime: {
+                    ...runtime,
+                    attemptCount: 1,
+                    repairRequestedAt: repairDispatched.value,
+                    lastHeartbeatAt: timestamp,
+                  },
+                  updatedAt: timestamp,
+                };
+              });
+              launched += 1;
               continue;
             }
             // A Ready card whose implementation already finished but was moved

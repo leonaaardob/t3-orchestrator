@@ -54,6 +54,14 @@ Before review, the scheduler stores the completed worker turn's assistant report
 in card proof notes and includes it in the reviewer packet. Repair requests store
 their timestamp in `runtime.repairRequestedAt`; the previous completed turn cannot
 trigger another review while the new request is still awaiting projection.
+When a Ready card retains a completed worker and an unresolved runtime error or
+decision question, the scheduler dispatches a repair continuation instead of
+re-reviewing the old completion. Successful dispatch enters Diagnosing with a
+fresh bounded attempt budget and records the previous cycle count in proof notes.
+The existing thread/workspace and proof remain intact; dispatch failure parks the
+card as Blocked without resetting its budget. Completed Ready cards without a
+failure still reconcile normally. This shared path serves MCP Run, client Run,
+and automatic Ready-card scheduling under the same lock and concurrency limit.
 
 These tools are gated by the `agent-board` MCP capability (issued only for
 `project-supervisor` threads) and re-check durable thread role + project id from
