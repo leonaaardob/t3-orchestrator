@@ -766,6 +766,8 @@ the extra features after the run is safe.
   `scripts/orchestrator-release.test.mjs` enforce installation, runtime/version
   compatibility, publication ordering and immutable artifact integrity. Registry
   metadata and tarball propagation are retried separately before desktop publication.
+  Standalone package smoke tests remove inherited `T3_SERVICE_LAUNCHER_CONTEXT`
+  so they can run from an agent hosted by T3 without expecting the parent's IPC.
 - `apps/server/src/cloud/selfUpdate.ts` names the actual fork package on failed
   preparation; the standalone launcher and rollback protocol remain unchanged.
 - `apps/web/src/agentBoardReady.ts` omits absent optional project references so

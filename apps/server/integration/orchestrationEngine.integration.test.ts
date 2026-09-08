@@ -281,7 +281,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           workspaceRoot: harness.workspaceDir,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.3-codex",
+            model: process.env.CODEX_TEST_MODEL ?? "gpt-5.3-codex",
           },
           createdAt,
         });
@@ -294,7 +294,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           title: "Integration Thread",
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.3-codex",
+            model: process.env.CODEX_TEST_MODEL ?? "gpt-5.3-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
@@ -329,6 +329,13 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           180_000,
         );
         assert.equal(firstThread.session?.threadId, "thread-1");
+
+        yield* harness.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("cmd-runtime-mode-real-codex-2"),
+          threadId: THREAD_ID,
+          runtimeMode: "approval-required",
+        });
 
         yield* harness.engine.dispatch({
           type: "thread.turn.start",

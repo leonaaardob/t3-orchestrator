@@ -25,6 +25,8 @@ try {
   NodeAssert.ok(!JSON.stringify(manifest.dependencies).includes("catalog:"));
   const entry = NodePath.join(packageRoot, "dist/bin.mjs");
   const env = { ...process.env, T3CODE_HOME: NodePath.join(temporary, "state") };
+  // This standalone child has no launcher IPC, even when the test runs inside T3.
+  delete env.T3_SERVICE_LAUNCHER_CONTEXT;
   const version = NodeChildProcess.execFileSync(process.execPath, [entry, "--version"], {
     encoding: "utf8",
     env,

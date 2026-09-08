@@ -51,6 +51,17 @@ to install that exact version. Publishing desktop without npm causes
 GitHub Actions owns the full suite. Locally, use targeted tests and typechecks for
 changed scopes as required by `AGENTS.md`.
 
+To smoke-test the public server package locally, download it with `npm pack
+t3-orchestrator@X.Y.Z` and pass the tarball to `node
+scripts/smoke-server-package.mjs` using the repository's required Node version.
+The smoke test installs into disposable state and removes inherited service
+launcher context because its child has no launcher IPC connection.
+
+The optional real Codex integration test accepts `CODEX_TEST_MODEL` for a model
+available to the connected account; `CODEX_BINARY_PATH` enables that test.
+It changes permissions through `thread.runtime-mode.set` before the next turn,
+matching the client protocol.
+
 ## npm publishing configuration
 
 The package is public; publication access belongs to the maintainer and the
