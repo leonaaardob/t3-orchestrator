@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import {
   CheckpointRef,
   CommandId,
@@ -7,8 +8,12 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type OrchestrationCommand,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,12 +22,15 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -40,6 +48,8 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { AgentBoardSupervisorWake } from "../../agentBoard/Services/AgentBoardSupervisorWake.ts";
+import { makeAgentBoardSupervisorWakeLive } from "../../agentBoard/Layers/AgentBoardSupervisorWake.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -72,6 +82,42 @@ async function createOrchestrationSystem() {
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    dispose: () => runtime.dispose(),
+  };
+}
+
+async function createPersistentOrchestrationWakeSystem(
+  dbPath: string,
+  wakeOptions?: Parameters<typeof makeAgentBoardSupervisorWakeLive>[0],
+) {
+  const engineLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provide(OrchestrationProjectionPipelineLive),
+  );
+  const orchestrationLayer = makeAgentBoardSupervisorWakeLive(wakeOptions).pipe(
+    Layer.provideMerge(Layer.mergeAll(engineLayer, OrchestrationProjectionSnapshotQueryLive)),
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(makeSqlitePersistenceLive(dbPath)),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-orchestration-engine-supervisor-wake-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  const wake = await runtime.runPromise(Effect.service(AgentBoardSupervisorWake));
+  const sql = await runtime.runPromise(Effect.service(SqlClient.SqlClient));
+  return {
+    engine,
+    wake,
+    sql,
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -1070,6 +1116,7 @@ describe("OrchestrationEngine", () => {
       },
     };
 
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing Promise-based engine harness owns the runtime and scope.
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -1293,6 +1340,495 @@ describe("OrchestrationEngine", () => {
     expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(1);
 
     await system.dispose();
+  });
+
+  it("keeps automatic Supervisor wakes stopped after real interrupt and session-stop commands, while a user can restart", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-supervisor-stop");
+    const threadId = ThreadId.make("thread-supervisor-stop");
+    const start = (commandId: string, messageId: string, onlyIfIdle?: boolean) => ({
+      type: "thread.turn.start" as const,
+      commandId: CommandId.make(commandId),
+      threadId,
+      message: {
+        messageId: asMessageId(messageId),
+        role: "user" as const,
+        text: "follow up",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required" as const,
+      ...(onlyIfIdle === true ? { onlyIfIdle: true } : {}),
+      createdAt,
+    });
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-supervisor-stop-project"),
+        projectId,
+        title: "Supervisor stop",
+        workspaceRoot: "/tmp/project-supervisor-stop",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-supervisor-stop-thread"),
+        threadId,
+        projectId,
+        title: "Project Supervisor",
+        role: "project-supervisor",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-supervisor-interrupt"),
+        threadId,
+        turnId: TurnId.make("turn-supervisor-interrupted"),
+        createdAt,
+      }),
+    );
+    const interrupted = (await system.readModel()).threads.find((thread) => thread.id === threadId);
+    expect(interrupted?.session?.status).toBe("interrupted");
+    await expect(
+      system.run(
+        engine.dispatch(
+          start("cmd-supervisor-auto-after-interrupt", "msg-supervisor-auto-after-interrupt", true),
+        ),
+      ),
+    ).rejects.toThrow("unavailable for an automatic Supervisor follow-up");
+    await system.run(
+      engine.dispatch(
+        start("cmd-supervisor-user-after-interrupt", "msg-supervisor-user-after-interrupt"),
+      ),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-supervisor-session-stop"),
+        threadId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    const stopped = (await system.readModel()).threads.find((thread) => thread.id === threadId);
+    expect(stopped?.session?.status).toBe("stopped");
+    expect(stopped?.latestTurn).toBeNull();
+    await expect(
+      system.run(
+        engine.dispatch(
+          start("cmd-supervisor-auto-after-stop", "msg-supervisor-auto-after-stop", true),
+        ),
+      ),
+    ).rejects.toThrow("unavailable for an automatic Supervisor follow-up");
+    await system.run(
+      engine.dispatch(start("cmd-supervisor-user-after-stop", "msg-supervisor-user-after-stop")),
+    );
+
+    await system.dispose();
+  });
+
+  it("keeps a pending durable wake unclaimed after an accepted interrupt or stop, before any reactor runs", async () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-supervisor-wake-stop-"));
+    const dbPath = NodePath.join(tempDir, "state.sqlite");
+    const createdAt = "2026-09-08T00:00:00.000Z";
+    const projectId = asProjectId("project-supervisor-wake-stop");
+    const threadId = ThreadId.make("thread-supervisor-wake-stop");
+    const system = await createPersistentOrchestrationWakeSystem(dbPath);
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("wake-stop-project-create"),
+          projectId,
+          title: "Supervisor wake stop",
+          workspaceRoot: NodePath.join(tempDir, "project"),
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("wake-stop-thread-create"),
+          threadId,
+          projectId,
+          title: "Project Supervisor",
+          role: "project-supervisor",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      await system.run(system.sql`
+        INSERT INTO agent_board_supervisor_wakes (
+          project_id, project_root, pending_fingerprint, pending_card_ids_json,
+          pending_reason, dispatch_command_id, dispatch_fingerprint, dispatch_attempts,
+          next_attempt_at, last_dispatched_fingerprint, last_error, updated_at
+        ) VALUES (
+          ${projectId}, ${NodePath.join(tempDir, "project")}, 'wake-stopped', '["CARD-STOP"]',
+          'CARD-STOP: Review', NULL, NULL, 0, NULL, NULL, NULL, ${createdAt}
+        )
+      `);
+
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("wake-stop-interrupt"),
+          threadId,
+          createdAt,
+        }),
+      );
+      await system.run(system.wake.processPending());
+      expect(
+        await system.run(system.sql<{ readonly pendingFingerprint: string | null }>`
+          SELECT pending_fingerprint AS "pendingFingerprint"
+          FROM agent_board_supervisor_wakes WHERE project_id = ${projectId}
+        `),
+      ).toEqual([{ pendingFingerprint: "wake-stopped" }]);
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("wake-stop-automatic-start"),
+            threadId,
+            message: {
+              messageId: asMessageId("wake-stop-automatic-message"),
+              role: "user",
+              text: "automatic follow-up",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            onlyIfIdle: true,
+            createdAt,
+          }),
+        ),
+      ).rejects.toThrow("unavailable for an automatic Supervisor follow-up");
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("wake-stop-human-resume"),
+          threadId,
+          message: {
+            messageId: asMessageId("wake-stop-human-message"),
+            role: "user",
+            text: "resume explicitly",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.stop",
+          commandId: CommandId.make("wake-stop-session-stop"),
+          threadId,
+          createdAt: "2026-09-08T00:00:01.000Z",
+        }),
+      );
+      await system.run(system.wake.processPending());
+      expect(
+        await system.run(system.sql<{ readonly pendingFingerprint: string | null }>`
+          SELECT pending_fingerprint AS "pendingFingerprint"
+          FROM agent_board_supervisor_wakes WHERE project_id = ${projectId}
+        `),
+      ).toEqual([{ pendingFingerprint: "wake-stopped" }]);
+    } finally {
+      await system.dispose();
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replays one immutable wake receipt after a crash and then handles a later notification on the same SQLite file", async () => {
+    const tempDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-supervisor-wake-restart-"),
+    );
+    const dbPath = NodePath.join(tempDir, "state.sqlite");
+    const projectId = asProjectId("project-supervisor-wake-restart");
+    const threadId = ThreadId.make("thread-supervisor-wake-restart");
+    const createdAt = "2026-09-08T00:00:00.000Z";
+    const firstWakeUpdatedAt = "2026-09-08T00:00:01.000Z";
+    let persistedCommandId: string | undefined;
+    let persistedMessageId: string | undefined;
+    let persistedMessageText: string | undefined;
+    let persistedCreatedAt: string | undefined;
+
+    const first = await createPersistentOrchestrationWakeSystem(dbPath, {
+      afterDispatchBeforeMarkSuccess: Effect.fail(
+        new OrchestrationCommandInvariantError({
+          commandType: "thread.turn.start",
+          detail: "simulated crash before markSuccess",
+        }),
+      ),
+    });
+    const firstSql = first.sql;
+    try {
+      await first.run(
+        first.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("wake-restart-project-create"),
+          projectId,
+          title: "Supervisor wake restart",
+          workspaceRoot: NodePath.join(tempDir, "project"),
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      );
+      await first.run(
+        first.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("wake-restart-thread-create"),
+          threadId,
+          projectId,
+          title: "Project Supervisor",
+          role: "project-supervisor",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      await first.run(firstSql`
+        INSERT INTO agent_board_supervisor_wakes (
+          project_id, project_root, pending_fingerprint, pending_card_ids_json,
+          pending_reason, dispatch_command_id, dispatch_fingerprint, dispatch_attempts,
+          next_attempt_at, last_dispatched_fingerprint, last_error, updated_at
+        ) VALUES (
+          ${projectId}, '/tmp/supervisor-wake-restart', 'wake-first', '["CARD-1"]',
+          'CARD-1: Review', NULL, NULL, 0, NULL, NULL, NULL, ${firstWakeUpdatedAt}
+        )
+      `);
+
+      // This is the one narrow crash seam: engine.dispatch has committed its
+      // real events and accepted receipt, but markSuccess is never reached.
+      await first.run(first.wake.processPending());
+      const firstEnvelope = await first.run(firstSql<{
+        readonly pendingFingerprint: string | null;
+        readonly dispatchFingerprint: string | null;
+        readonly dispatchCommandId: string | null;
+        readonly dispatchMessageId: string | null;
+        readonly dispatchMessageText: string | null;
+        readonly dispatchCreatedAt: string | null;
+      }>`
+        SELECT
+          pending_fingerprint AS "pendingFingerprint",
+          dispatch_fingerprint AS "dispatchFingerprint",
+          dispatch_command_id AS "dispatchCommandId",
+          dispatch_message_id AS "dispatchMessageId",
+          dispatch_message_text AS "dispatchMessageText",
+          dispatch_created_at AS "dispatchCreatedAt"
+        FROM agent_board_supervisor_wakes
+        WHERE project_id = ${projectId}
+      `);
+      expect(firstEnvelope).toHaveLength(1);
+      expect(firstEnvelope[0]).toMatchObject({
+        pendingFingerprint: "wake-first",
+        dispatchFingerprint: "wake-first",
+      });
+      persistedCommandId = firstEnvelope[0]?.dispatchCommandId ?? undefined;
+      persistedMessageId = firstEnvelope[0]?.dispatchMessageId ?? undefined;
+      persistedMessageText = firstEnvelope[0]?.dispatchMessageText ?? undefined;
+      persistedCreatedAt = firstEnvelope[0]?.dispatchCreatedAt ?? undefined;
+      if (
+        persistedCommandId === undefined ||
+        persistedMessageId === undefined ||
+        persistedMessageText === undefined ||
+        persistedCreatedAt === undefined
+      ) {
+        throw new Error("the dispatch envelope was not persisted");
+      }
+      const firstEvents = await first.run(firstSql<{
+        readonly commandId: string;
+        readonly eventType: string;
+        readonly payloadJson: string;
+      }>`
+        SELECT command_id AS "commandId", event_type AS "eventType", payload_json AS "payloadJson"
+        FROM orchestration_events
+        WHERE command_id = ${persistedCommandId}
+        ORDER BY sequence
+      `);
+      const firstReceipt = await first.run(firstSql<{
+        readonly commandId: string;
+        readonly status: string;
+      }>`
+        SELECT command_id AS "commandId", status
+        FROM orchestration_command_receipts
+        WHERE command_id = ${persistedCommandId}
+      `);
+      expect(firstEvents).toHaveLength(2);
+      expect(firstReceipt).toEqual([{ commandId: persistedCommandId, status: "accepted" }]);
+      const firstMessageEvent = firstEvents.find(
+        (event) => event.eventType === "thread.message-sent",
+      );
+      expect(firstMessageEvent).toBeDefined();
+      expect(JSON.parse(firstMessageEvent?.payloadJson ?? "{}")).toMatchObject({
+        messageId: persistedMessageId,
+        text: persistedMessageText,
+        createdAt: persistedCreatedAt,
+      });
+    } finally {
+      await first.dispose();
+    }
+    if (persistedCommandId === undefined) {
+      throw new Error("the first accepted command id was not retained");
+    }
+    const originalCommandId = persistedCommandId;
+
+    const replayedCommands: OrchestrationCommand[] = [];
+    const second = await createPersistentOrchestrationWakeSystem(dbPath, {
+      beforeDispatch: (command) =>
+        Effect.sync(() => {
+          replayedCommands.push(command);
+        }),
+    });
+    try {
+      const sql = second.sql;
+      await second.run(sql`
+        UPDATE agent_board_supervisor_wakes
+        SET pending_fingerprint = 'wake-second',
+            pending_card_ids_json = '["CARD-2"]',
+            pending_reason = 'CARD-2: Blocked'
+        WHERE project_id = ${projectId}
+      `);
+
+      const eventsBeforeReplay = await second.run(sql<{
+        readonly commandId: string;
+        readonly eventType: string;
+      }>`
+        SELECT command_id AS "commandId", event_type AS "eventType"
+        FROM orchestration_events
+        WHERE command_id = ${persistedCommandId}
+        ORDER BY sequence
+      `);
+
+      // The reconstructed service must submit the exact persisted envelope;
+      // the real engine returns the accepted receipt without appending events.
+      await second.run(second.wake.processPending());
+      const replayedCommand = replayedCommands[0];
+      if (replayedCommand?.type !== "thread.turn.start") {
+        throw new Error("the original wake command was not replayed");
+      }
+      expect(replayedCommand).toMatchObject({
+        commandId: originalCommandId,
+        threadId,
+        message: {
+          messageId: persistedMessageId,
+          text: persistedMessageText,
+          attachments: [],
+        },
+        createdAt: persistedCreatedAt,
+        onlyIfIdle: true,
+      });
+      expect(replayedCommands).toHaveLength(1);
+      const eventsAfterReplay = await second.run(sql<{
+        readonly commandId: string;
+        readonly eventType: string;
+      }>`
+        SELECT command_id AS "commandId", event_type AS "eventType"
+        FROM orchestration_events
+        WHERE command_id = ${persistedCommandId}
+        ORDER BY sequence
+      `);
+      expect(eventsAfterReplay).toEqual(eventsBeforeReplay);
+      const afterReplay = await second.run(sql<{
+        readonly pendingFingerprint: string | null;
+        readonly dispatchFingerprint: string | null;
+        readonly dispatchCommandId: string | null;
+      }>`
+        SELECT
+          pending_fingerprint AS "pendingFingerprint",
+          dispatch_fingerprint AS "dispatchFingerprint",
+          dispatch_command_id AS "dispatchCommandId"
+        FROM agent_board_supervisor_wakes
+        WHERE project_id = ${projectId}
+      `);
+      expect(afterReplay).toEqual([
+        {
+          pendingFingerprint: "wake-second",
+          dispatchFingerprint: null,
+          dispatchCommandId: null,
+        },
+      ]);
+
+      await second.run(second.wake.processPending());
+      expect(replayedCommands).toHaveLength(2);
+      expect(replayedCommands[1]?.type).toBe("thread.turn.start");
+      expect(replayedCommands[1]?.commandId).not.toBe(originalCommandId);
+      const laterEvents = await second.run(sql<{
+        readonly commandId: string;
+        readonly eventType: string;
+        readonly payloadJson: string;
+      }>`
+        SELECT command_id AS "commandId", event_type AS "eventType", payload_json AS "payloadJson"
+        FROM orchestration_events
+        WHERE command_id IS NOT NULL
+          AND event_type IN ('thread.message-sent', 'thread.turn-start-requested')
+        ORDER BY sequence
+      `);
+      const commandIds = [...new Set(laterEvents.map((event) => event.commandId))];
+      expect(commandIds).toHaveLength(2);
+      expect(laterEvents.filter((event) => event.commandId === originalCommandId)).toHaveLength(2);
+      const laterCommandId = commandIds.find((commandId) => commandId !== originalCommandId);
+      expect(laterCommandId).toBeDefined();
+      expect(laterEvents.filter((event) => event.commandId === laterCommandId)).toHaveLength(2);
+      const laterMessage = laterEvents.find(
+        (event) => event.commandId === laterCommandId && event.eventType === "thread.message-sent",
+      );
+      expect(JSON.parse(laterMessage?.payloadJson ?? "{}").text).toContain("CARD-2");
+      expect(
+        await second.run(sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM orchestration_command_receipts
+        WHERE command_id IN (${originalCommandId}, ${laterCommandId}) AND status = 'accepted'
+      `),
+      ).toEqual([{ count: 2 }]);
+      expect(
+        await second.run(sql<{ readonly pendingFingerprint: string | null }>`
+        SELECT pending_fingerprint AS "pendingFingerprint"
+        FROM agent_board_supervisor_wakes
+        WHERE project_id = ${projectId}
+      `),
+      ).toEqual([{ pendingFingerprint: null }]);
+    } finally {
+      await second.dispose();
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects reusing an accepted command id for a different aggregate", async () => {

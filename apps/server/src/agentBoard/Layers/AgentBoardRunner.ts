@@ -97,7 +97,7 @@ export const makeAgentBoardRunner = Effect.gen(function* () {
       }),
       updatedAt: timestamp,
     };
-    return yield* input.boardFiles.save({ cwd: input.cwd, board: nextBoard });
+    return yield* input.boardFiles.save({ cwd: input.cwd, board: nextBoard }, "scheduler");
   });
 
   const run: AgentBoardRunnerShape["run"] = (input) =>

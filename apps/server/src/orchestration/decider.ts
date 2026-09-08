@@ -938,6 +938,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.onlyIfIdle === true) {
+        const sessionActive =
+          targetThread.session?.status === "starting" || targetThread.session?.status === "running";
+        const unavailable =
+          targetThread.deletedAt !== null ||
+          targetThread.archivedAt !== null ||
+          targetThread.settledOverride === "settled" ||
+          targetThread.snoozedUntil !== null ||
+          targetThread.latestTurn?.state === "running" ||
+          targetThread.latestTurn?.state === "interrupted" ||
+          targetThread.session?.status === "interrupted" ||
+          targetThread.session?.status === "stopped" ||
+          targetThread.session?.autoWakePaused === true ||
+          sessionActive ||
+          hasOpenBlockingRequest(targetThread) ||
+          threadHasQueuedTurnStart(targetThread, command.createdAt);
+        if (unavailable) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is unavailable for an automatic Supervisor follow-up`,
+          });
+        }
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1001,6 +1024,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+          ...(command.onlyIfIdle !== undefined ? { onlyIfIdle: command.onlyIfIdle } : {}),
           createdAt: command.createdAt,
         },
       };

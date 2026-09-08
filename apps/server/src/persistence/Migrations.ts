@@ -65,6 +65,11 @@ import Migration0044 from "./Migrations/044_ProjectionThreadsUnsettledAt.ts";
 import Migration0045 from "./Migrations/045_ProjectionThreadsRole.ts";
 import Migration0046 from "./Migrations/046_ProjectionProjectAgentExecutionPresets.ts";
 import Migration0047 from "./Migrations/047_AgentBoards.ts";
+import Migration0048 from "./Migrations/048_AgentBoardSupervisorWakes.ts";
+import Migration0049 from "./Migrations/049_AgentBoardSupervisorWakeDispatchEnvelope.ts";
+import Migration0050 from "./Migrations/050_AgentBoardSupervisorWakeDispatchFingerprint.ts";
+import Migration0051 from "./Migrations/051_ProjectionThreadSessionAutoWakeLatch.ts";
+import Migration0052 from "./Migrations/052_ProjectionPendingTurnDelivery.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -123,6 +128,11 @@ export const migrationEntries = [
   [45, "ProjectionThreadsRole", Migration0045],
   [46, "ProjectionProjectAgentExecutionPresets", Migration0046],
   [47, "AgentBoards", Migration0047],
+  [48, "AgentBoardSupervisorWakes", Migration0048],
+  [49, "AgentBoardSupervisorWakeDispatchEnvelope", Migration0049],
+  [50, "AgentBoardSupervisorWakeDispatchFingerprint", Migration0050],
+  [51, "ProjectionThreadSessionAutoWakeLatch", Migration0051],
+  [52, "ProjectionPendingTurnDelivery", Migration0052],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

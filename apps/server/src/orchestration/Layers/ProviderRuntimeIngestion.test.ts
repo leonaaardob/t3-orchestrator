@@ -457,6 +457,82 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it.each(["interrupt", "stop"] as const)(
+    "keeps the durable auto-wake latch after a real %s command and provider ready ingestion",
+    async (stopKind) => {
+      const harness = await createHarness();
+      const createdAt = "2026-09-08T00:00:00.000Z";
+
+      await harness.dispatch(
+        stopKind === "interrupt"
+          ? {
+              type: "thread.turn.interrupt",
+              commandId: CommandId.make("cmd-ingestion-real-interrupt"),
+              threadId: asThreadId("thread-1"),
+              turnId: asTurnId("turn-ingestion-interrupt"),
+              createdAt,
+            }
+          : {
+              type: "thread.session.stop",
+              commandId: CommandId.make("cmd-ingestion-real-stop"),
+              threadId: asThreadId("thread-1"),
+              createdAt,
+            },
+      );
+      await harness.drain();
+
+      harness.emit({
+        type: "session.state.changed",
+        eventId: asEventId(`evt-ingestion-ready-after-${stopKind}`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        payload: { state: "ready" },
+      });
+      await harness.drain();
+      const ready = (await harness.readModel()).threads.find(
+        (thread) => thread.id === asThreadId("thread-1"),
+      );
+      expect(ready?.session?.status).toBe("ready");
+      expect(ready?.session?.autoWakePaused).toBe(true);
+
+      await expect(
+        harness.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-ingestion-auto-after-${stopKind}`),
+          threadId: asThreadId("thread-1"),
+          message: {
+            messageId: asMessageId(`msg-ingestion-auto-after-${stopKind}`),
+            role: "user",
+            text: "automatic follow-up remains paused",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          onlyIfIdle: true,
+          createdAt: "2026-01-01T00:00:02.000Z",
+        }),
+      ).rejects.toThrow("unavailable for an automatic Supervisor follow-up");
+
+      await expect(
+        harness.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-ingestion-human-after-${stopKind}`),
+          threadId: asThreadId("thread-1"),
+          message: {
+            messageId: asMessageId(`msg-ingestion-human-after-${stopKind}`),
+            role: "user",
+            text: "resume explicitly",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      ).resolves.toBeDefined();
+    },
+  );
+
   it("clears active turn when provider session becomes ready", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

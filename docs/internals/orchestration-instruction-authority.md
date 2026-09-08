@@ -30,6 +30,38 @@ the tree. T3 must not inject fake `AGENTS.md` / `WORKFLOW.md` /
 - Proof: `runtime.proofNotes` on the card (not required task Markdown).
 - Legacy `<project>/.t3/agent-board.json`: imported once, then ignored for writes.
 
+Supervisor follow-up notifications are durable SQLite state in
+`agent_board_supervisor_wakes`. Board saves record result transitions into
+`Review`, `Blocked`, or `Needs Decision`, plus human unblock transitions back
+to `Ready` and human `Review` → `Done` validation; scheduler, human, and
+Supervisor writers are identified explicitly.
+A Supervisor-origin save marks its current snapshot observed so it cannot wake
+itself. Each row stores a coalescing fingerprint, card ids, command id, retry
+attempts/deadline, and last error. The same command id is reused until the
+orchestration receipt confirms acceptance, together with its immutable thread,
+message, mode, and `createdAt` fields. A receipt resolves that notification
+immediately: a later notification is not held behind a missing projection.
+The envelope claim is conditional on the pending fingerprint, so a concurrent
+board save cannot attach a newly generated command to a replacement notice. The
+in-flight dispatch fingerprint is stored separately from the current pending
+fingerprint: a newer result cannot overwrite the immutable command envelope, and
+receipt resolution checks affected rows before clearing it. This lets restart
+replay the original command and then process the newer notification once.
+The `onlyIfIdle` command guard rejects a later automatic start while the first
+turn is queued or active. Accepted `thread.turn.interrupt` and
+`thread.session.stop` events immediately project an interrupted or stopped
+session before their provider reactor work begins, so the same guard rejects a
+pending wake at receipt time. A normal user `thread.turn.start` remains an
+explicit resume path. Three failed dispatches park the row until a new board
+transition changes its fingerprint. Existing result-state boards
+are seeded once by decoding their persisted JSON through `AgentBoardFile`'s
+JSON codec, rather than treating the JSON string as a board object.
+The provider-command reactor then atomically claims the exact pending start row
+before provider preparation. Explicit `thread.turn.interrupt` and
+`thread.session.stop` events delete that row in their engine transaction, so an
+accepted automatic event cannot bypass a user stop while it is waiting in the
+reactor queue; whichever durable operation commits first wins.
+
 ## Attachment point
 
 When a thread has durable role `project-supervisor`, the reactor adds one
@@ -43,6 +75,18 @@ minted for the provider turn:
 - `agent_board_create_card`
 - `agent_board_update_card`
 - `agent_board_run_card`
+
+The wake reactor uses the same `thread.turn.start` path, so the durable
+Supervisor role, provider context, and MCP capability are preserved. It only
+selects an active Supervisor thread for the matching project. Archived/deleted
+threads, settled, snoozed, stopped, or interrupted Supervisors, active or queued turns, and pending
+approvals or user input are skipped without clearing the pending row. Its
+`thread.turn.start` uses the server-only `onlyIfIdle` guard as a second check in
+the command decider, preventing a stale wake snapshot from reviving an explicit
+user stop or issuing a duplicate queued turn. The wake message is intentionally
+small and requires `agent_board_read` against the current board; it does not
+carry a board snapshot or authorize Review→Done, Draft promotion, attempt
+resets, or human decisions.
 
 `agent_board_run_card` immediately reconciles the owning project through the
 same scheduler as automatic Ready-card execution. Scheduler ticks and explicit
@@ -91,6 +135,17 @@ required now.
 
 Codex is the only adapter in this set with a first-class privileged
 `developer_instructions` attachment for the same `context` field.
+
+Provider turn-start delivery is durable through the local provider response:
+the reactor retains and reconciles only a `pending` start on boot. A process
+failure after the claim or across an external provider's acceptance boundary
+cannot be made exactly-once without a provider idempotency acknowledgement;
+persisted `claimed` and `sending` intents are retained for inspection and are
+not replayed blindly. The projection exposes a delivery reason: recovery paused
+after claim, or recovery paused after the provider handoff. Inspect
+`ProjectionTurnRepository.getPendingTurnStartByThreadId`; its
+`ProjectionPendingTurnStart.deliveryReason` is the server-visible diagnostic
+for this retained intent.
 
 ## What this is not
 

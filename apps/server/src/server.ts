@@ -74,6 +74,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import { AgentBoardFileSystemLive } from "./agentBoard/Layers/AgentBoardFileSystem.ts";
 import { AgentBoardRunnerLive } from "./agentBoard/Layers/AgentBoardRunner.ts";
 import { AgentBoardSchedulerLive } from "./agentBoard/Layers/AgentBoardScheduler.ts";
+import { AgentBoardSupervisorWakeLive } from "./agentBoard/Layers/AgentBoardSupervisorWake.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -248,7 +249,9 @@ const PlatformServicesLive = Layer.unwrap(
 );
 
 const ReactorLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(OrchestrationReactorLive),
+  Layer.provideMerge(
+    OrchestrationReactorLive.pipe(Layer.provideMerge(AgentBoardSupervisorWakeLive)),
+  ),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),

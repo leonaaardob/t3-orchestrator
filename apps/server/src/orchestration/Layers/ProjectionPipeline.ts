@@ -1181,18 +1181,56 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
-      if (event.type !== "thread.session-set") {
+      if (event.type === "thread.session-set") {
+        const existing = yield* projectionThreadSessionRepository.getByThreadId({
+          threadId: event.payload.threadId,
+        });
+        yield* projectionThreadSessionRepository.upsert({
+          threadId: event.payload.threadId,
+          status: event.payload.session.status,
+          providerName: event.payload.session.providerName,
+          providerInstanceId: event.payload.session.providerInstanceId ?? null,
+          runtimeMode: event.payload.session.runtimeMode,
+          activeTurnId: event.payload.session.activeTurnId,
+          lastError: event.payload.session.lastError,
+          // Provider runtime observations never clear an explicit user stop.
+          autoWakePaused: Option.isSome(existing) ? existing.value.autoWakePaused : 0,
+          updatedAt: event.payload.session.updatedAt,
+        });
         return;
       }
+      if (event.type === "thread.turn-start-requested" && event.payload.onlyIfIdle !== true) {
+        const existing = yield* projectionThreadSessionRepository.getByThreadId({
+          threadId: event.payload.threadId,
+        });
+        if (Option.isSome(existing) && existing.value.autoWakePaused === 1) {
+          yield* projectionThreadSessionRepository.upsert({
+            ...existing.value,
+            autoWakePaused: 0,
+            updatedAt: event.payload.createdAt,
+          });
+        }
+        return;
+      }
+      if (
+        event.type !== "thread.turn-interrupt-requested" &&
+        event.type !== "thread.session-stop-requested"
+      ) {
+        return;
+      }
+      const existing = yield* projectionThreadSessionRepository.getByThreadId({
+        threadId: event.payload.threadId,
+      });
       yield* projectionThreadSessionRepository.upsert({
         threadId: event.payload.threadId,
-        status: event.payload.session.status,
-        providerName: event.payload.session.providerName,
-        providerInstanceId: event.payload.session.providerInstanceId ?? null,
-        runtimeMode: event.payload.session.runtimeMode,
-        activeTurnId: event.payload.session.activeTurnId,
-        lastError: event.payload.session.lastError,
-        updatedAt: event.payload.session.updatedAt,
+        status: event.type === "thread.turn-interrupt-requested" ? "interrupted" : "stopped",
+        providerName: Option.isSome(existing) ? existing.value.providerName : null,
+        providerInstanceId: Option.isSome(existing) ? existing.value.providerInstanceId : null,
+        runtimeMode: Option.isSome(existing) ? existing.value.runtimeMode : "full-access",
+        activeTurnId: null,
+        lastError: Option.isSome(existing) ? existing.value.lastError : null,
+        autoWakePaused: 1,
+        updatedAt: event.payload.createdAt,
       });
     });
 
@@ -1207,6 +1245,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
+            deliveryState: "pending",
           });
           return;
         }
@@ -1408,6 +1447,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.turn-interrupt-requested": {
+          // This is the durable cancellation side of the provider handoff claim.
+          // It lands in the same engine transaction as the interrupt event, before
+          // the reactor can consume that event from the domain-event stream.
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
           if (event.payload.turnId === undefined) {
             return;
           }
@@ -1440,6 +1485,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointRef: null,
             checkpointStatus: null,
             checkpointFiles: [],
+          });
+          return;
+        }
+
+        case "thread.session-stop-requested": {
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
           });
           return;
         }

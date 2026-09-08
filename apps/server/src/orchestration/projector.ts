@@ -32,6 +32,9 @@ import {
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadSessionStopRequestedPayload,
+  ThreadTurnStartRequestedPayload,
+  ThreadTurnInterruptRequestedPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -588,12 +591,17 @@ export function projectEvent(
           return nextBase;
         }
 
-        const session: OrchestrationSession = yield* decodeForEvent(
+        const providerSession: OrchestrationSession = yield* decodeForEvent(
           OrchestrationSession,
           payload.session,
           event.type,
           "session",
         );
+        const session: OrchestrationSession = {
+          ...providerSession,
+          // Runtime readiness is not a user resume.
+          ...(thread.session?.autoWakePaused === true ? { autoWakePaused: true } : {}),
+        };
 
         // Leaving the "running" session status is the turn-end signal: settle
         // a still-running latest turn so its duration reflects the whole turn.
@@ -634,6 +642,82 @@ export function projectEvent(
                     }
                   : thread.latestTurn,
             updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.turn-interrupt-requested":
+    case "thread.session-stop-requested":
+      return Effect.gen(function* () {
+        const payload =
+          event.type === "thread.turn-interrupt-requested"
+            ? yield* decodeForEvent(
+                ThreadTurnInterruptRequestedPayload,
+                event.payload,
+                event.type,
+                "payload",
+              )
+            : yield* decodeForEvent(
+                ThreadSessionStopRequestedPayload,
+                event.payload,
+                event.type,
+                "payload",
+              );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+        const status = event.type === "thread.turn-interrupt-requested" ? "interrupted" : "stopped";
+        const session: OrchestrationSession = {
+          threadId: thread.id,
+          status,
+          providerName: thread.session?.providerName ?? null,
+          ...(thread.session?.providerInstanceId !== undefined
+            ? { providerInstanceId: thread.session.providerInstanceId }
+            : {}),
+          runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+          activeTurnId: null,
+          lastError: thread.session?.lastError ?? null,
+          autoWakePaused: true,
+          updatedAt: payload.createdAt,
+        };
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            session,
+            latestTurn:
+              thread.latestTurn !== null && thread.latestTurn.state === "running"
+                ? {
+                    ...thread.latestTurn,
+                    state: "interrupted",
+                    completedAt: payload.createdAt,
+                  }
+                : thread.latestTurn,
+            updatedAt: payload.createdAt,
+          }),
+        };
+      });
+
+    case "thread.turn-start-requested":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnStartRequestedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        if (payload.onlyIfIdle === true) {
+          return nextBase;
+        }
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread?.session?.autoWakePaused) {
+          return nextBase;
+        }
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            session: { ...thread.session, autoWakePaused: false, updatedAt: payload.createdAt },
+            updatedAt: payload.createdAt,
           }),
         };
       });

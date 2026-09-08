@@ -33,6 +33,15 @@ export const ProjectionTurnState = Schema.Literals([
 ]);
 export type ProjectionTurnState = typeof ProjectionTurnState.Type;
 
+/** Human-readable server diagnostic for the durable provider handoff state. */
+export const ProjectionPendingTurnDeliveryReason = Schema.Literals([
+  "awaiting-provider-handoff",
+  "automatic-recovery-paused-after-claim",
+  "automatic-recovery-paused-after-provider-handoff",
+  "provider-handoff-confirmed",
+]);
+export type ProjectionPendingTurnDeliveryReason = typeof ProjectionPendingTurnDeliveryReason.Type;
+
 export const ProjectionTurn = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
@@ -75,6 +84,9 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,
+  deliveryState: Schema.Literals(["pending", "claimed", "sending", "delivered"]),
+  /** Present on persisted reads; explains whether restart recovery is safe. */
+  deliveryReason: Schema.optional(ProjectionPendingTurnDeliveryReason),
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
 
@@ -93,6 +105,26 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
+
+/** Identifies the exact durable start request a provider reactor may consume. */
+export const ClaimProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestedAt: IsoDateTime,
+});
+export type ClaimProjectionPendingTurnStartInput = typeof ClaimProjectionPendingTurnStartInput.Type;
+
+export const ListUndeliveredProjectionPendingTurnStartsInput = Schema.Void;
+export type ListUndeliveredProjectionPendingTurnStartsInput =
+  typeof ListUndeliveredProjectionPendingTurnStartsInput.Type;
+
+export const MarkProjectionPendingTurnStartDeliveredInput = ClaimProjectionPendingTurnStartInput;
+export type MarkProjectionPendingTurnStartDeliveredInput =
+  typeof MarkProjectionPendingTurnStartDeliveredInput.Type;
+
+export const MarkProjectionPendingTurnStartSendingInput = ClaimProjectionPendingTurnStartInput;
+export type MarkProjectionPendingTurnStartSendingInput =
+  typeof MarkProjectionPendingTurnStartSendingInput.Type;
 
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -127,6 +159,30 @@ export interface ProjectionTurnRepositoryShape {
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /**
+   * Atomically claims an exact pending start request without deleting its durable
+   * delivery intent. A later interrupt or session stop still removes the same row.
+   */
+  readonly claimPendingTurnStart: (
+    input: ClaimProjectionPendingTurnStartInput,
+  ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /** Lists pending starts eligible for safe reactor recovery; ambiguous claims are excluded. */
+  readonly listUndeliveredPendingTurnStarts: () => Effect.Effect<
+    ReadonlyArray<ProjectionPendingTurnStart>,
+    ProjectionRepositoryError
+  >;
+
+  /** Marks exactly the claimed durable intent as delivered after sendTurn returns. */
+  readonly markPendingTurnStartDelivered: (
+    input: MarkProjectionPendingTurnStartDeliveredInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Commits the point after which replay would be externally ambiguous. */
+  readonly markPendingTurnStartSending: (
+    input: MarkProjectionPendingTurnStartSendingInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 
   /**
    * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.

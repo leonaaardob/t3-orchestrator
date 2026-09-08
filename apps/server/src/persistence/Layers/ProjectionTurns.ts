@@ -10,9 +10,13 @@ import * as Struct from "effect/Struct";
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
   ClearCheckpointTurnConflictInput,
+  ClaimProjectionPendingTurnStartInput,
   DeleteProjectionTurnsByThreadInput,
   GetProjectionPendingTurnStartInput,
   GetProjectionTurnByTurnIdInput,
+  ListUndeliveredProjectionPendingTurnStartsInput,
+  MarkProjectionPendingTurnStartDeliveredInput,
+  MarkProjectionPendingTurnStartSendingInput,
   ListProjectionTurnsByThreadInput,
   ProjectionPendingTurnStart,
   ProjectionTurn,
@@ -126,7 +130,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           checkpoint_turn_count,
           checkpoint_ref,
           checkpoint_status,
-          checkpoint_files_json
+          checkpoint_files_json,
+          delivery_state
         )
         VALUES (
           ${row.threadId},
@@ -142,7 +147,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           NULL,
           NULL,
           NULL,
-          '[]'
+          '[]',
+          'pending'
         )
       `,
   });
@@ -157,7 +163,14 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
-          requested_at AS "requestedAt"
+          requested_at AS "requestedAt",
+          delivery_state AS "deliveryState",
+          CASE delivery_state
+            WHEN 'pending' THEN 'awaiting-provider-handoff'
+            WHEN 'claimed' THEN 'automatic-recovery-paused-after-claim'
+            WHEN 'sending' THEN 'automatic-recovery-paused-after-provider-handoff'
+            WHEN 'delivered' THEN 'provider-handoff-confirmed'
+          END AS "deliveryReason"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
@@ -167,6 +180,76 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ORDER BY requested_at DESC
         LIMIT 1
       `,
+  });
+
+  const claimPendingProjectionTurn = SqlSchema.findOneOption({
+    Request: ClaimProjectionPendingTurnStartInput,
+    Result: ProjectionPendingTurnStart,
+    execute: ({ threadId, messageId, requestedAt }) =>
+      sql`
+        UPDATE projection_turns
+        SET delivery_state = 'claimed'
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${messageId}
+          AND requested_at = ${requestedAt}
+          AND checkpoint_turn_count IS NULL
+          AND delivery_state IN ('pending', 'claimed')
+        RETURNING
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId",
+          requested_at AS "requestedAt",
+          delivery_state AS "deliveryState",
+          CASE delivery_state
+            WHEN 'pending' THEN 'awaiting-provider-handoff'
+            WHEN 'claimed' THEN 'automatic-recovery-paused-after-claim'
+            WHEN 'sending' THEN 'automatic-recovery-paused-after-provider-handoff'
+            WHEN 'delivered' THEN 'provider-handoff-confirmed'
+          END AS "deliveryReason"
+      `,
+  });
+
+  const listUndeliveredPendingProjectionTurns = SqlSchema.findAll({
+    Request: ListUndeliveredProjectionPendingTurnStartsInput,
+    Result: ProjectionPendingTurnStart,
+    execute: () => sql`
+      SELECT thread_id AS "threadId", pending_message_id AS "messageId",
+        source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+        source_proposed_plan_id AS "sourceProposedPlanId", requested_at AS "requestedAt",
+        delivery_state AS "deliveryState",
+        'awaiting-provider-handoff' AS "deliveryReason"
+      FROM projection_turns
+      WHERE turn_id IS NULL AND state = 'pending' AND pending_message_id IS NOT NULL
+        AND checkpoint_turn_count IS NULL AND delivery_state = 'pending'
+      ORDER BY requested_at ASC, thread_id ASC
+    `,
+  });
+
+  const markPendingProjectionTurnDelivered = SqlSchema.void({
+    Request: MarkProjectionPendingTurnStartDeliveredInput,
+    execute: ({ threadId, messageId, requestedAt }) => sql`
+      UPDATE projection_turns
+      SET delivery_state = 'delivered'
+      WHERE thread_id = ${threadId} AND turn_id IS NULL AND state = 'pending'
+        AND pending_message_id = ${messageId} AND requested_at = ${requestedAt}
+        AND checkpoint_turn_count IS NULL AND delivery_state = 'sending'
+    `,
+  });
+
+  const markPendingProjectionTurnSending = SqlSchema.findOneOption({
+    Request: MarkProjectionPendingTurnStartSendingInput,
+    Result: Schema.Struct({ claimed: Schema.Literal(1) }),
+    execute: ({ threadId, messageId, requestedAt }) => sql`
+      UPDATE projection_turns
+      SET delivery_state = 'sending'
+      WHERE thread_id = ${threadId} AND turn_id IS NULL AND state = 'pending'
+        AND pending_message_id = ${messageId} AND requested_at = ${requestedAt}
+        AND checkpoint_turn_count IS NULL AND delivery_state = 'claimed'
+      RETURNING 1 AS claimed
+    `,
   });
 
   const listProjectionTurnsByThread = SqlSchema.findAll({
@@ -288,12 +371,44 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const claimPendingTurnStart: ProjectionTurnRepositoryShape["claimPendingTurnStart"] = (input) =>
+    claimPendingProjectionTurn(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionTurnRepository.claimPendingTurnStart:query"),
+      ),
+    );
+
   const deletePendingTurnStartByThreadId: ProjectionTurnRepositoryShape["deletePendingTurnStartByThreadId"] =
     (input) =>
       clearPendingProjectionTurnsByThread(input).pipe(
         Effect.mapError(
           toPersistenceSqlError("ProjectionTurnRepository.deletePendingTurnStartByThreadId:query"),
         ),
+      );
+
+  const listUndeliveredPendingTurnStarts: ProjectionTurnRepositoryShape["listUndeliveredPendingTurnStarts"] =
+    () =>
+      listUndeliveredPendingProjectionTurns(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.listUndeliveredPendingTurnStarts:query"),
+        ),
+      );
+
+  const markPendingTurnStartDelivered: ProjectionTurnRepositoryShape["markPendingTurnStartDelivered"] =
+    (input) =>
+      markPendingProjectionTurnDelivered(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.markPendingTurnStartDelivered:query"),
+        ),
+      );
+
+  const markPendingTurnStartSending: ProjectionTurnRepositoryShape["markPendingTurnStartSending"] =
+    (input) =>
+      markPendingProjectionTurnSending(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.markPendingTurnStartSending:query"),
+        ),
+        Effect.map(Option.isSome),
       );
 
   const listByThreadId: ProjectionTurnRepositoryShape["listByThreadId"] = (input) =>
@@ -341,6 +456,10 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     upsertByTurnId,
     replacePendingTurnStart,
     getPendingTurnStartByThreadId,
+    claimPendingTurnStart,
+    listUndeliveredPendingTurnStarts,
+    markPendingTurnStartDelivered,
+    markPendingTurnStartSending,
     deletePendingTurnStartByThreadId,
     listByThreadId,
     getByTurnId,

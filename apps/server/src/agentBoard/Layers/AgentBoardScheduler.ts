@@ -28,7 +28,6 @@ import {
 } from "@t3tools/shared/agentBoardPrompt";
 import {
   MISSING_WORKER_CONFIG_ERROR,
-  REVIEW_INDEPENDENCE_ERROR,
   resolveAndValidateExecutionPresetForOperation,
   resolveEffectiveAgentExecutionPresets,
   resolveExecutionPresetForOperation,
@@ -1503,10 +1502,13 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
 
       if (dirty) {
         const timestamp = yield* nowIso;
-        const saved = yield* boardFiles.save({
-          cwd,
-          board: { ...board, updatedAt: timestamp },
-        });
+        const saved = yield* boardFiles.save(
+          {
+            cwd,
+            board: { ...board, updatedAt: timestamp },
+          },
+          "scheduler",
+        );
         board = saved.board;
         dirty = false;
       }
@@ -1740,10 +1742,13 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
         }
         // Persist pending gates before the runner writes its own runtime state.
         if (dirty) {
-          const saved = yield* boardFiles.save({
-            cwd,
-            board: { ...board, updatedAt: yield* nowIso },
-          });
+          const saved = yield* boardFiles.save(
+            {
+              cwd,
+              board: { ...board, updatedAt: yield* nowIso },
+            },
+            "scheduler",
+          );
           board = saved.board;
           dirty = false;
         }
@@ -1775,10 +1780,13 @@ const makeAgentBoardScheduler = (options?: AgentBoardSchedulerLiveOptions) =>
 
       if (dirty) {
         const timestamp = yield* nowIso;
-        const saved = yield* boardFiles.save({
-          cwd,
-          board: { ...board, updatedAt: timestamp },
-        });
+        const saved = yield* boardFiles.save(
+          {
+            cwd,
+            board: { ...board, updatedAt: timestamp },
+          },
+          "scheduler",
+        );
         board = saved.board;
         dirty = false;
       }

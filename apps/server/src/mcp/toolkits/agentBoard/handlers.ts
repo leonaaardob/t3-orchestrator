@@ -204,14 +204,17 @@ const createCard = Effect.fn("AgentBoardToolkit.createCard")(function* (
   });
 
   const saved = yield* boardFs
-    .save({
-      cwd: projectRoot,
-      board: {
-        ...loaded.board,
-        cards: [...loaded.board.cards, card],
-        updatedAt: timestamp,
+    .save(
+      {
+        cwd: projectRoot,
+        board: {
+          ...loaded.board,
+          cards: [...loaded.board.cards, card],
+          updatedAt: timestamp,
+        },
       },
-    })
+      "supervisor",
+    )
     .pipe(Effect.mapError(mapBoardFsError("save")));
 
   const created = saved.board.cards.find((candidate) => candidate.id === cardId);
@@ -304,14 +307,17 @@ const updateCard = Effect.fn("AgentBoardToolkit.updateCard")(function* (
   } as AgentBoardCard);
 
   const saved = yield* boardFs
-    .save({
-      cwd: projectRoot,
-      board: {
-        ...loaded.board,
-        cards: loaded.board.cards.map((card) => (card.id === input.cardId ? updated : card)),
-        updatedAt: timestamp,
+    .save(
+      {
+        cwd: projectRoot,
+        board: {
+          ...loaded.board,
+          cards: loaded.board.cards.map((card) => (card.id === input.cardId ? updated : card)),
+          updatedAt: timestamp,
+        },
       },
-    })
+      "supervisor",
+    )
     .pipe(Effect.mapError(mapBoardFsError("save")));
 
   const persisted = saved.board.cards.find((card) => card.id === input.cardId);

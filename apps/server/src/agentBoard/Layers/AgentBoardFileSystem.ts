@@ -19,6 +19,15 @@ import {
   type AgentBoardFileSystemShape,
 } from "../Services/AgentBoardFileSystem.ts";
 import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
+import {
+  type AgentBoardSaveSource,
+  supervisorWakeCardIds,
+  supervisorWakeFingerprint,
+  supervisorWakeReason,
+  encodeSupervisorWakeCardIds,
+  decodeSupervisorWakeCardIds,
+  SUPERVISOR_WAKE_MAX_DISPATCH_ATTEMPTS,
+} from "../supervisorWake.ts";
 
 const isAgentBoardFileSystemError = Schema.is(AgentBoardFileSystemError);
 
@@ -235,11 +244,168 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       readonly projectId: string;
       readonly projectRoot: string;
       readonly board: AgentBoardFile;
+      readonly previousBoard?: AgentBoardFile;
+      readonly wakeSource?: AgentBoardSaveSource;
     }) {
       yield* sql
         .withTransaction(
           Effect.gen(function* () {
             yield* writeBoardRow(input);
+            const interimId = pathScopedProjectId(input.projectRoot);
+            if (interimId !== input.projectId) {
+              // Preserve a pending notification when a pre-project board is
+              // promoted to the durable project id.
+              yield* sql`
+                UPDATE agent_board_supervisor_wakes
+                SET project_id = ${input.projectId}, project_root = ${input.projectRoot}
+                WHERE project_id = ${interimId}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM agent_board_supervisor_wakes WHERE project_id = ${input.projectId}
+                  )
+              `;
+              yield* sql`
+                DELETE FROM agent_board_supervisor_wakes
+                WHERE project_id = ${interimId}
+              `;
+            }
+            const source = input.wakeSource ?? "human";
+            const cardIds = supervisorWakeCardIds({
+              before: input.previousBoard,
+              after: input.board,
+              source,
+            });
+            const fingerprint = supervisorWakeFingerprint(input.board);
+            if (source === "supervisor") {
+              const existing = yield* sql<{ readonly pendingFingerprint: string | null }>`
+                SELECT pending_fingerprint AS "pendingFingerprint"
+                FROM agent_board_supervisor_wakes
+                WHERE project_id = ${input.projectId}
+              `;
+              // A Supervisor turn has already observed and handled its own
+              // mutation. Mark this snapshot observed so it cannot wake itself
+              // again on the next restart. Never discard a result that arrived
+              // while that turn was active; it will be handled after the turn.
+              if (existing[0]?.pendingFingerprint === null || existing.length === 0) {
+                yield* sql`
+                  INSERT INTO agent_board_supervisor_wakes (
+                    project_id, project_root, pending_fingerprint,
+                    pending_card_ids_json, pending_reason, dispatch_command_id,
+                    dispatch_fingerprint, dispatch_attempts, next_attempt_at, last_dispatched_fingerprint,
+                    last_error, updated_at
+                  ) VALUES (
+                    ${input.projectId}, ${input.projectRoot}, NULL, '[]', NULL, NULL,
+                    NULL, 0, NULL, ${fingerprint}, NULL, ${input.board.updatedAt}
+                  )
+                  ON CONFLICT (project_id) DO UPDATE SET
+                    project_root = excluded.project_root,
+                    last_dispatched_fingerprint = excluded.last_dispatched_fingerprint,
+                    last_error = NULL,
+                    updated_at = excluded.updated_at
+                `;
+              }
+            } else if (cardIds.length > 0) {
+              const reason = supervisorWakeReason({ after: input.board, cardIds });
+              const existing = yield* sql<{
+                readonly pendingFingerprint: string | null;
+                readonly pendingCardIdsJson: string;
+                readonly lastDispatchedFingerprint: string | null;
+                readonly dispatchFingerprint: string | null;
+                readonly dispatchAttempts: number;
+                readonly lastError: string | null;
+              }>`
+                SELECT
+                  pending_fingerprint AS "pendingFingerprint",
+                  pending_card_ids_json AS "pendingCardIdsJson",
+                  last_dispatched_fingerprint AS "lastDispatchedFingerprint",
+                  dispatch_fingerprint AS "dispatchFingerprint",
+                  dispatch_attempts AS "dispatchAttempts",
+                  last_error AS "lastError"
+                FROM agent_board_supervisor_wakes
+                WHERE project_id = ${input.projectId}
+              `;
+              const row = existing[0];
+              const preserveDispatch =
+                row?.dispatchFingerprint !== null &&
+                row?.dispatchFingerprint !== undefined &&
+                (row.dispatchAttempts < SUPERVISOR_WAKE_MAX_DISPATCH_ATTEMPTS ||
+                  row.lastError === null);
+              if (
+                row?.pendingFingerprint !== fingerprint &&
+                row?.lastDispatchedFingerprint !== fingerprint
+              ) {
+                const previousIds = decodeSupervisorWakeCardIds(row?.pendingCardIdsJson ?? "[]");
+                const mergedIds = [...new Set([...previousIds, ...cardIds])].sort();
+                yield* sql`
+                  INSERT INTO agent_board_supervisor_wakes (
+                    project_id, project_root, pending_fingerprint,
+                    pending_card_ids_json, pending_reason, dispatch_command_id,
+                    dispatch_fingerprint, dispatch_attempts, next_attempt_at, last_dispatched_fingerprint,
+                    last_error, updated_at
+                  ) VALUES (
+                    ${input.projectId}, ${input.projectRoot}, ${fingerprint},
+                    ${encodeSupervisorWakeCardIds(mergedIds)}, ${reason}, NULL, NULL, 0, NULL,
+                    ${row?.lastDispatchedFingerprint ?? null}, NULL, ${input.board.updatedAt}
+                  )
+                  ON CONFLICT (project_id) DO UPDATE SET
+                    project_root = excluded.project_root,
+                    pending_fingerprint = excluded.pending_fingerprint,
+                    pending_card_ids_json = excluded.pending_card_ids_json,
+                    pending_reason = excluded.pending_reason,
+                    dispatch_command_id = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_command_id
+                      ELSE NULL
+                    END,
+                    dispatch_fingerprint = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_fingerprint
+                      ELSE NULL
+                    END,
+                    dispatch_thread_id = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_thread_id
+                      ELSE NULL
+                    END,
+                    dispatch_message_id = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_message_id
+                      ELSE NULL
+                    END,
+                    dispatch_message_text = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_message_text
+                      ELSE NULL
+                    END,
+                    dispatch_runtime_mode = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_runtime_mode
+                      ELSE NULL
+                    END,
+                    dispatch_interaction_mode = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_interaction_mode
+                      ELSE NULL
+                    END,
+                    dispatch_created_at = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_created_at
+                      ELSE NULL
+                    END,
+                    dispatch_attempts = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.dispatch_attempts
+                      ELSE 0
+                    END,
+                    next_attempt_at = CASE
+                      WHEN ${preserveDispatch ? 1 : 0} = 1
+                        THEN agent_board_supervisor_wakes.next_attempt_at
+                      ELSE NULL
+                    END,
+                    last_error = NULL,
+                    updated_at = excluded.updated_at
+                `;
+              }
+            }
             yield* clearStalePathScopedBoard({
               cwd: input.cwd,
               projectRoot: input.projectRoot,
@@ -506,7 +672,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
       } satisfies AgentBoardLoadResult;
     });
 
-  const save: AgentBoardFileSystemShape["save"] = (input) =>
+  const save: AgentBoardFileSystemShape["save"] = (input, source = "human") =>
     Effect.gen(function* () {
       const projectRoot = yield* resolveProjectRoot(input.cwd);
       const projectId = yield* resolveProjectId(projectRoot);
@@ -525,11 +691,36 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         ),
       );
 
+      const existingRows = yield* sql<{ readonly boardJson: string }>`
+        SELECT board_json AS "boardJson"
+        FROM agent_boards
+        WHERE project_id = ${projectId}
+        LIMIT 1
+      `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AgentBoardFileSystemError({
+              cwd: input.cwd,
+              operation: "agentBoard.read",
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      );
+      const previousBoard =
+        existingRows[0] === undefined
+          ? undefined
+          : Option.getOrUndefined(
+              yield* decodeAgentBoardFileJsonString(existingRows[0].boardJson).pipe(Effect.option),
+            );
+
       yield* writeBoardAndClearInterim({
         cwd: input.cwd,
         projectId,
         projectRoot,
         board,
+        ...(previousBoard === undefined ? {} : { previousBoard }),
+        wakeSource: source,
       });
 
       return {
@@ -600,7 +791,7 @@ export const makeAgentBoardFileSystem = Effect.gen(function* () {
         updatedAt: timestamp,
       };
 
-      const saved = yield* save({ cwd: input.cwd, board: nextBoard });
+      const saved = yield* save({ cwd: input.cwd, board: nextBoard }, "scheduler");
       const savedCard = saved.board.cards.find((candidate) => candidate.id === input.cardId);
 
       if (!savedCard) {

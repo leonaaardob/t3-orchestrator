@@ -15,6 +15,7 @@ import {
   WorkspaceRootNotExistsError,
   WorkspaceRootStatFailedError,
 } from "../../workspace/WorkspacePaths.ts";
+import type { AgentBoardSaveSource } from "../supervisorWake.ts";
 
 export class AgentBoardFileSystemError extends Schema.TaggedErrorClass<AgentBoardFileSystemError>()(
   "AgentBoardFileSystemError",
@@ -40,6 +41,7 @@ export interface AgentBoardFileSystemShape {
   >;
   readonly save: (
     input: AgentBoardSaveInput,
+    source?: AgentBoardSaveSource,
   ) => Effect.Effect<
     AgentBoardSaveResult,
     | AgentBoardFileSystemError

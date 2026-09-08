@@ -35,6 +35,8 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -311,6 +313,7 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
@@ -1135,6 +1138,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Claim without deleting the durable intent. An interrupt or session stop
+    // can still cancel it, and a process death before sendTurn leaves it for
+    // startup reconciliation.
+    const claimedStart = yield* projectionTurnRepository.claimPendingTurnStart({
+      threadId: event.payload.threadId,
+      messageId: event.payload.messageId,
+      requestedAt: event.payload.createdAt,
+    });
+    if (Option.isNone(claimedStart)) {
+      return;
+    }
+
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
@@ -1240,9 +1255,29 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    // Persist the irreversible external-boundary marker before issuing the
+    // provider call. Startup resumes only pending work; claimed and sending
+    // intents remain inspection-only because their provider outcome is ambiguous.
+    const ownsProviderHandoff = yield* projectionTurnRepository.markPendingTurnStartSending({
+      threadId: claimedStart.value.threadId,
+      messageId: claimedStart.value.messageId,
+      requestedAt: claimedStart.value.requestedAt,
+    });
+    if (!ownsProviderHandoff) {
+      return;
+    }
+
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() =>
+        projectionTurnRepository.markPendingTurnStartDelivered({
+          threadId: claimedStart.value.threadId,
+          messageId: claimedStart.value.messageId,
+          requestedAt: claimedStart.value.requestedAt,
+        }),
+      ),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1437,7 +1472,11 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
-    if (thread.session && thread.session.status !== "stopped") {
+    // The projection records `stopped` as soon as the command is accepted so
+    // automatic wakes are rejected before this reactor runs. This event is
+    // still the provider-stop intent, so do not mistake that durable guard for
+    // confirmation that the provider process has already stopped.
+    if (thread.session) {
       yield* providerService.stopSession({ threadId: thread.id });
     }
 
@@ -1532,6 +1571,41 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
+  const enqueueUndeliveredTurnStarts = Effect.fn("enqueueUndeliveredTurnStarts")(function* () {
+    const pending = yield* projectionTurnRepository.listUndeliveredPendingTurnStarts();
+    yield* Effect.forEach(
+      pending,
+      (start) =>
+        Effect.gen(function* () {
+          const thread = yield* resolveThread(start.threadId);
+          if (!thread || thread.session?.autoWakePaused === true) {
+            return;
+          }
+          // The original event has already been receipted, so startup creates
+          // only an internal work item; it never re-dispatches a command.
+          yield* worker.enqueue({
+            type: "thread.turn-start-requested",
+            commandId: CommandId.make(
+              `server:recover-turn-start:${start.threadId}:${start.messageId}`,
+            ),
+            eventId: EventId.make(`recover-turn-start:${start.threadId}:${start.messageId}`),
+            occurredAt: start.requestedAt,
+            aggregateKind: "thread",
+            aggregateId: start.threadId,
+            sequence: 0,
+            payload: {
+              threadId: start.threadId,
+              messageId: start.messageId,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+              createdAt: start.requestedAt,
+            },
+          } as Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>);
+        }),
+      { concurrency: 1 },
+    );
+  });
+
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
       Effect.catchCause((cause) => {
@@ -1560,6 +1634,16 @@ const make = Effect.gen(function* () {
     });
 
     yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
+
+    // The stream is hot. Scan after subscribing so a receipt committed before
+    // this process started is delivered, while new events use the same worker.
+    yield* enqueueUndeliveredTurnStarts().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor failed to reconcile pending turn starts", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
@@ -1596,4 +1680,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

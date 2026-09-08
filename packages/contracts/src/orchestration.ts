@@ -344,6 +344,10 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  // This is an explicit user-intent latch, deliberately separate from the
+  // provider's transient runtime status. A provider "ready" update must not
+  // resume automatic supervisor work after an interrupt or session stop.
+  autoWakePaused: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -909,6 +913,8 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /** Server-side guard for automation that must never revive queued or stopped work. */
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
@@ -1328,6 +1334,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Recorded so projections can distinguish an automatic wake from an
+  // explicit human resume while replaying durable events.
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 

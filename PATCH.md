@@ -29,6 +29,8 @@ upstream T3 Code changes.
 - Keep unsigned macOS updater installs manual while retaining feed discovery;
   packaged metadata marks signed macOS builds as eligible for automatic
   installation and the UI selects the matching public DMG for unsigned builds.
+- Resume the project Supervisor automatically from durable worker/review card
+  results without concurrent turns or human-gate bypasses.
 
 ### Desktop local auth attachment points
 
@@ -93,6 +95,19 @@ The current patch attaches to upstream T3 Code through these areas:
     `ProjectCreateCommand` / `ProjectMetaUpdateCommand` /
     `ProjectCreatedPayload` / `ProjectMetaUpdatedPayload` carry the optional
     override. Back-compat: old projects without the field still decode.
+  - **SUPERVISOR-AUTO-WAKE-01:** optional internal
+    `ThreadTurnStartCommand.onlyIfIdle` lets server automation atomically reject
+    a stale start when the command read model now shows a stopped, snoozed,
+    queued, active, archived, deleted, or human-gated thread. Client turn starts
+    keep their existing behavior.
+    Accepted interrupt and session-stop events project that stopped state before
+    provider reactor work, so a pending automatic wake is rejected immediately;
+    a normal user turn start remains the explicit resume path.
+  - `src/orchestration/Layers/ProviderCommandReactor.ts` and
+    `src/persistence/{Services,Layers}/ProjectionTurns.ts`: the provider reactor
+    atomically claims an exact pending start before provider handoff; explicit
+    interrupt/session-stop events delete the same row in their engine transaction.
+    This makes a queued automatic start and a user stop linearizable.
 - `src/settings.ts`
   - `AgentExecutionPresets` re-exported from orchestration plus
     `DEFAULT_AGENT_EXECUTION_PRESETS` (Simple: codex/gpt-5.6-sol) and
@@ -128,6 +143,42 @@ The current patch attaches to upstream T3 Code through these areas:
   - Barrel re-export of `./agentBoard.ts`.
 
 ### Server (`apps/server`)
+
+- `src/agentBoard/supervisorWake.ts`,
+  `src/agentBoard/Services/AgentBoardSupervisorWake.ts`, and
+  `src/agentBoard/Layers/AgentBoardSupervisorWake.ts`
+  - **SUPERVISOR-AUTO-WAKE-01:** persist coalesced card-result notifications
+    and dispatch a bounded, receipt-backed `thread.turn.start` to the active
+    project Supervisor. The message requires a fresh board read and preserves
+    normal Supervisor provider context/tools. A receipt resolves its notification
+    without waiting for projection, while the atomic command guard rejects a
+    later automatic start during a queued or active turn. Interrupted/stopped, settled
+    or snoozed, archived/deleted threads, pending approvals/user
+    input, and absent Supervisors are guarded twice (snapshot and decider);
+    project id scopes the dispatch. Command ids and retry state survive restart,
+    while Supervisor-origin board saves are marked observed to prevent self-wake
+    loops. A newer result keeps a distinct pending fingerprint while an accepted
+    in-flight envelope remains replayable; conditional success resolution checks
+    that the claimed dispatch row still exists before reporting success. Existing
+    board JSON is seeded through the board JSON codec.
+- `src/orchestration/Layers/{ProviderCommandReactor,ProjectionPipeline}.ts` and
+  `src/persistence/{Services,Layers}/ProjectionTurns.ts`
+  - Provider handoff atomically consumes the exact durable pending-start row.
+    `thread.turn.interrupt` and `thread.session.stop` remove it before their
+    reactor work, so a user stop that wins the durable race cancels an accepted
+    automatic start before any provider call.
+- `src/persistence/Migrations/048_AgentBoardSupervisorWakes.ts`,
+  `src/persistence/Migrations/049_AgentBoardSupervisorWakeDispatchEnvelope.ts`,
+  `src/persistence/Migrations/050_AgentBoardSupervisorWakeDispatchFingerprint.ts`, and
+  `src/persistence/Migrations.ts`
+  - Add the server-owned durable pending-wake queue after migration 047 and
+    persist the immutable dispatch envelope and its in-flight fingerprint required
+    to replay an accepted command receipt after a process crash without losing a
+    newer pending notification.
+- `src/agentBoard/Layers/AgentBoardFileSystem.ts` and
+  `src/agentBoard/Services/AgentBoardFileSystem.ts`
+  - Attach wake transition recording atomically to the SQLite board save;
+    internal writers identify scheduler versus Supervisor versus human saves.
 
 - `src/serverSettings.ts` treats `agentExecutionPresets` as an atomic persisted
   value. Because it is a tagged Simple/Advanced union, recursive default
@@ -230,7 +281,8 @@ updated_at)`.
     `AgentBoardSchedulerLive` merged into `WorkspaceLayerLive`.
 - `src/serverRuntimeStartup.ts`
   - Starts the scheduler in `reactors.start` beside the orchestration reactor
-    and provider-session reaper.
+    and provider-session reaper. The orchestration reactor starts the durable
+    Supervisor wake loop alongside the existing provider reactors.
 - `src/ws.ts`
   - `agentBoardFileSystem` / `agentBoardRunner` yields in the RPC handler
     generator and four `observeRpcEffect(...)` handler entries.
@@ -754,6 +806,20 @@ state or erase its intent brief. The table editor uses the same current-callback
 rule. Client test document fixtures include the theme customizer dataset.
 
 ### Local home isolation (desktop and development)
+
+### Durable Supervisor provider handoff
+
+`ProjectionTurns`, `ProviderCommandReactor`, and migrations 051–052 retain a
+turn-start intent until `sendTurn` returns and reconcile only `pending` intents
+on reactor startup. `claimed` and `sending` intents have an ambiguous provider
+outcome, remain available for inspection, and are deliberately excluded from
+automatic replay. Their projection diagnostic records whether recovery paused
+after the claim or after the provider handoff; read it through
+`ProjectionTurnRepository.getPendingTurnStartByThreadId().deliveryReason`.
+Explicit stop/interrupt intent is a separate durable latch,
+so a provider `ready` observation never resumes automation; only a normal human
+turn start clears it. The external provider boundary cannot provide exactly-once
+delivery without a provider idempotency acknowledgement.
 
 `apps/desktop/src/app/DesktopStatePaths.ts`, `scripts/dev-runner.ts`, and
 `packages/shared/src/devHome.ts` now use `defaultRemoteHomeName` from

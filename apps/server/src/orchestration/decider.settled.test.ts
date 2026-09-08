@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -510,6 +511,60 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.session-set",
       ]);
     }),
+  );
+
+  it.effect(
+    "rejects an automatic follow-up instead of reviving a settled, snoozed, or interrupted thread",
+    () =>
+      Effect.forEach(
+        [
+          makeReadModel("settled"),
+          makeReadModel(null, null, null, [], [], { snoozedUntil: "2026-01-02T00:00:00.000Z" }),
+          {
+            ...makeReadModel(null),
+            threads: makeReadModel(null).threads.map((thread) => ({
+              ...thread,
+              latestTurn: {
+                turnId: TurnId.make("turn-interrupted"),
+                state: "interrupted" as const,
+                requestedAt: NOW,
+                startedAt: NOW,
+                completedAt: NOW,
+                assistantMessageId: null,
+              },
+            })),
+          },
+        ],
+        (readModel, index) =>
+          decideOrchestrationCommand({
+            command: {
+              type: "thread.turn.start",
+              commandId: CommandId.make(`cmd-automatic-follow-up-${index}`),
+              threadId: ThreadId.make("thread-1"),
+              message: {
+                messageId: MessageId.make(`message-automatic-follow-up-${index}`),
+                role: "user",
+                text: "Automatic follow-up",
+                attachments: [],
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              onlyIfIdle: true,
+              createdAt: NOW,
+            },
+            readModel,
+          }).pipe(Effect.flip),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.tap((errors) =>
+          Effect.sync(() => {
+            expect(errors).toHaveLength(3);
+            expect(
+              errors.every((error) => error._tag === "OrchestrationCommandInvariantError"),
+            ).toBe(true);
+          }),
+        ),
+      ),
   );
 
   it.effect("clears a keep-active pin on real activity", () =>
